@@ -10,13 +10,32 @@
  * colour band with hex codes, credit.
  */
 
+/*
+ * Every interactive element must opt out of the window's drag region.
+ *
+ * `html, body` declare `-webkit-app-region: drag` (tokens.css), which makes the whole window
+ * a title bar. Chromium subtracts the boxes of `no-drag` elements from that region, so
+ * anything clickable has to say so - otherwise its clicks start a window drag instead and
+ * the control appears dead. The colour band was the visible symptom.
+ */
+button,
+.band,
+.band-segment,
+.ctrl,
+.icon-btn,
+.mini-action {
+  -webkit-app-region: no-drag;
+}
+
 .card {
   position: relative;
   width: 100%;
-  height: var(--card-height);
+  height: 100%;
   border-radius: var(--radius-card);
   overflow: hidden;
   background: var(--bg);
+  /* The floating shadow lives in the transparent margin the shell leaves around the card. */
+  box-shadow: var(--shadow-float);
   transition: background 420ms var(--ease);
 }
 
@@ -280,13 +299,23 @@
  * continuous band rather than five separate chips. The selected segment carries no ring: it
  * stretches to full height and becomes opaque, so the chosen colour flows into the page
  * background behind it.
+ *
+ * The visible strip stays at the measured 1.7u, but the *clickable* box is padded out to
+ * 1.7u + 2 x 2.4u (26px at the default 400px card) with a matching negative margin, which
+ * cancels the padding's effect on the layout. The swatches were 4px tall and their no-drag
+ * box barely larger, so every click either missed or was consumed as a window drag - the
+ * band looked broken. `content-box` is required: the global `border-box` would make the
+ * padding eat the measured height.
  */
 .band {
   display: flex;
   gap: 0;
   align-items: flex-end;
   width: 100%;
+  box-sizing: content-box;
   height: calc(var(--u) * 1.7);
+  padding: calc(var(--u) * 2.4) 0;
+  margin: calc(var(--u) * -2.4) 0;
 }
 
 .band-segment {
@@ -352,35 +381,119 @@
   text-transform: uppercase;
 }
 
-/* -------------------------------------------------------------------- flip */
+/* --------------------------------------------------------------- top controls */
 
-.flip {
+/*
+ * Flip on the left, lock and close on the right, both on the same line as QQ's window
+ * controls. The bar spans the card but is `pointer-events: none` so it does not interrupt
+ * the window's drag region between the buttons.
+ */
+.top-bar {
   position: absolute;
-  top: calc(var(--u) * 3);
-  right: calc(var(--u) * 3);
-  display: grid;
-  place-items: center;
-  width: calc(var(--u) * 5);
-  height: calc(var(--u) * 5);
-  border-radius: 50%;
-  color: var(--text-faint);
-  opacity: 0;
-  transition: opacity 200ms, color 200ms, transform 300ms var(--ease);
+  top: calc(var(--u) * 3.2);
+  left: calc(var(--u) * 3.2);
+  right: calc(var(--u) * 3.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
 }
 
-.flip svg {
-  width: 60%;
-  height: 60%;
+.top-bar__right {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 1.2);
+  pointer-events: none;
+}
+
+.top-bar__right > * {
+  pointer-events: auto;
+}
+
+/*
+ * 7.6u (30px at the default 400px card) rather than the old 5u: at 5u the flip button was a
+ * 20px target sitting in a corner, which is smaller than a comfortable click.
+ */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 7.6);
+  height: calc(var(--u) * 7.6);
+  border-radius: 50%;
+  color: var(--text-strong);
+  /*
+   * Hidden - and not clickable - until the card is hovered, so the artwork stays clean and
+   * the corners are not invisible hit targets. This is safe because the card is only on
+   * screen while the pointer is over it: leaving the card rolls it up.
+   */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms, color 200ms, background 200ms, transform 300ms var(--ease);
+}
+
+.card:hover .icon-btn,
+.icon-btn:focus-visible {
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+/*
+ * While locked the card is not going to roll up, so its controls stay on screen - otherwise
+ * the lock would be the one state you cannot see the controls in, and unlocking would mean
+ * hovering to reveal a button you have to find first.
+ */
+.stage[data-locked='true'] .icon-btn {
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+.icon-btn:hover,
+.icon-btn:focus-visible {
+  opacity: 1;
+  background: var(--panel-line);
+}
+
+.icon-btn:active {
+  transform: scale(0.92);
+}
+
+.icon-btn svg {
+  width: 62%;
+  height: 62%;
   fill: currentColor;
 }
 
-.card:hover .flip {
-  opacity: 1;
+.icon-btn--flip:hover {
+  transform: rotate(180deg);
 }
 
-.flip:hover {
+/* `:active` and the flip's rotation are both transforms on the same element, and the later
+   rule would win outright - so the flip needs its own combined rule rather than losing the
+   press feedback. */
+.icon-btn--flip:active {
+  transform: rotate(180deg) scale(0.92);
+}
+
+/* Lock shows a closed padlock only while locked; the state is also on aria-pressed. */
+.icon-btn .icon-locked {
+  display: none;
+}
+
+.icon-btn[aria-pressed='true'] .icon-locked {
+  display: block;
+}
+
+.icon-btn[aria-pressed='true'] .icon-unlocked {
+  display: none;
+}
+
+/* A locked button stays visible without hovering, so it must stay clickable without hovering
+   too - otherwise the only lit control on the card is the one that ignores clicks. */
+.icon-btn[aria-pressed='true'] {
+  opacity: 1;
+  pointer-events: auto;
   color: var(--text-strong);
-  transform: rotate(180deg);
+  background: var(--panel-line);
 }
 
 /* ------------------------------------------------------------------ status */
@@ -619,4 +732,121 @@
   place-items: center;
   font-size: var(--fs-lyric-sub);
   color: var(--text-faint);
+}
+
+/* ------------------------------------------------------- rolled-up mini bar */
+
+/*
+ * The collapsed state: instead of hiding the window entirely, it shrinks to a strip that
+ * still carries the cover, the track and the progress - so the overlay stays useful while
+ * it is out of the way, and there is something to move the pointer back onto.
+ *
+ * Two subtrees rather than one reshaped card: the front face is a tall vertical
+ * composition and cannot become a horizontal strip without every measured position moving.
+ * The stage switches between them, and `data-mode` is derived from the window's height by
+ * ui/src/layout.js, so the visible mode can never disagree with the window it lives in.
+ */
+.mini {
+  position: relative;
+  display: none;
+  align-items: center;
+  gap: calc(var(--u) * 2.4);
+  width: 100%;
+  height: 100%;
+  padding: calc(var(--u) * 2.6) calc(var(--u) * 3.2);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+
+.stage[data-mode='mini'] .mini {
+  display: flex;
+}
+
+/* The full card is not merely hidden: it must not be laid out, or the lyrics view would
+   keep measuring a container it cannot see. */
+.stage[data-mode='mini'] .card {
+  display: none;
+}
+
+/*
+ * The thumbnail keeps its fallback gradient visible until the image paints, rather than
+ * fading the whole element: an empty box in the card's own palette reads as "no cover yet",
+ * whereas a faded-out element leaves a hole in the strip.
+ */
+.mini__cover {
+  width: calc(var(--u) * 11);
+  height: calc(var(--u) * 11);
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-radius: calc(var(--u) * 0.8);
+  background: linear-gradient(160deg, var(--accent-top), var(--accent-bottom));
+}
+
+.mini__text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(var(--u) * 0.5);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mini__title {
+  font-size: var(--fs-mini-title);
+  font-weight: 600;
+  letter-spacing: var(--tracking-title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini__artist {
+  font-size: var(--fs-mini-artist);
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-action {
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 6.4);
+  height: calc(var(--u) * 6.4);
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: var(--text-strong);
+  opacity: 0.6;
+  transition: opacity 180ms, background 180ms;
+}
+
+.mini-action:hover {
+  opacity: 1;
+  background: var(--panel-line);
+}
+
+.mini-action svg {
+  width: 58%;
+  height: 58%;
+  fill: currentColor;
+}
+
+/* Full-bleed progress line along the bottom edge, like a player's title bar. */
+.mini__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--u) * 0.7);
+  background: var(--panel-line);
+}
+
+.mini__fill {
+  height: 100%;
+  width: 0%;
+  background: var(--text-strong);
+  opacity: 0.9;
 }

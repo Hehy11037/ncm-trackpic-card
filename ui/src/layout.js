@@ -1,12 +1,12 @@
 /**
- * Layout: a fixed 9:16 stage, scaled to fit the viewport.
+ * Layout: the card's proportions, and which of its two states is on screen.
  *
- * This is the part that was wrong before. Scaling only from the window height meant
- * that a tall browser viewport blew every type size up - the reference design is a
- * *fixed* 9:16 canvas whose content is multiplied by one scale factor, not a fluid
- * layout. So the stage has a fixed design size, and `--u` is derived from the scale
- * needed to fit it into the viewport. The composition is then identical at any size,
- * in a browser or in the desktop shell, and never grows past a sane maximum.
+ * The card is a fixed-aspect composition whose content is multiplied by one unit (`--u`,
+ * 1% of the card width) rather than a fluid layout, so it is identical at any size.
+ *
+ * Width comes from the stylesheet and height is derived from it. The *window* is the shell's
+ * business: the shell sizes it as `card + 2 x shadow margin`, and the renderer works out
+ * whether that makes the card or the rolled-up bar the right thing to draw.
  */
 
 import { contrastRatio, luminance } from './palette.js';
@@ -38,32 +38,71 @@ const MIN_STAGE_WIDTH = 380;
  * Stage aspect, measured from the reference's own pixels: its content area is
  * 1080 x 1958, so the ratio is 1 : 1.8136. This is *not* 9:16 (1 : 1.778); using 9:16
  * made the reference's literal type proportionally too tall and clipped the front face.
+ *
+ * Mirrored in ui/styles/tokens.css (`--card-aspect`) and apps/overlay/shell-utils.mjs
+ * (`CARD_ASPECT`); tools/check-shell.mjs compares all three.
  */
-export const STAGE_ASPECT = 181.36 / 100;
+export const STAGE_ASPECT = 1.8136;
 
 /**
- * Set `--u` from the stage's actual rendered size.
+ * Height of the rolled-up bar, as a fraction of the card width.
  *
- * The stage size is CSS (`max(380px, min(94vw, 94vh * 100/181.36))`), so this converts
- * "current width in px" into the unit the stylesheet is written in. Measured from the
- * element rather than the viewport so the two cannot disagree.
+ * Mirrored in tokens.css (`--mini-ratio`) and shell-utils.mjs (`MINI_RATIO`).
+ */
+export const MINI_RATIO = 0.17;
+
+/**
+ * Set `--u` and the two stage heights from the stage's actual rendered size.
+ *
+ * Height is derived from the *width*, never from the element's own height: the height is
+ * what the mode switch changes, so reading it back would be circular. The stylesheet owns
+ * the width (`max(380px, 100vw - 2 x --shadow-pad)`, i.e. the window minus its shadow
+ * margin), which is independent of the collapsed state.
  *
  * @param {HTMLElement} [stage] defaults to #stage
- * @returns {{ unit: number, width: number, height: number }}
+ * @returns {{ unit: number, width: number, height: number, miniHeight: number }}
  */
 export function applyLayoutUnit(stage = document.getElementById('stage')) {
   const root = document.documentElement;
 
   const width = stage?.clientWidth || MIN_STAGE_WIDTH;
-  const height = stage?.clientHeight || width * STAGE_ASPECT;
+  const height = width * STAGE_ASPECT;
+  const miniHeight = width * MINI_RATIO;
   const unit = width / 100;
 
   root.style.setProperty('--u', `${unit.toFixed(5)}px`);
   root.style.setProperty('--card-height', `${height.toFixed(2)}px`);
-  root.style.setProperty('--stage-width', `${width}px`);
-  root.style.setProperty('--stage-height', `${height}px`);
+  root.style.setProperty('--mini-height', `${miniHeight.toFixed(2)}px`);
 
-  return { unit, width, height };
+  return { unit, width, height, miniHeight };
+}
+
+/**
+ * Decide whether the stage is showing the full card or the rolled-up bar.
+ *
+ * The *window's* height is the signal, not a message from the shell: the shell resizes the
+ * window and the renderer follows, so the visible mode can never disagree with the window
+ * it is drawn in, and no IPC round trip can leave the two out of step. The margin between
+ * the two heights is hundreds of pixels, so the 40px tolerance is far from ambiguous.
+ *
+ * @param {HTMLElement} [stage] defaults to #stage
+ * @returns {'expanded' | 'mini'}
+ */
+export function syncStageMode(stage = document.getElementById('stage')) {
+  if (!stage) return 'expanded';
+  const width = stage.clientWidth || MIN_STAGE_WIDTH;
+  const pad = Math.max(0, (window.innerWidth - width) / 2);
+  const expandedWindowHeight = width * STAGE_ASPECT + pad * 2;
+  const mode = window.innerHeight < expandedWindowHeight - 40 ? 'mini' : 'expanded';
+  if (stage.dataset.mode !== mode) stage.dataset.mode = mode;
+  return mode;
+}
+
+/** Recompute the unit and the mode. Called on boot, on resize and by the ResizeObserver. */
+export function relayout(stage = document.getElementById('stage')) {
+  const metrics = applyLayoutUnit(stage);
+  const mode = syncStageMode(stage);
+  return { ...metrics, mode };
 }
 
 /**

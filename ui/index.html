@@ -23,7 +23,12 @@
       The colour band doubles as the background picker: clicking a segment paints the
       card with that colour, clicking the active one returns to the default surface.
     -->
-    <div class="stage" id="stage">
+    <!--
+      The stage is the card's box plus the transparent margin that holds the floating
+      shadow. `data-mode` switches between the full card and the rolled-up mini bar; it is
+      derived from the window's height by ui/src/layout.js, so the two cannot disagree.
+    -->
+    <div class="stage" id="stage" data-mode="expanded">
       <!--
         Shown only if the module graph fails to run. Without it a startup error looks
         exactly like "nothing is playing", which is the most confusing failure mode
@@ -80,14 +85,54 @@
           </div>
         </section>
 
-        <button class="flip" id="flip" title="翻面（F）" aria-label="翻面">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 5V2L7 6l5 4V7a5 5 0 0 1 4.6 7h2.1A7 7 0 0 0 12 5zm0 12a5 5 0 0 1-4.6-7H5.3A7 7 0 0 0 12 19v3l5-4-5-4z" />
-          </svg>
-        </button>
+        <!--
+          Flip top-left, lock and close on the right, mirroring QQ's window controls.
+          They are revealed on hover; the card is only on screen while the pointer is over
+          it, so hover is always available when they can be clicked.
+        -->
+        <div class="top-bar">
+          <button class="icon-btn icon-btn--flip" id="flip" title="翻面（F）" aria-label="翻面">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5V2L7 6l5 4V7a5 5 0 0 1 4.6 7h2.1A7 7 0 0 0 12 5zm0 12a5 5 0 0 1-4.6-7H5.3A7 7 0 0 0 12 19v3l5-4-5-4z" />
+            </svg>
+          </button>
+          <div class="top-bar__right">
+            <button class="icon-btn" id="lock" title="锁定：不自动收起（L）" aria-label="锁定" aria-pressed="false">
+              <svg class="icon-unlocked" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M17 9h-1V7A4 4 0 0 0 8.2 6.1l1.8.8A2.2 2.2 0 0 1 14 7v2H7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zm0 9H7v-7h10z" />
+              </svg>
+              <svg class="icon-locked" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M17 9h-1V7A4 4 0 0 0 8 7v2H7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zm-7-2a2 2 0 0 1 4 0v2h-4zM17 18H7v-7h10z" />
+              </svg>
+            </button>
+            <button class="icon-btn" id="close" title="关闭到托盘" aria-label="关闭到托盘">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6z" />
+              </svg>
+            </button>
+          </div>
+        </div>
 
         <div class="status" id="status"><span class="dot"></span><span id="status-text">连接中…</span></div>
       </main>
+
+      <!--
+        Rolled up: cover, track and progress in one strip. There is nothing to click except
+        the expand handle - moving the pointer onto the bar expands it again, and the shell
+        watches the pointer so the whole strip is a hover target.
+      -->
+      <div class="mini" id="mini">
+        <img class="mini__cover" id="mini-cover" alt="" decoding="async" crossorigin="anonymous" />
+        <div class="mini__text">
+          <span class="mini__title" id="mini-title">未检测到播放</span>
+          <span class="mini__artist" id="mini-artist">等待网易云音乐</span>
+        </div>
+        <button class="mini-action" id="mini-expand" title="展开" aria-label="展开">
+          <!-- Points down: the card unfolds downwards from the top edge the bar sits on. -->
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.5 4.5 9h15z" /></svg>
+        </button>
+        <div class="mini__progress"><div class="mini__fill" id="mini-fill"></div></div>
+      </div>
     </div>
 
     <script>

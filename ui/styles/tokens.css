@@ -1,17 +1,18 @@
 /*
  * Design tokens.
  *
- * Distances come from measuring the reference image (1080x1920, the same 9:16 shape
- * as this card, so 1u = 10.8px there). `node tools/measure-reference.mjs` produces
- * those numbers and `node tools/check-layout.mjs` verifies this file against them.
+ * Distances come from measuring the reference image (1080x1920, the same shape as this
+ * card). `node tools/measure-reference.mjs` produces those numbers and
+ * `node tools/check-layout.mjs` verifies this file against them.
  *
  * Two deliberate departures from a literal copy of the reference:
  *
- *  - `--u` has a floor (`MIN_UNIT_PX` in layout.js). The reference is a phone-sized
- *    canvas where 1u = 10.8px; a desktop window is far smaller, so its literal sizes
- *    would render around 6px. The structure stays proportional, the type stays legible.
- *  - Each font size is clamped below so a small window cannot shrink text past the
- *    point of being readable.
+ *  - The card never shrinks below 380px wide. The reference is a phone-sized canvas where
+ *    1u = 10.8px; a desktop window is far smaller, so its literal sizes would render around
+ *    6px. The structure stays proportional, the type stays legible.
+ *  - The band of extracted colours is thicker than the reference's 1.3u and has an
+ *    enlarged invisible hit area, because it is the background picker and must be
+ *    comfortably clickable.
  */
 
 :root {
@@ -21,9 +22,42 @@
    * sync with `.stage` below and MIN_STAGE_WIDTH in layout.js.
    */
   --u: 3.8px;
-  --stage-width: 380px;
-  --stage-height: 688.9px;
-  --card-height: 688.9px;
+
+  /*
+   * Card proportions.
+   *
+   * `--card-aspect` is 1.8136, measured from the reference's own content area (1080 x 1958),
+   * *not* 9:16 (1.778). At 9:16 the reference's literal type is proportionally too tall for
+   * the height and `overflow: hidden` clips the title and artist.
+   *
+   * `--mini-ratio` is the rolled-up bar's height as a fraction of the card width.
+   *
+   * Mirrored in apps/overlay/shell-utils.mjs (CARD_ASPECT, MINI_RATIO) and
+   * ui/src/layout.js (STAGE_ASPECT, MINI_RATIO). tools/check-shell.mjs compares all three,
+   * so a change here that is not mirrored is a test failure rather than a silently wrong
+   * window size.
+   */
+  --card-aspect: 1.8136;
+  --mini-ratio: 0.17;
+
+  /*
+   * Transparent margin around the card, so the CSS shadow below has room to render.
+   *
+   * The Electron window is sized `card + 2 x --shadow-pad`; without the margin the shadow
+   * would be cut off by the window edge. Keep in sync with SHADOW_PAD in
+   * apps/overlay/shell-utils.mjs.
+   */
+  --shadow-pad: 24px;
+  --card-w: max(380px, calc(100vw - 2 * var(--shadow-pad)));
+
+  /*
+   * Stage heights, derived from the width so the two proportions are stated exactly once.
+   * ui/src/layout.js overwrites both from the stage's real rendered width on boot; these are
+   * the values a first paint uses, and they are computed the same way rather than being a
+   * third set of hard-coded numbers to keep in step.
+   */
+  --card-height: calc(var(--card-w) * var(--card-aspect));
+  --mini-height: calc(var(--card-w) * var(--mini-ratio));
 
   /*
    * Card rounding. The reference is a rectangle, but the brief is "a little rounded,
@@ -32,6 +66,17 @@
    */
   --radius-card: calc(var(--u) * 2.6);
   --radius-cover: calc(var(--u) * 0.6);
+
+  /*
+   * Floating shadow, QQ-style: a soft drop for depth plus a hairline rim.
+   *
+   * The rim matters because the card's background is one of the cover's own colours: on a
+   * dark cover against a dark desktop a shadow alone leaves no visible edge.
+   */
+  --shadow-float:
+    0 calc(var(--u) * 2.2) calc(var(--u) * 5.2) rgba(6, 10, 14, 0.42),
+    0 calc(var(--u) * 0.7) calc(var(--u) * 1.9) rgba(6, 10, 14, 0.34),
+    0 0 0 calc(var(--u) * 0.3) rgba(255, 255, 255, 0.16);
 
   /* Font sizes are the reference's measurements, verbatim. No floors are needed because
      the stage never goes below 380px wide, which keeps 1u >= 3.8px. */
@@ -43,6 +88,8 @@
   --fs-lyric: calc(var(--u) * 5.2);
   --fs-lyric-sub: calc(var(--u) * 1.8);
   --fs-status: calc(var(--u) * 1.65);
+  --fs-mini-title: calc(var(--u) * 3.4);
+  --fs-mini-artist: calc(var(--u) * 2.5);
 
   --tracking-title: 0.01em;
   --tracking-artist: 0.02em;
@@ -100,28 +147,47 @@ body {
   font-family: var(--font-ui);
   color: var(--text-strong);
   overflow: hidden;
+  /*
+   * The whole window is the drag handle, so the card can be moved by grabbing anywhere on
+   * it - including the transparent shadow margin.
+   *
+   * `-webkit-app-region` is *not* inherited: this makes the body's whole box a drag region,
+   * and Chromium subtracts the boxes of elements that opt out with `no-drag`. Every
+   * interactive element must therefore opt out explicitly (see the rule in card.css), or
+   * its clicks are swallowed as window drags. That is what made the colour band
+   * unusable: the swatches were 4px tall and their `no-drag` box was barely larger.
+   */
   -webkit-app-region: drag;
   user-select: none;
   cursor: default;
   -webkit-font-smoothing: antialiased;
 }
 
-/* The stage carries the proportions. It is *not* 9:16 (1.778) but the reference's own
- * content ratio, 1 : 1.8136 (1080 x 1958 measured from its pixels). That difference is
- * why an earlier 9:16 card overflowed: at 9:16 the reference's literal type is
- * proportionally too large for the height, and `overflow: hidden` clipped the title and
- * artist. At 1.8136 every measured position fits.
+/*
+ * The stage carries the proportions and the shadow margin.
  *
- * It never shrinks below 380px wide, which keeps 1u >= 3.8px so the reference's 4.63u
- * title renders at ~17.6px with no font-size floors needed. If the window is smaller the
- * card overflows and scrolls, which beats rendering unreadable text. */
+ * Width is the card's width (the window minus one `--shadow-pad` on each side) and the
+ * height is whichever of the two modes is active. It is centred in the window, so the
+ * shadow margin is distributed evenly and the card lands in the middle of the window.
+ *
+ * The heights read `--card-height` / `--mini-height`, which ui/src/layout.js recomputes
+ * from the stage's real width (so the two can never disagree). The `:root` values above are
+ * the pre-JS fallback.
+ */
 .stage {
-  width: max(380px, min(94vw, calc(94vh * 100 / 181.36)));
-  height: max(688.9px, min(calc(94vw * 181.36 / 100), 94vh));
+  width: var(--card-w);
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+}
+
+.stage[data-mode='expanded'] {
+  height: var(--card-height);
+}
+
+.stage[data-mode='mini'] {
+  height: var(--mini-height);
 }
 
 button {
@@ -130,7 +196,6 @@ button {
   border: 0;
   background: none;
   cursor: pointer;
-  -webkit-app-region: no-drag;
   padding: 0;
 }
 

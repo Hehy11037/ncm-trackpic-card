@@ -15,10 +15,12 @@
 //   3. A shorthand's components contain spaces inside parentheses, so splitting on
 //      whitespace is wrong.
 
-import { readFileSync } from 'node:fs';
+import { makeCssReader, readStyle } from './css-values.mjs';
 
-const tokens = readFileSync('ui/styles/tokens.css', 'utf8');
-const card = readFileSync('ui/styles/card.css', 'utf8');
+const css = makeCssReader({
+  tokens: readStyle('ui/styles/tokens.css'),
+  rules: readStyle('ui/styles/card.css'),
+});
 
 /** Reference measurements in u (1u = 1% of the image width). */
 const REFERENCE = {
@@ -42,148 +44,7 @@ const REFERENCE = {
 
 /* ------------------------------------------------------------ custom properties */
 
-const props = new Map();
-for (const m of tokens.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)[;}]/gi)) props.set(m[1], m[2].trim());
-
-const cache = new Map();
-
-/** Replace `calc(...)` with a plain parenthesised expression, counting depth. */
-function stripCalc(text) {
-  let result = text;
-  for (let guard = 0; guard < 50; guard++) {
-    const start = result.indexOf('calc(');
-    if (start < 0) return result;
-    let depth = 0;
-    let end = -1;
-    for (let i = start + 4; i < result.length; i++) {
-      if (result[i] === '(') depth++;
-      else if (result[i] === ')') {
-        depth--;
-        if (depth === 0) {
-          end = i;
-          break;
-        }
-      }
-    }
-    if (end < 0) return result;
-    result = `${result.slice(0, start)}(${result.slice(start + 5, end)})${result.slice(end + 1)}`;
-  }
-  return result;
-}
-
-/** Evaluate a declaration to a number of units. Bounded: returns 0 rather than spins. */
-function evaluate(expression, depth = 0) {
-  if (expression === null || expression === undefined) return 0;
-  if (depth > 10) return 0;
-  let text = String(expression).trim();
-  if (!text) return 0;
-
-  text = text.replace(/var\((--[a-z0-9-]+)(?:\s*,\s*([^)]+))?\)/gi, (_m, name, fallback) => {
-    // `--u-pure` is the reference's exact unit before the legibility floor is applied
-    // at runtime. Using it here keeps this check comparing like with like: the rendered
-    // unit can be clamped, which would otherwise distort every derived size.
-    if (name === '--u' || name === '--u-pure') return '1';
-    if (cache.has(name)) return String(cache.get(name));
-    if (props.has(name)) {
-      const resolved = evaluate(props.get(name), depth + 1);
-      cache.set(name, resolved);
-      return String(resolved);
-    }
-    return fallback !== undefined ? String(evaluate(fallback, depth + 1)) : '0';
-  });
-
-  // `max(a, b)` is used to floor font sizes for legibility; for the reference
-  // comparison the unfloored value is the one to check.
-  while (/max\(/.test(text)) {
-    const start = text.indexOf('max(');
-    let depth = 0;
-    let end = -1;
-    for (let i = start + 3; i < text.length; i++) {
-      if (text[i] === '(') depth++;
-      else if (text[i] === ')') {
-        depth--;
-        if (depth === 0) {
-          end = i;
-          break;
-        }
-      }
-    }
-    if (end < 0) break;
-    const args = text.slice(start + 4, end);
-    // `max()` separates its arguments with commas, unlike a CSS shorthand's spaces.
-    const parts = splitTopLevel(args);
-    text = `${text.slice(0, start)}(${parts[0] ?? '0'})${text.slice(end + 1)}`;
-  }
-
-  text = stripCalc(text);
-  const numeric = text.replace(/px|deg|em|%/g, '').trim();
-  if (!/^[\d\s+\-*/().]+$/.test(numeric)) return 0;
-  try {
-    const out = Function(`"use strict"; return (${numeric});`)();
-    return Number.isFinite(out) ? out : 0;
-  } catch {
-    return 0;
-  }
-}
-
-const unit = (name) => evaluate(props.get(name));
-
-/* ---------------------------------------------------------------- declarations */
-
-function declaration(selector, property) {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const block = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`).exec(card);
-  if (!block) return null;
-  // `[^;{}]`: a value must not run past the end of the rule into the next one.
-  const found = new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;{}]+)`).exec(block[1]);
-  return found ? found[1].trim() : null;
-}
-
-/** Split on any top-level separator (whitespace or comma), ignoring parentheses. */
-function splitTopLevel(text) {
-  const parts = [];
-  let depth = 0;
-  let current = '';
-  for (const ch of String(text)) {
-    if (ch === '(') depth++;
-    else if (ch === ')') depth = Math.max(0, depth - 1);
-    const isSeparator = (/\s/.test(ch) || ch === ',') && depth === 0;
-    if (isSeparator) {
-      if (current.trim()) parts.push(current.trim());
-      current = '';
-      continue;
-    }
-    current += ch;
-  }
-  if (current.trim()) parts.push(current.trim());
-  return parts;
-}
-
-/** Split a shorthand into components, ignoring spaces inside parentheses. */
-function splitShorthand(text) {  const parts = [];
-  let depth = 0;
-  let current = '';
-  for (const ch of String(text)) {
-    if (ch === '(') depth++;
-    else if (ch === ')') depth = Math.max(0, depth - 1);
-    if (/\s/.test(ch) && depth === 0) {
-      if (current) parts.push(current);
-      current = '';
-      continue;
-    }
-    current += ch;
-  }
-  if (current) parts.push(current);
-  return parts;
-}
-
-const value = (selector, property) => evaluate(declaration(selector, property));
-const shorthand = (selector, property, index) => {
-  const raw = declaration(selector, property);
-  if (!raw) return 0;
-  const parts = splitShorthand(raw);
-  return evaluate(parts[Math.min(index, parts.length - 1)]);
-};
+const { props, rules, evaluate, declaration, unit, value, shorthand } = css;
 
 /**
  * Stage height in units.
@@ -265,7 +126,7 @@ const checks = [
   ['封面为正方形', String(declaration('.cover-wrap', 'aspect-ratio')).replace(/\s/g, '') === '1/1'],
   ['上留白 > 左右留白', padTop > padLeft],
   ['封面圆角 <1.5u', unit('--radius-cover') < 1.5],
-  ['无 backdrop 模糊', !card.includes('backdrop-filter')],
+  ['无 backdrop 模糊', !rules.includes('backdrop-filter')],
   ['封面窄于内容列', coverSize <= contentWidth],
   ['底部留白 5..25u', bottomInset > 5 && bottomInset < 25],
   /*

@@ -156,3 +156,88 @@ Git operations.` — a server response, which proves the transport works and onl
 the credential was missing. Use the `https://x-access-token:<TOKEN>@github.com/...`
 form as the push URL.
 
+## 2026-09-15 — why the colour band "could not be clicked"
+
+Reported as "色带不能点击选颜色", with the layout looking correct in a screenshot.
+Two causes, both invisible to a screenshot, and both now covered by
+`tools/check-interaction.mjs`:
+
+* **The target was 4px tall.** `.band` was `height: 1.7u` with the swatches at
+  62% of it, which is 4.2px at the default 400px card. Fix: keep the measured
+  1.7u visible strip, but pad the *element* out to 6.5u (26px) with
+  `padding: 2.4u 0` plus `margin: -2.4u 0` so the padding cannot move anything.
+  That needs `box-sizing: content-box` — the global `border-box` would make the
+  padding eat the measured height instead.
+* **`-webkit-app-region`.** `html, body` declare `drag`, which turns the *whole
+  window* into a title bar. Chromium subtracts the boxes of elements that declare
+  `no-drag`, so anything clickable has to opt out or its clicks start a window
+  drag and the control looks dead. The carve-out is the element's own box, so a
+  4px swatch gives a 4px no-drag region. Every interactive element now appears in
+  one explicit `no-drag` list in `card.css` — and the list itself is asserted by
+  the check, because a new control that forgets it will look fine.
+
+Also: a click in the padded area lands on the *container*, not on a swatch, so the
+band uses one delegated listener on `#palette` that falls back to the pointer's x
+position. Per-swatch listeners were also being thrown away and re-created by every
+`renderBand()`.
+
+## 2026-09-15 — rolling the window up (QQ-style) and what blocks it
+
+The card now shrinks to a strip when the pointer leaves, and the shell owns three
+things the renderer cannot:
+
+* **`minHeight` would have made the roll-up impossible.** The original window set
+  `minHeight: heightForWidth(MIN_WIDTH, ...)`. Windows applies min/max constraints
+  during `setBounds` as well as during user resizing, so the window could never
+  have become shorter than a full card. There is deliberately no `minHeight` now;
+  `resizable: false` only removes the user's drag handles and does not stop
+  `setBounds`.
+* **The pointer is polled from the main process**, not taken from a renderer
+  `mouseleave`. With a transparent window, "left the card" and "left the window"
+  are different questions, and only the main process can ask the OS. Events also
+  stop arriving exactly when the window under the cursor changes size.
+* **The renderer derives its mode from `window.innerHeight`**, rather than from an
+  IPC message. Both sides then physically cannot disagree about which state is on
+  screen, and there is no ordering problem to get wrong: the shell resizes, the
+  renderer follows. The gap between the two heights is hundreds of pixels, so a
+  40px tolerance is unambiguous.
+
+The hover rules are a small state machine in `apps/overlay/shell-utils.mjs`
+(`createHoverState`) rather than logic inlined in the polling loop, so the awkward
+cases are testable: a pointer that rests inside must never collapse, one that
+brushes the edge must not collapse, one that returns within the delay must cancel
+it, and the whole thing must produce exactly one transition no matter how long it
+runs.
+
+**The shadow needs room.** A CSS `box-shadow` on a transparent Electron window is
+clipped flat at the window edge, so the window is now `card + 2 x SHADOW_PAD`
+(24px) and the card is centred inside that margin. The shadow's reach
+(`offset-y + blur/2 + spread` = 19.2px at the default size) is asserted to fit
+inside the margin, because a clipped shadow reads as a rendering bug rather than a
+shadow. `hasShadow: false` stays: the *native* shadow would be a rectangle around
+the whole window, margin included.
+
+## 2026-09-15 — sharing the stylesheet reader
+
+`check-layout.mjs` had its own CSS evaluator; the new interaction check needed the
+same one. It now lives in `tools/css-values.mjs` and both import it, so the two
+checks cannot disagree about what the CSS says. Two traps found while extracting it:
+
+* A comment sitting above a rule is swept into that rule's selector by a
+  `([^{}]+)\{...\}` scan, which silently broke a selector lookup. Comments are
+  stripped up front.
+* `splitTopLevel` splits on whitespace *and* commas, which is right for `max(a, b)`
+  arguments and wrong for a comma-separated list: it chopped every `box-shadow`
+  layer into its individual lengths. `splitCommas` and `splitWhitespace` are now
+  separate functions.
+
+`tools/check-interaction.mjs` also parses `index.html` into a tree and asserts the
+nesting (`#mini` is a sibling of `#card`, not inside it; the top-bar controls are
+inside `.card`). A misplaced closing tag still loads and still parses — it just
+puts the card in the wrong parent and nothing lines up afterwards.
+
+**PowerShell 5.1 writes a UTF-8 BOM with `Set-Content -Encoding UTF8`**, and
+`-Encoding utf8NoBOM` does not exist there at all. Use `node` for file surgery:
+its `writeFileSync(..., 'utf8')` has no BOM. A BOM is legal in a JS module but
+breaks byte-level checks and is one more silent difference from a hand-written file.
+

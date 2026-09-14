@@ -1,5 +1,5 @@
 // Small helpers that are worth keeping out of main.mjs: window geometry and state
-// persistence, and a generated tray icon.
+// persistence, the pointer -> collapse state machine, and a generated tray icon.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -7,29 +7,188 @@ import { deflateSync } from 'node:zlib';
 
 /* ------------------------------------------------------------------ geometry */
 
-/** The card's aspect ratio, 1 : 1.8136. Must match .stage in ui/styles/tokens.css. */
-export const CARD_ASPECT = 181.36 / 100;
+/**
+ * The card's aspect ratio, 1 : 1.8136.
+ *
+ * Declared in three places because three languages need it - CSS (`--card-aspect`), the
+ * renderer (STAGE_ASPECT in ui/src/layout.js) and here. tools/check-shell.mjs compares all
+ * three, so a one-sided edit is a test failure rather than a window that no longer fits its
+ * card.
+ */
+export const CARD_ASPECT = 1.8136;
 
-/** Sensible bounds so the window is neither unusable nor enormous. */
-export const MIN_WIDTH = 260;
-export const MAX_WIDTH = 620;
-export const DEFAULT_WIDTH = 400;
+/** Height of the rolled-up bar as a fraction of the card width. Mirror of `--mini-ratio`. */
+export const MINI_RATIO = 0.17;
 
-/** Window height for a given width, clamped to the screen. */
-export function heightForWidth(width, workArea) {
-  const height = Math.round(width * CARD_ASPECT);
-  if (!workArea) return height;
-  // Never taller than the usable screen height, so the card cannot run off the bottom.
-  return Math.min(height, Math.round(workArea.height * 0.96));
+/**
+ * Transparent margin around the card, in CSS pixels, so its floating shadow has room to
+ * render inside the window instead of being clipped by the window edge. Mirror of
+ * `--shadow-pad` in ui/styles/tokens.css.
+ */
+export const SHADOW_PAD = 24;
+
+/**
+ * Card widths. The lower bound is legibility, not taste: below 380px the reference's 4.63u
+ * title renders under 17px and the hex labels under 5px. Keep in sync with MIN_STAGE_WIDTH
+ * in ui/src/layout.js and `max(380px, ...)` on `--card-w` in ui/styles/tokens.css.
+ */
+export const CARD_WIDTH_MIN = 380;
+export const CARD_WIDTH_MAX = 620;
+export const CARD_WIDTH_DEFAULT = 400;
+
+/** Presets offered by the tray menu. */
+export const CARD_WIDTH_PRESETS = [
+  { label: '小', width: 380 },
+  { label: '中', width: 440 },
+  { label: '大', width: 520 },
+];
+
+/** Window widths, i.e. card + the shadow margin on each side. */
+export const MIN_WIDTH = CARD_WIDTH_MIN + SHADOW_PAD * 2;
+export const MAX_WIDTH = CARD_WIDTH_MAX + SHADOW_PAD * 2;
+export const DEFAULT_WIDTH = CARD_WIDTH_DEFAULT + SHADOW_PAD * 2;
+
+export function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Window size for a wanted card width, in both states.
+ *
+ * The screen is respected by shrinking the *card*, never by clipping the height. An earlier
+ * version clamped the height alone, which silently broke the aspect ratio: the card then
+ * overflowed the window and the bottom of it was cut off.
+ *
+ * @param {number} cardWidth wanted card width in CSS pixels
+ * @param {{width:number,height:number}} [workArea]
+ * @returns {{cardWidth:number,width:number,height:number,collapsedHeight:number}}
+ */
+export function fitWindow(cardWidth, workArea) {
+  let card = clamp(Math.round(Number(cardWidth) || CARD_WIDTH_DEFAULT), CARD_WIDTH_MIN, CARD_WIDTH_MAX);
+
+  if (workArea?.height) {
+    const maxWindowHeight = Math.round(workArea.height * 0.96);
+    const largestThatFits = Math.floor((maxWindowHeight - SHADOW_PAD * 2) / CARD_ASPECT);
+    // Never below CARD_WIDTH_MIN: an unreadable card is worse than one that overflows a
+    // very short screen, which is the same call the stylesheet makes.
+    card = clamp(Math.min(card, largestThatFits), CARD_WIDTH_MIN, CARD_WIDTH_MAX);
+  }
+
+  return {
+    cardWidth: card,
+    width: card + SHADOW_PAD * 2,
+    height: Math.round(card * CARD_ASPECT) + SHADOW_PAD * 2,
+    collapsedHeight: Math.round(card * MINI_RATIO) + SHADOW_PAD * 2,
+  };
+}
+
+/** The card width a given window width implies. */
+export function cardWidthForWindow(windowWidth) {
+  return clamp(Math.round(windowWidth) - SHADOW_PAD * 2, CARD_WIDTH_MIN, CARD_WIDTH_MAX);
+}
+
+/* ------------------------------------------------- pointer -> collapse state */
+
+/**
+ * Decide when the overlay rolls up and when it comes back.
+ *
+ * A pure state machine rather than logic inlined in the polling loop, because the awkward
+ * parts (a hover that must not be interrupted, a collapse that must not immediately undo
+ * itself) are exactly what a test can pin down and an eyeball cannot.
+ *
+ * The hysteresis is:
+ *   - collapse only after the pointer has been *outside* the window continuously for
+ *     `collapseDelayMs`, so brushing past the edge does not roll the card up;
+ *   - expand only after the pointer has been *inside* for `expandDelayMs`. That cannot
+ *     oscillate, because the window only ever shrinks to a region inside its expanded
+ *     bounds: a pointer outside the expanded window is outside the rolled-up one too, so
+ *     reaching the bar always requires a deliberate move back.
+ *   - `locked` wins outright.
+ */
+export function createHoverState(options = {}) {
+  const collapseDelayMs = options.collapseDelayMs ?? 600;
+  const expandDelayMs = options.expandDelayMs ?? 80;
+
+  let collapsed = false;
+  let inside = null;
+  let insideSince = null;
+  let outsideSince = null;
+
+  return {
+    get collapsed() {
+      return collapsed;
+    },
+    get inside() {
+      return inside;
+    },
+
+    /** Forget where the pointer was; the next update re-adopts it. Used while hidden. */
+    reset() {
+      inside = null;
+      insideSince = null;
+      outsideSince = null;
+    },
+
+    /**
+     * @param {number} now monotonically increasing milliseconds
+     * @param {boolean} isInside whether the pointer is within the window bounds
+     * @param {boolean} locked user asked for "do not auto-collapse"
+     * @returns {boolean} true when `collapsed` changed and the window must be resized
+     */
+    update(now, isInside, locked = false) {
+      if (inside === null) {
+        inside = isInside;
+        if (isInside) insideSince = now;
+        else outsideSince = now;
+      } else if (isInside !== inside) {
+        inside = isInside;
+        if (isInside) {
+          insideSince = now;
+          outsideSince = null;
+        } else {
+          outsideSince = now;
+          insideSince = null;
+        }
+      }
+
+      if (locked) {
+        if (!collapsed) return false;
+        collapsed = false;
+        return true;
+      }
+
+      if (!collapsed) {
+        if (inside || outsideSince === null) return false;
+        if (now - outsideSince < collapseDelayMs) return false;
+        collapsed = true;
+        return true;
+      }
+
+      if (!inside || insideSince === null) return false;
+      if (now - insideSince < expandDelayMs) return false;
+      collapsed = false;
+      return true;
+    },
+  };
 }
 
 /* ---------------------------------------------------------------- window state */
 
-/** Where the window was last, so reopening it does not move it. */
+/**
+ * Remember the card width and where the window was, so reopening it does not move it.
+ *
+ * Stores the *card* width rather than the window width, because the window width carries the
+ * shadow margin - which is a rendering detail that has already changed once, and a persisted
+ * window width would have silently changed the card size with it.
+ */
 export function loadWindowState(file, displayBounds) {
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8'));
-    const width = clamp(Number(raw.width) || DEFAULT_WIDTH, MIN_WIDTH, MAX_WIDTH);
+    const stored = Number(raw.cardWidth);
+    const legacy = Number(raw.width);
+    // Older files stored the window width; recover the card width from it.
+    const wanted = Number.isFinite(stored) && stored > 0 ? stored : legacy - SHADOW_PAD * 2;
+    const cardWidth = clamp(Math.round(wanted) || CARD_WIDTH_DEFAULT, CARD_WIDTH_MIN, CARD_WIDTH_MAX);
     const x = Number.isFinite(raw.x) ? raw.x : undefined;
     const y = Number.isFinite(raw.y) ? raw.y : undefined;
     // Reject a position that is no longer on any display (monitor unplugged).
@@ -37,26 +196,22 @@ export function loadWindowState(file, displayBounds) {
       x !== undefined &&
       y !== undefined &&
       displayBounds.some((b) => x >= b.x - 20 && x < b.x + b.width && y >= b.y - 20 && y < b.y + b.height);
-    return { width, x: onScreen ? x : undefined, y: onScreen ? y : undefined };
+    return { cardWidth, x: onScreen ? x : undefined, y: onScreen ? y : undefined };
   } catch {
-    return { width: DEFAULT_WIDTH, x: undefined, y: undefined };
+    return { cardWidth: CARD_WIDTH_DEFAULT, x: undefined, y: undefined };
   }
 }
 
-export function saveWindowState(file, bounds) {
+export function saveWindowState(file, state) {
   try {
     writeFileSync(
       file,
-      JSON.stringify({ width: bounds.width, x: bounds.x, y: bounds.y }, null, 2),
+      JSON.stringify({ cardWidth: state.cardWidth, x: state.x, y: state.y }, null, 2),
       'utf8',
     );
   } catch {
     // A failed write only costs the remembered position.
   }
-}
-
-export function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
 }
 
 /* ----------------------------------------------------------------- tray icon */

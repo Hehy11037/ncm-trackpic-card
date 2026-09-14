@@ -39,6 +39,9 @@ import {
   stateFilePath,
 } from './shell-utils.mjs';
 
+// Shared with the renderer so the two sides cannot disagree about where a drag puts the window.
+import { dragTarget } from '../../ui/src/drag.js';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -108,6 +111,14 @@ let suppressUntil = 0;
 let hoverTimer = null;
 let hoverState = null;
 let saveTimer = null;
+/** Bounds captured at the start of a pointer drag, or null when no drag is in progress. */
+let dragOrigin = null;
+let dragMoved = false;
+/** When the last drag event arrived, so a gesture that never ends can be dropped. */
+let dragLastAt = 0;
+
+/** A drag with no traffic for this long is treated as abandoned rather than left open. */
+const DRAG_STALE_MS = 30_000;
 
 /* -------------------------------------------------------------- single instance */
 
@@ -295,6 +306,17 @@ function startHoverWatch() {
     try {
       if (quitting || !mainWindow || mainWindow.isDestroyed()) return;
       if (!mainWindow.isVisible() || mainWindow.isMinimized()) {
+        hoverState.reset();
+        return;
+      }
+      // A drag moves the window under the pointer; rolling up mid-drag would be absurd, and the
+      // bounds sampled during one are meaningless. A drag that stops reporting is dropped, so
+      // this can never become a permanent "never rolls up again".
+      if (dragOrigin) {
+        if (Date.now() - dragLastAt > DRAG_STALE_MS) {
+          console.warn('[shell] 拖动超过 30 秒没有动静，已放弃该手势');
+          endDrag();
+        }
         hoverState.reset();
         return;
       }
@@ -543,6 +565,53 @@ function bindIpc() {
   });
 
   ipcMain.on('overlay:close', () => hideWindow());
+
+  /* --------------------------------------------------------------- dragging */
+
+  ipcMain.on('overlay:drag-start', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    // The bounds are captured once, at the press. Every move is then measured from here, so the
+    // window's position is a pure function of the total pointer delta - no accumulation, and no
+    // drift if an event is dropped.
+    dragOrigin = mainWindow.getBounds();
+    dragMoved = false;
+    dragLastAt = Date.now();
+  });
+
+  ipcMain.on('overlay:drag-move', (event, delta) => {
+    if (!mainWindow || !dragOrigin || event.sender !== mainWindow.webContents) return;
+    const target = dragTarget(dragOrigin, Number(delta?.dx) || 0, Number(delta?.dy) || 0);
+    const bounds = mainWindow.getBounds();
+    if (bounds.x === target.x && bounds.y === target.y) return;
+    dragMoved = true;
+    dragLastAt = Date.now();
+    // Never let the cursor leave the window mid-drag: the gesture would stop receiving events.
+    suppressUntil = Date.now() + SUPPRESS_MS;
+    mainWindow.setBounds({ ...bounds, x: target.x, y: target.y }, false);
+  });
+
+  ipcMain.on('overlay:drag-end', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    endDrag();
+  });
+
+  // A renderer that goes away mid-drag must not leave the gesture (and with it the suppression
+  // of auto-collapse) open.
+  mainWindow?.webContents.on('render-process-gone', () => endDrag());
+}
+
+/**
+ * Forget an in-flight drag.
+ *
+ * A drag that never ends would leave `dragOrigin` set, and the pointer watcher skips every tick
+ * while a drag is open - so the card would silently stop rolling up. That failure mode has
+ * already cost this project a round, so a stale drag is dropped rather than trusted.
+ */
+function endDrag() {
+  if (!dragOrigin) return;
+  dragOrigin = null;
+  if (dragMoved) persistWindowState();
+  dragMoved = false;
 }
 
 /* --------------------------------------------------------------------- start */

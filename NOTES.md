@@ -380,5 +380,63 @@ flaws in `tools/css-values.mjs`:
 It now splits selector lists and takes the last declaration, like the cascade. Both are
 pinned by checks, because both produced confident wrong answers rather than errors.
 
+## 2026-09-15 (4) — stop betting on `-webkit-app-region`
+
+Three rounds produced three different arrangements of drag regions, and each one traded
+one broken feature for another:
+
+| arrangement | colour band | window movable |
+| --- | --- | --- |
+| body draggable, 4px band carve-out | **broken** | yes |
+| body draggable, 26px band carve-out | **broken** | yes |
+| nothing draggable | yes | **broken** |
+| body draggable, card carved out in one rect | untested | assumed |
+
+The two requirements genuinely pull against each other, and their failure modes are not
+equal: a window that cannot be moved is an annoyance, a control that cannot be pressed is
+a bug. So the mechanism is gone entirely - **no element declares `-webkit-app-region`** -
+and dragging is an ordinary pointer gesture in `ui/src/drag.js`: press anywhere that is not
+a control, then move.
+
+Three details make that gesture safe rather than a new source of bugs:
+
+* The window position is `dragTarget(originBounds, totalDx, totalDy)` - a pure function of
+  the **total** delta since the press, not an accumulation. A dropped or coalesced pointer
+  event therefore cannot make the window drift. It is unit-tested, including that the
+  captured origin is never mutated.
+* `setPointerCapture` is used, because a fast flick can otherwise release the button
+  outside the window and leave the drag running.
+* `dragStart` is sent on the press but `dragEnd` is **always** sent, even when nothing
+  moved. Skipping it for a plain click left a drag open, and the shell skips every
+  auto-collapse tick while a drag is open - which would have reproduced the exact "never
+  rolls up" symptom this round was fixing. The shell additionally drops a drag that has had
+  no traffic for 30s.
+
+### The tray icon, and why one bug hid another
+
+The user's startup log contained the whole answer:
+
+```
+UnhandledPromiseRejectionWarning: Error: Argument must be a file path or a NativeImage
+    at createTray (main.mjs:507)
+```
+
+`new Tray(makeIconPng(...))` handed Electron a raw PNG **Buffer**; `Tray` and
+`BrowserWindow.icon` want a `NativeImage` or a path. The throw happened in the middle of
+the `whenReady()` chain, so **everything after it never ran, including
+`startHoverWatch()`** - "no auto collapse, it stays expanded", exactly as reported. Two
+unrelated bugs presenting as one, the second hidden behind the first.
+
+The icon itself was fine; the PNG decoded into a rounded square with a play triangle. Two
+lessons, both now enforced:
+
+* **Start optional features last, and wrap them.** `startHoverWatch()` runs before
+  `createWindow()` and `createTray()`; the tray is inside a `try`; the whole chain has a
+  `.catch`. A broken tray icon must not be able to disable the roll-up.
+* **Check that the image data decodes, not just that the container is well-formed.** Every
+  CRC passed on a file whose pixels could still have been unusable. `check-shell.mjs` now
+  inflates the IDAT, asserts the scanline length, and probes two pixels.
+
+
 
 

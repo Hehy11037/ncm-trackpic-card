@@ -15,6 +15,7 @@ const HTML = join(ROOT, 'ui', 'index.html');
 const SCRIPTS = [
   'ui/src/main.js',
   'ui/src/card.js',
+  'ui/src/drag.js',
   'ui/src/layout.js',
   'ui/src/lyrics.js',
   'ui/src/socket.js',

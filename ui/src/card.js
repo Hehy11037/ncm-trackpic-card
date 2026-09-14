@@ -90,6 +90,13 @@ export class CardView {
     this.renderBand();
     this.applyBackground();
     this.bindBand();
+    /*
+     * Settle immediately: the front face needs no transform while it is sitting still, and
+     * leaving it at `rotateY(0deg)` keeps a composited layer alive from the first paint. That is
+     * the same layer Chromium re-rasterises at the end of a flip, which is what made the
+     * just-flipped card differ from the static one by a sub-pixel.
+     */
+    this.el.card.dataset.settled = 'true';
 
     // Keep the layout unit and the expanded/collapsed mode in step with the stage's rendered
     // size. A ResizeObserver catches cases a window resize event misses (the shell resizing

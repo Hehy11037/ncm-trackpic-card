@@ -13,7 +13,8 @@
 //   - the floating shadow fits inside the transparent margin the window leaves for it
 //   - the roll-up actually has two mutually exclusive states with the right contents
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { makeCssReader, readStyle, shorthandSides, splitCommas, splitWhitespace, stripComments } from './css-values.mjs';
 
@@ -23,6 +24,9 @@ const html = readStyle('ui/index.html');
 const mainJs = readStyle('ui/src/main.js');
 const cardJs = readStyle('ui/src/card.js');
 const layoutJs = readStyle('ui/src/layout.js');
+const shellJs = readStyle('apps/overlay/main.mjs');
+const shellUtils = readStyle('apps/overlay/shell-utils.mjs');
+const preloadJs = readStyle('apps/overlay/preload.cjs');
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -47,8 +51,16 @@ console.log('--- 样式读取工具 ---');
    * first-match `\.credit\s*\{` scan returns that group and hides the real rule.
    */
   const shadow = css.declaration('.card', 'box-shadow') ?? '';
-  check('同一选择器的后一条规则生效', shadow.includes('var(--shadow-float)'), shadow.slice(0, 40));
-  check('未声明的属性会继续向后找', css.declaration('.card', '-webkit-app-region') === 'no-drag');
+  check('能找到卡片的阴影', shadow.includes('var(--shadow-float)'), shadow.slice(0, 40));
+  // `.lyric-line` has two rules: the main one sets `color` and `line-height`, the later one
+  // overrides only `color`. The cascade says the later colour wins and the earlier line-height
+  // survives, which is exactly the pair of behaviours a naive lookup gets wrong.
+  check(
+    '同一选择器的后一条规则生效',
+    (css.declaration('.lyric-line', 'color') ?? '').includes('--lyric-2'),
+    css.declaration('.lyric-line', 'color'),
+  );
+  check('未声明的属性不会丢', css.value('.lyric-line', 'line-height') === 1.45, String(css.value('.lyric-line', 'line-height')));
   check(
     '逗号选择器组不会遮蔽真实规则',
     css.value('.credit', 'margin-top') > 0,
@@ -94,45 +106,46 @@ console.log('--- 命中区域 ---');
 
 /* --------------------------------------------------------------- no-drag */
 
-console.log('\n--- 窗口拖拽区域 ---');
+console.log('\n--- 窗口拖动 ---');
 {
   /*
-   * The shape of the carve-outs is what broke the band: each control declared its own
-   * `no-drag`, and the band's box was 4px tall at the time, so a press one pixel off started a
-   * window drag instead. The card now subtracts itself in one rect, so nothing inside it can be
-   * swallowed, and the big non-interactive surfaces opt back in so the window can still be
-   * dragged.
+   * Dragging is a pointer gesture, not a `-webkit-app-region` region. Three rounds established
+   * that the CSS mechanism and this card's controls cannot coexist: a window-wide region made
+   * the colour band unclickable however its carve-out was sized, and every partial arrangement
+   * either broke a control or left the window impossible to move.
+   *
+   * The invariant that matters, and the one no browser is needed to check, is that no element
+   * declares a drag region at all - so there is nothing left that can swallow a press.
    */
-  check('body 声明窗口拖拽区', /-webkit-app-region:\s*drag/.test(css.tokens));
-  check('整张卡片作为一次性挖空', css.declaration('.card', '-webkit-app-region') === 'no-drag');
-  check('收起条整条可拖动', css.declaration('.mini', '-webkit-app-region') === 'drag');
+  check('没有任何元素声明拖拽区', !/-webkit-app-region:\s*drag/.test(css.rules));
+  check('tokens.css 也没有', !/-webkit-app-region:\s*drag/.test(css.tokens));
 
-  const dragSelectors = new Set();
-  for (const m of css.rules.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
-    if (!/-webkit-app-region:\s*drag/.test(m[2])) continue;
-    for (const selector of m[1].split(',')) dragSelectors.add(selector.trim());
-  }
-  // Enough surface to actually move the window with, since the card's own rect is subtracted.
-  // `.lyrics` matters because the back face has no other handle.
-  for (const selector of ['.cover-wrap', '.title', '.artist', '.progress', '.lyrics', '.mini']) {
-    check(`${selector} 是拖拽手柄`, dragSelectors.has(selector));
-  }
-  // A control inside a drag handle would be swallowed, so the two lists must not overlap.
-  const controls = ['.band', '.band-segment', '.ctrl', '.icon-btn', '.mini-action', '.foot'];
-  for (const selector of controls) {
-    check(`${selector} 不是拖拽手柄`, !dragSelectors.has(selector));
-  }
+  const dragJs = readStyle('ui/src/drag.js');
+  check('拖动由指针手势实现', /installDragToMove/.test(dragJs) && /pointerdown/.test(dragJs));
+  check('拖动已安装到界面', /installDragToMove\(\{ shell \}\)/.test(mainJs));
+  check('按下控件不会拖动', /CONTROL_SELECTOR/.test(dragJs) && /closest\(CONTROL_SELECTOR\)/.test(dragJs));
+  check('色带被排除在拖动之外', /'button, a, input, select, textarea, \.band, \.band-segment'/.test(dragJs));
+  // Capture keeps a fast flick from releasing outside the window and leaving the drag running.
+  check('使用指针捕获', /setPointerCapture/.test(dragJs));
+  check('有兜底结束（取消 / 失焦）', /pointercancel/.test(dragJs) && /lostpointercapture/.test(dragJs));
+  // A press sends `drag-start`, so the gesture must be closed even when nothing moved - otherwise
+  // a drag stays open forever and the shell skips every auto-collapse tick while it is open.
+  check(
+    '未移动的按压也会结束手势',
+    /bridge\(\)\?\.dragEnd\?\.\(\);/.test(dragJs) && !/if \(dragging\) bridge/.test(dragJs),
+  );
+  check('壳端有放弃僵死拖动的兜底', /DRAG_STALE_MS/.test(shellJs) && /endDrag\(\)/.test(shellJs));
 
-  const noDragSelectors = new Set();
-  for (const m of css.rules.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
-    if (!/-webkit-app-region:\s*no-drag/.test(m[2])) continue;
-    for (const selector of m[1].split(',')) noDragSelectors.add(selector.trim());
-  }
-
-  const required = ['button', '.band', '.band-segment', '.foot', '.ctrl', '.icon-btn', '.mini-action'];
-  for (const selector of required) {
-    check(`${selector} 声明 no-drag`, noDragSelectors.has(selector));
-  }
+  const preload = preloadJs;
+  for (const verb of ['dragStart', 'dragMove', 'dragEnd']) {
+    check(`桥接暴露 ${verb}`, new RegExp(`${verb}:`).test(preload));
+  }  // The window position must be a pure function of the *total* delta, so a dropped event cannot
+  // make the window drift.
+  check('按总位移计算位置（不累加）', /dragTarget\(dragOrigin,/.test(shellJs) && /dragOrigin = mainWindow\.getBounds\(\)/.test(shellJs));
+  check('拖动期间不自动收起', /if \(dragOrigin\)/.test(shellJs));
+  // The shell imports the gesture's arithmetic from the renderer's module, so the relative path
+  // has to actually resolve.
+  check('壳能引到 drag.js', existsSync(resolve('apps/overlay', '../../ui/src/drag.js')));
 }
 
 /* ------------------------------------------------------------ stale assets */
@@ -263,10 +276,8 @@ console.log('\n--- 收起 / 展开 ---');
    * "the preload is broken" and "the card never rolls up" the same symptom, which is how this
    * shipped broken. It is gated on the webContents lifecycle instead.
    */
-  const shellJs = readStyle('apps/overlay/main.mjs');
-  const shellUtils = readStyle('apps/overlay/shell-utils.mjs');
   check('收起不依赖渲染层握手', /webContents\.once\('dom-ready'/.test(shellJs));
-  check('渲染层不再发送 ready', !/overlay:ready/.test(shellJs) && !/ready: \(\)/.test(readStyle('apps/overlay/preload.cjs')));
+  check('渲染层不再发送 ready', !/overlay:ready/.test(shellJs) && !/ready: \(\)/.test(preloadJs));
 
   // Lock: owned and persisted by the shell, offered both on the card and in the tray, and
   // defaulting to ON so an overlay never rolls itself up by surprise on first run.
@@ -274,7 +285,7 @@ console.log('\n--- 收起 / 展开 ---');
   check('锁定状态写入存档', /locked,/.test(shellJs) && /locked: state\.locked === true/.test(shellUtils));
   check('锁定默认开启', /typeof raw\.locked === 'boolean' \? raw\.locked : true/.test(shellUtils));
   check('托盘也能锁定', /锁定（鼠标离开不收起）/.test(shellJs) && /type: 'checkbox'/.test(shellJs));
-  check('渲染层订阅壳的锁定状态', /watchState/.test(mainJs) && /watchState/.test(readStyle('apps/overlay/preload.cjs')));
+  check('渲染层订阅壳的锁定状态', /watchState/.test(mainJs) && /watchState/.test(preloadJs));
   check('渲染层不再自己存锁定', !/LOCK_KEY/.test(mainJs) && !/ncm-card:locked/.test(mainJs));
   check('锁定状态推送给渲染层', /send\('overlay:state'/.test(shellJs));
   // The three controls must hide together regardless of the lock, which is what the state

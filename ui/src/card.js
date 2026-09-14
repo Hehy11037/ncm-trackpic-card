@@ -151,9 +151,9 @@ export class CardView {
   /**
    * Build the colour band and its hex labels.
    *
-   * Layout follows the reference: five equal segments with their hex codes printed
-   * underneath, plus a separate "glass" chip so the frosted option is a visible,
-   * clickable choice rather than a hidden toggle.
+   * Five equal segments sampled from the cover, with the hex code printed under each.
+   * There is no sixth "frosted glass" option: the translucent surface rendered as plain
+   * white rather than a tinted panel, so it was dropped in favour of the five colours.
    */
   renderBand() {
     const band = document.createDocumentFragment();
@@ -166,51 +166,36 @@ export class CardView {
       segment.title = `${hex} — 点击设为背景色`;
       segment.setAttribute('aria-label', `背景色 ${hex}`);
       segment.setAttribute('aria-pressed', String(this.backgroundChoice === index));
-      segment.addEventListener('click', () => {
-        this.setBackground(this.backgroundChoice === index ? 'glass' : index);
-      });
+      segment.addEventListener('click', () => this.setBackground(index));
       band.append(segment);
     });
-
-    const glass = document.createElement('button');
-    glass.type = 'button';
-    glass.className = 'band-segment band-segment--glass';
-    glass.title = '毛玻璃（跟随封面配色）';
-    glass.setAttribute('aria-label', '毛玻璃背景');
-    glass.setAttribute('aria-pressed', String(this.backgroundChoice === 'glass'));
-    glass.addEventListener('click', () => this.setBackground('glass'));
-    band.append(glass);
-
     this.el.palette.replaceChildren(band);
 
     const labels = document.createDocumentFragment();
     this.palette.forEach((color) => {
       const label = document.createElement('span');
       label.className = 'band-label';
-      label.textContent = toHex(color).slice(0, 7);
+      label.textContent = toHex(color);
       labels.append(label);
     });
-    const glassLabel = document.createElement('span');
-    glassLabel.className = 'band-label band-label--glass';
-    glassLabel.textContent = 'GLASS';
-    labels.append(glassLabel);
     this.el.paletteLabels.replaceChildren(labels);
   }
 
   setBackground(choice) {
-    this.backgroundChoice = choice;
-    saveBackgroundChoice(choice);
+    const index = typeof choice === 'number' && choice >= 0 && choice < this.palette.length ? choice : 0;
+    this.backgroundChoice = index;
+    saveBackgroundChoice(index);
     this.renderBand();
     this.applyBackground();
-    this.onBackgroundChange(choice);
+    this.onBackgroundChange(index);
   }
 
   /** Paint the card and pick a text scheme that actually contrasts with it. */
   applyBackground() {
     const root = document.documentElement;
-    const color = this.backgroundChoice === 'glass' ? null : this.palette[this.backgroundChoice] ?? null;
+    const color = this.palette[this.backgroundChoice] ?? this.palette[0];
 
-    this.el.card.dataset.bg = color ? 'palette' : 'glass';
+    this.el.card.dataset.bg = 'palette';
     root.style.setProperty('--bg', color ? css(color) : 'transparent');
 
     const { scheme, scrim, contrast } = schemeFor(color);

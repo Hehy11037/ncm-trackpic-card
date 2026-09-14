@@ -1,22 +1,27 @@
 /**
- * Scrolling lyrics.
+ * Lyrics page.
  *
- * Deliberately simple: no karaoke sweep. The active line is highlighted and the
- * stack scrolls to keep it in view; that is the whole effect. Line-level timing is
- * what the client actually provides (its yrcInfo is empty on every track measured),
- * so a per-word sweep would mostly be faked from line times.
+ * Design, from review feedback:
+ *  - The current line sits in the *middle* of the card, not at the bottom.
+ *  - Seven lines per page. The document is never stacked into one masked strip, because
+ *    that made the text too small to read.
+ *  - The current line is the largest, darkest and sharpest; lines above and below
+ *    recede (smaller, lighter, blurred) for a near-large/far-small effect.
+ *  - Type is at least as large as the front face's song title.
  *
- * Rendering strategy:
- *  - Lines are built once per document and never re-created while scrolling.
- *  - The stack moves with a single `transform: translate3d`, so scrolling is one
- *    composited property rather than a layout change.
- *  - Only lines near the viewport stay visible; a 1000-line document costs nothing
- *    per frame.
+ * Implementation: all lines are built once per document, and `#setActive` gives each one
+ * a `--d` value for its distance from the active line. CSS turns `--d` into opacity,
+ * blur, scale and a Z translation inside a perspective. Lines beyond the visible window
+ * are hidden, so a 1000-line document costs nothing per frame.
+ *
+ * No karaoke sweep: the client only provides line-level timings (its yrcInfo is empty
+ * on every track measured), so a per-word fill would be invented rather than measured.
  */
 
-const LINE_HEIGHT_GUESS = 34;
-/** Where the active line sits in the box, 0 = top, 1 = bottom. */
-const ACTIVE_OFFSET_RATIO = 0.46;
+/** Lines per page, including the current one. Odd, so the current line can centre. */
+const VISIBLE_LINES = 7;
+/** Lines farther than this are hidden rather than blurred into mush. */
+const MAX_DISTANCE = Math.floor(VISIBLE_LINES / 2);
 
 export class LyricsView {
   /** @param {HTMLElement} container */
@@ -29,12 +34,12 @@ export class LyricsView {
 
     /** @type {HTMLElement[]} */
     this.nodes = [];
-    /** @type {{startMs:number,endMs:number}[]} */
+    /** @type {{startMs:number}[]} */
     this.lines = [];
     this.activeIndex = -1;
-    this.scrollTarget = 0;
     this.scrollCurrent = 0;
-    this.showTranslation = true;
+    this.scrollTarget = 0;
+    this.lineHeight = 0;
     this.songId = null;
   }
 
@@ -51,22 +56,22 @@ export class LyricsView {
     this.stack.replaceChildren();
 
     if (this.empty) {
-      const empty = !doc.lines.length;
-      this.empty.style.display = empty ? '' : 'none';
-      if (empty) this.empty.textContent = doc.instrumental ? '纯音乐，请欣赏' : '暂无歌词';
+      const isEmpty = !doc.lines.length;
+      this.empty.style.display = isEmpty ? '' : 'none';
+      if (isEmpty) this.empty.textContent = doc.instrumental ? '纯音乐，请欣赏' : '暂无歌词';
     }
 
     const fragment = document.createDocumentFragment();
     doc.lines.forEach((line) => {
       const node = document.createElement('div');
-      node.className = 'lyric-line';
+      node.className = 'lyric-line is-offscreen';
 
       const text = document.createElement('span');
       text.className = 'text';
       text.textContent = line.text;
       node.append(text);
 
-      if (this.showTranslation && line.translation) {
+      if (line.translation) {
         const translation = document.createElement('span');
         translation.className = 'translation';
         translation.textContent = line.translation;
@@ -76,7 +81,17 @@ export class LyricsView {
       fragment.append(node);
       this.nodes.push(node);
     });
+
     this.stack.replaceChildren(fragment);
+
+    // Measure after layout so the centring maths is exact.
+    requestAnimationFrame(() => {
+      this.lineHeight = this.nodes[0]?.offsetHeight ?? 0;
+      // Force a re-application of the depth classes for the measured layout.
+      const current = this.activeIndex;
+      this.activeIndex = -1;
+      this.#setActive(current);
+    });
   }
 
   #sameTimings(doc) {
@@ -110,56 +125,51 @@ export class LyricsView {
    * Per-frame update.
    * @param {number} positionMs current playback position
    * @param {number} dtMs elapsed since the previous frame
-   * @param {boolean} animate whether to ease the scroll (false when hidden)
+   * @param {boolean} animate whether to ease the scroll (false while hidden)
    */
   tick(positionMs, dtMs, animate = true) {
     const index = this.indexAt(positionMs);
     if (index !== this.activeIndex) this.#setActive(index);
-    this.#scrollTo(index, dtMs, animate);
+    this.#centreOn(index, dtMs, animate);
   }
 
   #setActive(index) {
-    const previous = this.activeIndex;
     this.activeIndex = index;
 
-    if (previous >= 0 && this.nodes[previous]) {
-      this.nodes[previous].classList.remove('is-active');
-    }
     for (let i = 0; i < this.nodes.length; i++) {
       const node = this.nodes[i];
       if (!node) continue;
-      node.classList.toggle('is-past', i < index);
+      const distance = index < 0 ? 0 : i - index;
+      const magnitude = Math.abs(distance);
+
+      /*
+       * Lines after the current one are closer together than lines before it, so the
+       * upward direction recedes faster - that is what sells the depth.
+       */
+      const depth = distance < 0 ? magnitude + 0.4 : magnitude;
+      node.style.setProperty('--d', depth.toFixed(2));
       node.classList.toggle('is-active', i === index);
-      const distance = index < 0 ? 0 : Math.abs(i - index);
-      node.style.visibility = distance > 14 ? 'hidden' : '';
+      node.classList.toggle('is-offscreen', magnitude > MAX_DISTANCE);
     }
-    this.nodes[index]?.classList.add('is-active');
   }
 
-  #scrollTo(index, dtMs, animate) {
-    const height = this.container.clientHeight || 1;
-    const lineHeight = this.nodes[0]?.offsetHeight || LINE_HEIGHT_GUESS;
-    const anchor = height * ACTIVE_OFFSET_RATIO;
-    const target = index < 0 ? 0 : anchor - index * lineHeight - lineHeight / 2;
+  /** Keep the active line vertically centred by translating the whole stack. */
+  #centreOn(index, dtMs, animate) {
+    const lineHeight = this.lineHeight || this.nodes[0]?.offsetHeight || 0;
 
+    // The stack's origin is the container's vertical centre, so shifting by the active
+    // line's own offset puts that line in the middle.
+    const target = index < 0 || !lineHeight ? 0 : -(index * lineHeight) - lineHeight / 2;
     this.scrollTarget = target;
 
     if (!animate) {
       this.scrollCurrent = target;
     } else if (this.scrollCurrent !== target) {
-      const k = 1 - Math.exp(-dtMs / 70);
+      const k = 1 - Math.exp(-dtMs / 90);
       this.scrollCurrent += (target - this.scrollCurrent) * k;
       if (Math.abs(target - this.scrollCurrent) < 0.4) this.scrollCurrent = target;
     }
 
     this.stack.style.transform = `translate3d(0, ${this.scrollCurrent.toFixed(2)}px, 0)`;
-  }
-
-  setTranslationVisible(visible) {
-    this.showTranslation = visible;
-    for (const node of this.nodes) {
-      const translation = node.querySelector('.translation');
-      if (translation) translation.style.display = visible ? '' : 'none';
-    }
   }
 }

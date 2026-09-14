@@ -30,43 +30,59 @@ const DARK_TEXT = { r: 0x2c, g: 0x32, b: 0x36 };
  */
 export const STAGE_WIDTH_UNITS = 100;
 
+/** The stage is 100u wide and 9:16 tall. */
+export const STAGE_HEIGHT_UNITS = (100 * 16) / 9;
+
+/**
+ * Smallest allowed unit, in CSS pixels.
+ *
+ * The reference's proportions assume a phone-sized canvas where 1u = 10.8px. In a
+ * desktop window the stage is much smaller, so a literal 4.63u title lands at ~6px
+ * and everything turns to mush. Clamping the unit keeps the *structure* proportional
+ * while guaranteeing the type stays legible.
+ */
+const MIN_UNIT_PX = 2.4;
+
 /**
  * Set `--u` from the stage's actual rendered size.
  *
- * The stage size itself is CSS (`min(94vw, 94vh * 9/16)`), so this only converts
- * "current width in px" into the unit the rest of the stylesheet is written in. It
- * runs on load and on resize, and it is measured from the element rather than from
- * the viewport so the two can never disagree.
+ * The stage size is CSS (`min(94vw, 94vh * 9/16)`), so this converts "current width
+ * in px" into the unit the stylesheet is written in. Measured from the element rather
+ * than the viewport so the two cannot disagree.
  *
  * @param {HTMLElement} [stage] defaults to #stage
- * @returns {{ unit: number, width: number, height: number }}
+ * @returns {{ unit: number, raw: number, width: number, height: number }}
  */
 export function applyLayoutUnit(stage = document.getElementById('stage')) {
   const root = document.documentElement;
 
-  // Fall back to the viewport if the element is missing, so a markup mistake
-  // degrades to "wrong scale" rather than "everything is zero".
   const width = stage?.clientWidth || window.innerWidth * 0.94;
   const height = stage?.clientHeight || (width * 16) / 9;
-  const unit = width / STAGE_WIDTH_UNITS || 3.6;
+  const raw = width / STAGE_WIDTH_UNITS || MIN_UNIT_PX;
+  const unit = Math.max(raw, MIN_UNIT_PX);
+  // The card is allowed to be taller than the stage when the unit is clamped: it is
+  // centred, so it simply extends past a short window instead of crushing the type.
+  const cardHeight = Math.max(height, unit * STAGE_HEIGHT_UNITS);
 
   root.style.setProperty('--u', `${unit.toFixed(5)}px`);
+  // The unclamped unit, so tooling and tests can reason about the reference's exact
+  // proportions even when the rendered unit is pinned to the legibility floor.
+  root.style.setProperty('--u-pure', `${raw.toFixed(5)}px`);
+  root.style.setProperty('--card-height', `${cardHeight.toFixed(2)}px`);
   root.style.setProperty('--stage-width', `${width}px`);
   root.style.setProperty('--stage-height', `${height}px`);
 
-  return { unit, width, height };
+  return { unit, raw, width, height: cardHeight };
 }
 
 /**
  * Choose the text scheme and scrim for a background colour.
  *
- * @param {{r:number,g:number,b:number}|null} background null means frosted glass
+ * @param {{r:number,g:number,b:number}} background
  * @returns {{ scheme: 'light'|'dark', scrim: string, contrast: number }}
  */
 export function schemeFor(background) {
-  if (!background) {
-    return { scheme: 'light', scrim: 'transparent', contrast: 0 };
-  }
+  if (!background) return { scheme: 'light', scrim: 'transparent', contrast: 0 };
 
   const bgLuma = luminance(background);
   const lightRatio = contrastRatio(bgLuma, luminance(LIGHT_TEXT));
@@ -87,17 +103,22 @@ export function schemeFor(background) {
   return { scheme, scrim, contrast };
 }
 
-/** Persisted background choice: 'glass' or a swatch index. */
+/**
+ * Persisted background choice: an index into the five-colour palette.
+ *
+ * The old "glass" value is treated as 0, so a choice saved by an earlier version does
+ * not leave the card unbound.
+ */
 const STORAGE_KEY = 'ncm-card:background';
 
 export function loadBackgroundChoice() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw || raw === 'glass') return 'glass';
+    if (!raw || raw === 'glass') return 0;
     const index = Number(raw);
-    return Number.isInteger(index) && index >= 0 && index < 16 ? index : 'glass';
+    return Number.isInteger(index) && index >= 0 && index < 5 ? index : 0;
   } catch {
-    return 'glass';
+    return 0;
   }
 }
 

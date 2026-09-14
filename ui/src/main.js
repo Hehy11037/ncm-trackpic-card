@@ -8,6 +8,7 @@
 
 import { CardView } from './card.js';
 import { PlayClock, isSampleStale } from './clock.js';
+import { applyLayoutUnit } from './layout.js';
 import { LyricsView } from './lyrics.js';
 import { HostLink } from './socket.js';
 
@@ -18,6 +19,9 @@ const STALE_FREEZE_MS = 2500;
 const view = new CardView();
 const clock = new PlayClock();
 const lyrics = new LyricsView(document.getElementById('lyrics'));
+
+// Size the composition to the window before the first paint.
+applyLayoutUnit();
 
 let link = null;
 let connected = false;

@@ -23,8 +23,10 @@ const outDir = join(process.cwd(), getArg('out', '.scratch/shots'));
 const face = getArg('face', 'both');
 const scale = Number(getArg('scale', '2'));
 const uiUrl = getArg('url', 'http://127.0.0.1:8788/');
-const width = Number(getArg('width', '420'));
-const height = Number(getArg('height', '180'));
+// 9:16 portrait, matching the reference composition. The CSS scales off height, so
+// this window size is also what makes the preview representative.
+const width = Number(getArg('width', '360'));
+const height = Number(getArg('height', '640'));
 
 mkdirSync(outDir, { recursive: true });
 

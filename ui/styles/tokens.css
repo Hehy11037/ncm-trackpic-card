@@ -1,54 +1,69 @@
 /*
  * Design tokens.
  *
- * The palette is driven by the cover art, so most colours here are variables the
- * UI rewrites at runtime (see src/palette.js). The defaults are a neutral fallback
- * for when nothing is playing yet.
+ * The numeric scale is taken from the reference design (TrackPic, 9:16 wallpaper):
+ * type sizes 9/10/11/12/13px, letter-spacing 0.05em-0.28em, weights 400-600,
+ * radii 6/8/20/24px, and a three-step text hierarchy expressed as opacity.
  *
- * Typography follows the reference design: rounded/grotesque stack, generous
- * letter-spacing on the title, small caps-ish metadata.
+ * `--u` is the layout unit. The overlay is a smaller surface than a phone wallpaper,
+ * so everything is expressed as multiples of `--u` and `--u` is set from the window
+ * height by src/layout.js. That keeps the composition proportional at any size.
  */
 
 :root {
-  /* Cover-derived accent colours (overwritten per track). */
-  --accent-dominant: #8fb4cd;
-  --accent-top: #8fb4cd;
-  --accent-bottom: #7fa8cd;
-  --accent-soft: rgba(143, 180, 205, 0.22);
+  /* Layout unit; overridden at runtime. */
+  --u: 5.4px;
+  --card-radius: calc(var(--u) * 4.4);
+  --cover-radius: calc(var(--u) * 3.1);
 
-  /* Text colours chosen for contrast against the current background. */
+  /* Reference type scale, in layout units. */
+  --fs-title: calc(var(--u) * 9.8);
+  --fs-artist: calc(var(--u) * 5.2);
+  --fs-time: calc(var(--u) * 4.4);
+  --fs-credit: calc(var(--u) * 3.9);
+  --fs-lyric: calc(var(--u) * 6.6);
+  --fs-lyric-sub: calc(var(--u) * 5);
+  --fs-status: calc(var(--u) * 4.4);
+
+  --tracking-title: 0.02em;
+  --tracking-artist: 0.16em;
+  --tracking-credit: 0.28em;
+  --tracking-time: 0.06em;
+
+  /* Font stack from the reference (their webfont is licensed, so we fall back to
+     the rounded CJK families that ship with the OS and with this machine). */
+  --font-ui: 'fot-tsukuardgothic-std', 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN',
+    'MiSans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+
+  /* Cover-derived accent colours, overwritten per track. */
+  --accent-dominant: #98b6be;
+  --accent-top: #98b6be;
+  --accent-bottom: #4a6370;
+  --accent-soft: rgba(152, 182, 190, 0.22);
+
+  /* Background. `--panel` is the frosted-glass option; `--bg` is a flat palette
+     colour when the user picks one. */
+  --bg: transparent;
+  --panel: rgba(255, 255, 255, 0.34);
+  --panel-line: rgba(44, 50, 54, 0.12);
+  --scrim: transparent;
+
+  /* Text hierarchy: three steps by opacity, as in the reference. */
   --text-strong: #2c3236;
   --text-muted: rgba(44, 50, 54, 0.62);
-  --text-faint: rgba(44, 50, 54, 0.34);
+  --text-faint: rgba(44, 50, 54, 0.4);
 
-  /* Surface: the card is translucent so the desktop shows through slightly. */
-  --surface: rgba(255, 255, 255, 0.72);
-  --surface-strong: rgba(255, 255, 255, 0.86);
-  --surface-line: rgba(44, 50, 54, 0.1);
-
-  --radius-card: 22px;
-  --radius-cover: 16px;
-
-  --card-width: 420px;
-  --card-height: 180px;
-
-  --font-ui: 'MiSans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-
-  --ease-flip: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --flip-duration: 420ms;
 }
 
-/*
- * Dark scheme: when the cover is dark, the UI flips text to light and the surface
- * to a dark translucent panel. Toggled by palette.js via [data-scheme].
- */
+/* Light text on dark palettes. `data-scheme` is set from the chosen background. */
 :root[data-scheme='dark'] {
+  --panel: rgba(20, 24, 28, 0.34);
+  --panel-line: rgba(237, 241, 243, 0.18);
   --text-strong: #edf1f3;
-  --text-muted: rgba(237, 241, 243, 0.66);
-  --text-faint: rgba(237, 241, 243, 0.36);
-  --surface: rgba(20, 22, 26, 0.62);
-  --surface-strong: rgba(20, 22, 26, 0.8);
-  --surface-line: rgba(237, 241, 243, 0.14);
+  --text-muted: rgba(237, 241, 243, 0.65);
+  --text-faint: rgba(237, 241, 243, 0.42);
 }
 
 * {
@@ -59,15 +74,14 @@ html,
 body {
   margin: 0;
   height: 100%;
-  /* Transparent so the Electron window can be see-through. */
   background: transparent;
   font-family: var(--font-ui);
   color: var(--text-strong);
   overflow: hidden;
-  /* The window itself is draggable; interactive children opt out. */
   -webkit-app-region: drag;
   user-select: none;
   cursor: default;
+  -webkit-font-smoothing: antialiased;
 }
 
 button {
@@ -76,8 +90,8 @@ button {
   border: 0;
   background: none;
   cursor: pointer;
-  /* Buttons must stay clickable inside a draggable window. */
   -webkit-app-region: no-drag;
+  padding: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

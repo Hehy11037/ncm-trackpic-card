@@ -9,11 +9,16 @@
   </head>
   <body>
     <!--
-      One fixed-size card with two faces. Both stay mounted; only opacity/transform
-      change, so flipping never restarts the progress animation or the lyric scroll.
+      9:16 portrait card, sized at runtime from the window (see src/layout.js).
+      Two faces: the cover page and the lyrics page. Both stay mounted so flipping
+      never restarts the progress sweep or the lyric scroll.
+
+      The colour palette strip doubles as the background picker: tapping a swatch
+      paints the card with that colour, tapping it again returns to the frosted
+      glass. That is the six options from the reference design (5 palette colours
+      plus the glass).
     -->
-    <main id="card" class="card" data-face="front" aria-live="polite">
-      <div class="glow" id="glow" aria-hidden="true"></div>
+    <main id="card" class="card" data-face="front" data-bg="glass" aria-live="polite">
 
       <section class="face face--front" id="face-front">
         <div class="cover-wrap">
@@ -22,45 +27,46 @@
         </div>
 
         <div class="meta">
-          <div class="meta-head">
-            <h1 class="title" id="title">未检测到播放</h1>
-            <p class="artist" id="artist">等待网易云音乐</p>
-          </div>
+          <h1 class="title" id="title">未检测到播放</h1>
+          <p class="artist" id="artist">等待网易云音乐</p>
+        </div>
 
-          <div class="progress">
-            <div class="progress-track">
-              <div class="progress-fill" id="progress-fill"></div>
-            </div>
-            <div class="progress-times">
-              <span id="time-now">0:00</span>
-              <span id="time-total">0:00</span>
-            </div>
+        <div class="progress">
+          <div class="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
           </div>
-
-          <div class="controls" id="controls">
-            <button class="ctrl" data-action="previous" title="上一首" aria-label="上一首">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9.5 12z" /></svg>
-            </button>
-            <button class="ctrl ctrl--primary" data-action="playPause" title="播放/暂停" aria-label="播放/暂停">
-              <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
-              <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.2v14H7zM13.8 5H17v14h-3.2z" /></svg>
-            </button>
-            <button class="ctrl" data-action="next" title="下一首" aria-label="下一首">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z" /></svg>
-            </button>
+          <div class="progress-times">
+            <span id="time-now">0:00</span>
+            <span id="time-total">0:00</span>
           </div>
         </div>
 
-        <div class="palette" id="palette" aria-hidden="true"></div>
+        <div class="controls" id="controls">
+          <button class="ctrl" data-action="previous" title="上一首" aria-label="上一首">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9.5 12z" /></svg>
+          </button>
+          <button class="ctrl ctrl--primary" data-action="playPause" title="播放/暂停" aria-label="播放/暂停">
+            <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+            <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.2v14H7zM13.8 5H17v14h-3.2z" /></svg>
+          </button>
+          <button class="ctrl" data-action="next" title="下一首" aria-label="下一首">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z" /></svg>
+          </button>
+        </div>
+
+        <div class="foot">
+          <div class="palette" id="palette" role="group" aria-label="背景色"></div>
+          <span class="credit" id="credit">NCM · TRACKPIC CARD</span>
+        </div>
       </section>
 
-      <section class="face face--back" id="face-back" aria-hidden="false">
+      <section class="face face--back" id="face-back">
         <div class="lyrics" id="lyrics">
           <div class="lyrics-empty" id="lyrics-empty">歌词尚未就绪</div>
         </div>
       </section>
 
-      <button class="flip" id="flip" title="翻面" aria-label="翻面">
+      <button class="flip" id="flip" title="翻面（F）" aria-label="翻面">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 5V2L7 6l5 4V7a5 5 0 0 1 4.6 7h2.1A7 7 0 0 0 12 5zm0 12a5 5 0 0 1-4.6-7H5.3A7 7 0 0 0 12 19v3l5-4-5-4z" />
         </svg>

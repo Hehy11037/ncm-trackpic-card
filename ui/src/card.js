@@ -1,18 +1,25 @@
 /**
- * DOM rendering for the card. Pure-ish: takes state, writes to elements that are
- * looked up once. All per-frame work goes through `tick()`.
+ * DOM rendering for the card.
+ *
+ * Two things changed when the layout became 9:16 portrait:
+ *
+ *  - The palette strip is now interactive. Its five swatches are the background
+ *    picker (tap to paint the card, tap again for frosted glass), which is the six
+ *    background options from the reference design.
+ *  - Text polarity is recomputed per background, not just per cover, because a flat
+ *    palette colour and a translucent glass panel need different contrast handling.
  */
 
 import { formatTime } from './clock.js';
+import { applyLayoutUnit, loadBackgroundChoice, REFERENCE_PALETTE, saveBackgroundChoice, schemeFor } from './layout.js';
 import { css, paletteFor } from './palette.js';
 
 const $ = (id) => document.getElementById(id);
 
 export class CardView {
-  constructor() {
+  constructor(options = {}) {
     this.el = {
       card: $('card'),
-      glow: $('glow'),
       cover: $('cover'),
       title: $('title'),
       artist: $('artist'),
@@ -22,29 +29,34 @@ export class CardView {
       palette: $('palette'),
       status: $('status-text'),
       flip: $('flip'),
+      credit: $('credit'),
     };
 
+    this.onBackgroundChange = options.onBackgroundChange ?? (() => {});
     this.currentCoverUrl = null;
     this.currentSongKey = null;
-    this.swatches = [];
+    /** @type {{r:number,g:number,b:number}[]} */
+    this.palette = REFERENCE_PALETTE;
+    /** 'glass' or a palette index. */
+    this.backgroundChoice = loadBackgroundChoice();
+
     this.lastFraction = -1;
     this.lastSecond = -1;
+
+    this.renderSwatches();
+    this.applyBackground();
+
+    window.addEventListener('resize', () => {
+      applyLayoutUnit();
+    });
   }
 
-  /* ------------------------------------------------------------- connection */
-
-  setConnection(info) {
-    const connected = info.state === 'ready';
-    this.el.card.dataset.connected = String(connected);
-    this.el.status.textContent = info.detail || info.state;
+  get background() {
+    return this.backgroundChoice;
   }
 
   /* -------------------------------------------------------------- playback */
 
-  /**
-   * Apply a snapshot. Returns true when the track itself changed, so the caller can
-   * reset per-track state.
-   */
   setSnapshot(snapshot) {
     const song = snapshot.song;
     const songKey = song ? `${song.id ?? ''}|${song.name}` : null;
@@ -56,15 +68,16 @@ export class CardView {
       ? song.artists.map((a) => a.name).join(' / ')
       : '等待网易云音乐';
 
-    const status = snapshot.playback?.status ?? 'unknown';
-    this.el.card.dataset.status = status;
+    this.el.card.dataset.status = snapshot.playback?.status ?? 'unknown';
     this.el.timeTotal.textContent = formatTime(song?.durationMs ?? 0);
 
-    if (trackChanged) {
-      this.applyCover(song?.coverUrl ?? null);
-    }
-
+    if (trackChanged) this.applyCover(song?.coverUrl ?? null);
     return trackChanged;
+  }
+
+  setConnection(info) {
+    this.el.card.dataset.connected = String(info.state === 'ready');
+    this.el.status.textContent = info.detail || info.state;
   }
 
   /* ----------------------------------------------------------------- cover */
@@ -76,15 +89,13 @@ export class CardView {
     if (!url) {
       this.el.cover.classList.remove('is-loaded');
       this.el.cover.removeAttribute('src');
-      this.applyPalette(null);
+      this.setPalette(REFERENCE_PALETTE);
       return;
     }
 
-    // The palette is extracted from the same image; do both off one load.
     void paletteFor(url).then((palette) => {
-      // Guard against a slower response for a cover we already moved past.
       if (this.currentCoverUrl !== url) return;
-      this.applyPalette(palette);
+      if (palette?.colors?.length) this.setPalette(palette.colors);
     });
 
     this.el.cover.onload = () => this.el.cover.classList.add('is-loaded');
@@ -94,38 +105,74 @@ export class CardView {
 
   /* --------------------------------------------------------------- palette */
 
-  applyPalette(palette) {
+  setPalette(colors) {
+    if (!colors?.length) return;
+    this.palette = colors.slice(0, 5);
+    this.renderSwatches();
+    this.applyBackground();
+
+    // Accent colours drive the glow and the primary button.
     const root = document.documentElement;
-    if (!palette) {
-      root.removeAttribute('data-scheme');
-      this.el.palette.replaceChildren();
-      this.swatches = [];
-      return;
-    }
+    const sorted = [...this.palette].sort((a, b) => (a.r + a.g + a.b) - (b.r + b.g + b.b));
+    root.style.setProperty('--accent-top', css(sorted[sorted.length - 1]));
+    root.style.setProperty('--accent-bottom', css(sorted[0]));
+    root.style.setProperty('--accent-dominant', css(this.palette[0]));
+    root.style.setProperty('--accent-soft', css(this.palette[0], 0.24));
+  }
 
-    root.dataset.scheme = palette.scheme;
-    root.style.setProperty('--accent-dominant', css(palette.dominant));
-    root.style.setProperty('--accent-top', css(palette.glowTop));
-    root.style.setProperty('--accent-bottom', css(palette.glowBottom));
-    root.style.setProperty('--accent-soft', css(palette.dominant, 0.22));
-
-    this.swatches = palette.colors;
+  /**
+   * Build the swatch strip. Five palette colours plus nothing else: the glass option
+   * is "no swatch selected", which keeps the row short and matches the reference,
+   * where the palette is exactly five colours.
+   */
+  renderSwatches() {
     const fragment = document.createDocumentFragment();
-    for (const color of palette.colors) {
-      const swatch = document.createElement('span');
-      swatch.style.background = css(color);
-      fragment.append(swatch);
-    }
+    this.palette.forEach((color, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'swatch';
+      button.style.background = css(color);
+      button.title = `背景色 ${index + 1}（再次点击回到毛玻璃）`;
+      const active = this.backgroundChoice === index;
+      button.setAttribute('aria-pressed', String(active));
+      button.addEventListener('click', () => {
+        // Tapping the active swatch toggles back to frosted glass.
+        this.setBackground(this.backgroundChoice === index ? 'glass' : index);
+      });
+      fragment.append(button);
+    });
     this.el.palette.replaceChildren(fragment);
+  }
+
+  setBackground(choice) {
+    this.backgroundChoice = choice;
+    saveBackgroundChoice(choice);
+    this.renderSwatches();
+    this.applyBackground();
+    this.onBackgroundChange(choice);
+  }
+
+  /** Paint the card and pick a text scheme that actually contrasts with it. */
+  applyBackground() {
+    const root = document.documentElement;
+    const color = this.backgroundChoice === 'glass' ? null : this.palette[this.backgroundChoice] ?? null;
+
+    this.el.card.dataset.bg = color ? 'palette' : 'glass';
+    root.style.setProperty('--bg', color ? css(color) : 'transparent');
+
+    const { scheme, scrim, contrast } = schemeFor(color);
+    root.dataset.scheme = scheme;
+    root.style.setProperty('--scrim', scrim);
+
+    // Exposed for the devtools console; handy when tuning palette choices.
+    root.dataset.bgContrast = contrast ? contrast.toFixed(2) : '';
   }
 
   /* ------------------------------------------------------------------ tick */
 
-  /** Per-frame update; only touches what changed. */
   tick(positionMs, fraction) {
     if (fraction !== this.lastFraction) {
       this.lastFraction = fraction;
-      // Width is the cheap option here and the element is a single small bar.
       this.el.fill.style.width = `${(fraction * 100).toFixed(2)}%`;
     }
     const second = Math.floor(positionMs / 1000);

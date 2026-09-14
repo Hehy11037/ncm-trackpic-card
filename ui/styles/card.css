@@ -431,7 +431,9 @@
   position: absolute;
   left: 0;
   right: 0;
+  /* The stack's own centre is the origin, so centring a line is a plain translate. */
   top: 50%;
+  transform: translateY(-50%);
   transform-style: preserve-3d;
   will-change: transform;
 }
@@ -442,18 +444,17 @@
   text-align: center;
   font-size: var(--fs-lyric);
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.34;
   color: var(--text-strong);
   /*
-   * Depth: `--d` is the distance from the current line in lines (0 here, set per line
-   * from JS). The centre line is fully opaque and unscaled; each step away shrinks,
-   * fades, blurs and lightens.
+   * Depth: `--d` is this line's distance from the current one (set from JS). The current
+   * line is fully opaque and unscaled; each step away shrinks, fades and blurs steeply.
    */
   --d: 0;
-  opacity: calc(1 - var(--d) * 0.26);
-  filter: blur(calc(var(--d) * 0.55px));
-  transform: translateZ(calc(var(--d) * -46px)) scale(calc(1 - var(--d) * 0.06));
-  transition: opacity 260ms var(--ease), filter 260ms var(--ease), transform 260ms var(--ease);
+  opacity: calc(1 - var(--d) * 0.42);
+  filter: blur(calc(var(--d) * 1.25px));
+  transform: translateZ(calc(var(--d) * -70px)) scale(calc(1 - var(--d) * 0.11));
+  transition: opacity 240ms var(--ease), filter 240ms var(--ease), transform 240ms var(--ease);
 }
 
 .lyric-line .translation {
@@ -461,7 +462,7 @@
   margin-top: calc(var(--u) * 0.5);
   font-size: var(--fs-lyric-sub);
   font-weight: 400;
-  opacity: 0.72;
+  opacity: 0.7;
 }
 
 .lyric-line.is-active {

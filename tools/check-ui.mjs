@@ -6,6 +6,16 @@
 // Checks the pieces that can be checked headlessly: the config endpoint, every
 // file the UI loads, their content types, and that path traversal is refused. The
 // visual result still needs a browser, but a broken asset path shows up here.
+//
+// It starts its own host if one is not already answering. It used to depend on a host being
+// started by hand, which made `npm run check` pass or fail according to what happened to be
+// running on the machine - it was green for a while only because a leftover host from an earlier
+// session was still alive, and then went red with seventeen "fetch failed" lines for no reason
+// anybody could see in the code.
+
+import { spawn } from 'node:child_process';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { join } from 'node:path';
 
 const args = process.argv.slice(2);
 let uiPort = 8788;
@@ -16,6 +26,10 @@ for (let i = 0; i < args.length; i++) {
 }
 
 const base = `http://127.0.0.1:${uiPort}`;
+const ROOT = process.cwd();
+/** The host we started, if any. Never kills a host that was already running. */
+let ownedHost = null;
+
 const ASSETS = [
   ['/', 'text/html'],
   ['/config.json', 'application/json'],
@@ -33,7 +47,57 @@ const ASSETS = [
 
 let failures = 0;
 
-console.log(`检查界面服务 ${base}\n`);
+async function uiAnswers() {
+  try {
+    const res = await fetch(`${base}/config.json`, { cache: 'no-store' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Use the running host, or start one. Returns false when neither worked. */
+async function ensureHost() {
+  if (await uiAnswers()) {
+    console.log(`检查界面服务 ${base}（沿用已在运行的宿主）\n`);
+    return true;
+  }
+
+  const logDir = join(ROOT, '.scratch');
+  mkdirSync(logDir, { recursive: true });
+  const logPath = join(logDir, 'check-ui-host.log');
+  const fd = openSync(logPath, 'w');
+  console.log(`检查界面服务 ${base}（本地没有宿主，自动启动一个）`);
+
+  ownedHost = spawn(process.execPath, [join(ROOT, 'tools', 'host-run.mjs'), '--quiet'], {
+    cwd: ROOT,
+    // A file descriptor rather than a pipe: the sandbox refuses piped stdio, and the log makes a
+    // failed start diagnosable instead of silent.
+    stdio: ['ignore', fd, fd],
+    windowsHide: true,
+    env: {
+      ...process.env,
+      // Keep the caches inside the workspace; the default location is not writable here, and a
+      // cold discovery scan would eat the whole timeout.
+      OVERLAY_CACHE_DIR: logDir,
+    },
+  });
+  closeSync(fd);
+
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    if (await uiAnswers()) {
+      console.log(`  宿主已就绪（日志 ${logPath}）\n`);
+      return true;
+    }
+    if (ownedHost.exitCode !== null) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  console.log(`  宿主没能在 30 秒内就绪，日志见 ${logPath}\n`);
+  return false;
+}
+
+const started = await ensureHost();
 
 for (const [path, expectedType] of ASSETS) {
   try {
@@ -114,6 +178,23 @@ try {
 } catch (err) {
   console.log(`  FAIL  ${err.message}`);
   failures++;
+}
+
+if (!started) {
+  console.log('  FAIL  没有可用的界面服务，后面的检查无法进行');
+  failures++;
+}
+
+/** Stop the host we started; leave an already-running one alone. */
+if (ownedHost) {
+  ownedHost.kill();
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 2000);
+    ownedHost.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 console.log(`\n${failures ? `❌ ${failures} 项失败` : '✅ 界面服务检查通过'}`);

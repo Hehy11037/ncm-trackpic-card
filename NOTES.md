@@ -63,3 +63,37 @@ Worth remembering:
 * Quick EMPTY-diagnosis habit: before writing a long probe, confirm the app is
   actually in the state you assume (playing vs paused). Several probes were spent
   on a paused client.
+
+## 2026-09-14 — git cannot talk to GitHub out of the box here
+
+Two settings in Git for Windows' **system** config break things, and both need a
+per-repository override:
+
+```
+C:/Program Files/Git/etc/gitconfig
+  http.sslbackend=schannel
+  credential.helper=manager
+```
+
+* `schannel` fails with `SEC_E_NO_CREDENTIALS (0x8009030E)` when trying to reach
+  github.com. Override with `http.sslBackend=openssl`.
+* `credential.helper=manager` makes git spawn `sh.exe`, which dies inside a
+  confined shell with `couldn't create signal pipe, Win32 error 5`. With the
+  helper enabled the push never even reaches GitHub. Override it with an empty
+  helper and put the credential in the remote URL instead.
+
+`git config --global` cannot be written from this shell (its config file lives
+under the user profile), so the overrides are set **per repository**:
+
+```powershell
+git config --local http.sslBackend openssl
+git config --local --add credential.helper ""
+```
+
+With those in place the remaining requirement is a real credential. Verified with
+a deliberately invalid token: GitHub answers
+`remote: Invalid username or token. Password authentication is not supported for
+Git operations.` — a server response, which proves the transport works and only
+the credential was missing. Use the `https://x-access-token:<TOKEN>@github.com/...`
+form as the push URL.
+

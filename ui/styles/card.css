@@ -1,36 +1,23 @@
 /*
- * The 9:16 card, built from the reference's measured geometry.
+ * The 9:16 card.
  *
- * All values are in `--u` (1u = 1% of the card width). Measured positions from the
- * reference image, which is the same 9:16 shape:
+ * Every distance is in `--u` (1u = 1% of the card width) and comes from measuring the
+ * reference image - see tools/measure-reference.mjs and tools/check-layout.mjs.
+ * Font sizes add a legibility floor because a desktop-sized card is much smaller than
+ * the reference's phone-sized canvas.
  *
- *   cover          top 17.69u, 85.93u square, sides 7.04u
- *   title glyphs   top 108.9u, 4.63u tall      (5.28u below the cover)
- *   artist         top 115.9u, 2.31u tall      (2.04u below the title)
- *   progress bar   top 121.2u, 1.48u tall      (2.31u below the artist)
- *   times          top 123.5u
- *   controls       centre 134.6u; play 15.74u, sides 4.26-4.6u
- *   colour band    top 148.3u, 1.30u tall
- *   hex labels     top 152.9u
- *   credit         top 169.1u
- *
- * The reference is a rectangle: no card rounding, a small cover radius, and the
- * column is compact with generous space above the cover and below the credit.
+ * Vertical order: cover, title, artist, progress bar + times, transport controls,
+ * colour band with hex codes, credit.
  */
 
 .card {
   position: relative;
   width: 100%;
-  height: 100%;
+  height: var(--card-height);
   border-radius: var(--radius-card);
   overflow: hidden;
   background: var(--bg);
   transition: background 420ms var(--ease);
-}
-
-/* Neutral surface when no palette colour is selected. Opaque: no blur, no glass. */
-.card[data-bg='glass'] {
-  background: var(--surface);
 }
 
 /* Faint wash from the cover palette; doubles as the readability scrim. */
@@ -43,7 +30,7 @@
     linear-gradient(180deg, var(--scrim) 0%, transparent 30%, transparent 70%, var(--scrim) 100%),
     radial-gradient(110% 45% at 10% 0%, var(--accent-top) 0%, transparent 60%),
     radial-gradient(100% 40% at 94% 100%, var(--accent-bottom) 0%, transparent 58%);
-  opacity: 0.3;
+  opacity: 0.28;
   mix-blend-mode: soft-light;
   transition: opacity 420ms var(--ease);
 }
@@ -70,7 +57,7 @@
   opacity: 0;
   transform: rotateY(180deg);
   pointer-events: none;
-  padding: calc(var(--u) * 14) calc(var(--u) * 4);
+  padding: 0;
 }
 
 .card[data-face='back'] .face--front {
@@ -91,7 +78,7 @@
   position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
-  /* Small radius so it reads as a square with softened corners, not an ellipse. */
+  /* Barely rounded: a square with softened corners, not an ellipse. */
   border-radius: var(--radius-cover);
   overflow: hidden;
   flex: 0 0 auto;
@@ -130,12 +117,14 @@
   margin: calc(var(--u) * 5.28) 0 0;
   font-size: var(--fs-title);
   font-weight: 600;
-  line-height: 1.06;
+  /* Roomier than the reference's 1.06 so a two-line title is never clipped. */
+  line-height: 1.24;
   letter-spacing: var(--tracking-title);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .artist {
@@ -143,7 +132,7 @@
   margin: calc(var(--u) * 2.53) 0 0;
   font-size: var(--fs-artist);
   font-weight: 400;
-  line-height: 1.1;
+  line-height: 1.3;
   letter-spacing: var(--tracking-artist);
   color: var(--text-muted);
   white-space: nowrap;
@@ -154,12 +143,11 @@
 /* ---------------------------------------------------------------- progress */
 
 .progress {
-  /* Measured gap from the artist box to the bar: 3.79u. */
+  /* Measured: 2.33u below the artist box. */
   margin-top: calc(var(--u) * 2.33);
 }
 
 .progress-track {
-  /* Measured: 16px tall on the reference. */
   height: calc(var(--u) * 1.48);
   border-radius: 999px;
   background: var(--panel-line);
@@ -188,16 +176,15 @@
 /* ---------------------------------------------------------------- controls */
 
 /*
- * The reference places shuffle, previous, play, next, repeat on one centre line,
- * with the play button much larger. Absolute centring of the play button and
- * space-between for the outer buttons reproduces that without extra markup.
+ * The reference puts shuffle, previous, play, next and repeat on one centre line with
+ * a much larger play button. Absolute centring of the play button plus space-between
+ * for the outer buttons reproduces that without extra markup.
  */
 .controls {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* Measured: the controls row starts 2.60u below the bar's top edge. */
   margin-top: calc(var(--u) * 0.72);
   height: calc(var(--u) * 15.74);
 }
@@ -227,7 +214,10 @@
   transform: scale(0.92);
 }
 
-/* Play/pause: the reference draws a thin ring around a filled triangle. */
+/*
+ * Play/pause. The reference draws a 15.74u ring; this uses a slightly smaller disc with
+ * a thicker ring and a larger glyph, so it does not read as an empty circle.
+ */
 .ctrl--primary {
   position: absolute;
   left: 50%;
@@ -235,7 +225,7 @@
   transform: translate(-50%, -50%);
   width: calc(var(--u) * 15.74);
   height: calc(var(--u) * 15.74);
-  border: max(1px, calc(var(--u) * 0.28)) solid var(--text-strong);
+  border: max(1.5px, calc(var(--u) * 0.5)) solid var(--text-strong);
   color: var(--text-strong);
   opacity: 1;
 }
@@ -245,8 +235,8 @@
 }
 
 .ctrl--primary svg {
-  width: 40%;
-  height: 40%;
+  width: 52%;
+  height: 52%;
 }
 
 .card .icon-pause {
@@ -266,44 +256,37 @@
 .foot {
   display: flex;
   flex-direction: column;
-  /* Measured: 4.2u from the band to the hex labels, and the same again to the credit. */
   gap: calc(var(--u) * 4.2);
   /* Measured: the colour band starts 5.76u below the controls row. */
   margin-top: calc(var(--u) * 5.76);
 }
 
-/* Colour band: the background picker. */
+/* Colour band: the background picker. Five palette colours, nothing else. */
 .band {
   display: flex;
   gap: calc(var(--u) * 0.9);
   align-items: stretch;
   width: 100%;
-  height: calc(var(--u) * 1.4);
+  /* Measured from the reference. Kept literal so the hex row lands where it should;
+     the click target is enlarged with padding instead (see .band-segment). */
+  height: calc(var(--u) * 1.3);
 }
 
 .band-segment {
   flex: 1 1 0;
-  border-radius: calc(var(--u) * 0.2);
+  border-radius: calc(var(--u) * 0.3);
   cursor: pointer;
   transition: transform 180ms var(--ease), box-shadow 180ms var(--ease);
   -webkit-app-region: no-drag;
   box-sizing: border-box;
 }
 
-.band-segment--glass {
-  flex: 0 0 calc(var(--u) * 7);
-  background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.25)),
-    linear-gradient(150deg, var(--accent-top), var(--accent-bottom));
-  border: max(1px, calc(var(--u) * 0.12)) solid var(--panel-line);
-}
-
 .band-segment:hover {
-  transform: translateY(calc(var(--u) * -0.2));
+  transform: translateY(calc(var(--u) * -0.25));
 }
 
 .band-segment[aria-pressed='true'] {
-  box-shadow: 0 0 0 max(1px, calc(var(--u) * 0.18)) var(--text-strong);
+  box-shadow: 0 0 0 max(1.5px, calc(var(--u) * 0.22)) var(--text-strong);
 }
 
 .band-labels {
@@ -321,11 +304,6 @@
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
-}
-
-.band-label--glass {
-  flex: 0 0 calc(var(--u) * 7);
-  text-align: center;
 }
 
 .credit {
@@ -372,26 +350,20 @@
 
 /* ------------------------------------------------------------------ status */
 
-/*
- * Startup failure banner. Sits above the card content so a boot error can never be
- * mistaken for "nothing is playing".
- */
 .boot-error {
   position: absolute;
   z-index: 10;
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--u) * 1.4);
+  gap: calc(var(--u) * 1.6);
   padding: calc(var(--u) * 8);
   text-align: center;
-  background: rgba(20, 22, 26, 0.92);
+  background: rgba(20, 22, 26, 0.94);
   color: #edf1f3;
+  border-radius: var(--radius-card);
 }
 
 .boot-error[hidden] {
@@ -399,12 +371,12 @@
 }
 
 .boot-error strong {
-  font-size: calc(var(--u) * 2.4);
+  font-size: max(calc(var(--u) * 2.6), 12px);
 }
 
 .boot-error span {
-  font-size: calc(var(--u) * 1.7);
-  opacity: 0.75;
+  font-size: max(calc(var(--u) * 1.9), 10px);
+  opacity: 0.78;
   line-height: 1.4;
 }
 
@@ -412,14 +384,14 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(50% - var(--u) * 1.6);
+  bottom: calc(var(--u) * 2);
   display: none;
   align-items: center;
   justify-content: center;
   gap: calc(var(--u) * 1.2);
-  padding: 0 calc(var(--u) * 6);
+  padding: 0 calc(var(--u) * 5);
   font-size: var(--fs-status);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
   text-align: center;
 }
@@ -429,8 +401,8 @@
 }
 
 .status .dot {
-  width: calc(var(--u) * 1.1);
-  height: calc(var(--u) * 1.1);
+  width: max(6px, calc(var(--u) * 1.1));
+  height: max(6px, calc(var(--u) * 1.1));
   border-radius: 50%;
   background: #d9a441;
   flex: 0 0 auto;
@@ -438,13 +410,21 @@
 
 /* ----------------------------------------------------------- back: lyrics */
 
+/*
+ * Lyrics page.
+ *
+ * Layout: seven lines with the current one centred, in a shallow 3D perspective so the
+ * centre line reads as nearest (largest, darkest, sharpest) and the lines above and
+ * below recede. Only the seven visible lines are rendered per page, which is what makes
+ * it readable - the previous version stacked the whole document into a masked strip.
+ */
 .lyrics {
   position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
+  perspective: 620px;
+  perspective-origin: 50% 50%;
 }
 
 .lyrics-stack {
@@ -452,37 +432,45 @@
   left: 0;
   right: 0;
   top: 50%;
+  transform-style: preserve-3d;
   will-change: transform;
 }
 
-/* No karaoke sweep: line-level timing is all the client provides. */
 .lyric-line {
   margin: 0;
-  padding: calc(var(--u) * 1.8) calc(var(--u) * 2);
+  padding: calc(var(--u) * 1.1) calc(var(--u) * 3);
+  text-align: center;
   font-size: var(--fs-lyric);
-  font-weight: 500;
-  line-height: 1.32;
-  color: var(--text-muted);
-  opacity: 0.42;
-  transition: color 300ms, opacity 300ms;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-strong);
+  /*
+   * Depth: `--d` is the distance from the current line in lines (0 here, set per line
+   * from JS). The centre line is fully opaque and unscaled; each step away shrinks,
+   * fades, blurs and lightens.
+   */
+  --d: 0;
+  opacity: calc(1 - var(--d) * 0.26);
+  filter: blur(calc(var(--d) * 0.55px));
+  transform: translateZ(calc(var(--d) * -46px)) scale(calc(1 - var(--d) * 0.06));
+  transition: opacity 260ms var(--ease), filter 260ms var(--ease), transform 260ms var(--ease);
 }
 
 .lyric-line .translation {
   display: block;
-  margin-top: calc(var(--u) * 0.8);
+  margin-top: calc(var(--u) * 0.5);
   font-size: var(--fs-lyric-sub);
   font-weight: 400;
-  color: var(--text-faint);
-}
-
-.lyric-line.is-past {
-  opacity: 0.22;
+  opacity: 0.72;
 }
 
 .lyric-line.is-active {
-  opacity: 1;
-  color: var(--text-strong);
-  font-weight: 600;
+  font-weight: 700;
+}
+
+/* Beyond the visible window the lines are not drawn at all. */
+.lyric-line.is-offscreen {
+  visibility: hidden;
 }
 
 .lyrics-empty {

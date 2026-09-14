@@ -1,44 +1,43 @@
 /*
  * Design tokens.
  *
- * Every number here is measured from the reference image, which is 1080x1920 - the
- * same 9:16 shape as this card. `--u` is 1% of the card width, so on the reference
- * 1u = 10.8px and its pixel measurements convert straight across with no guessing.
+ * Distances come from measuring the reference image (1080x1920, the same 9:16 shape
+ * as this card, so 1u = 10.8px there). `node tools/measure-reference.mjs` produces
+ * those numbers and `node tools/check-layout.mjs` verifies this file against them.
  *
- * Measured (node tools/measure-reference.mjs):
- *   cover          928px square   -> 85.93u,  corner radius ~8px -> 0.74u
- *   card top inset 191px          -> 17.69u  (larger than the sides)
- *   side inset      76px          ->  7.04u
- *   title glyphs    50px          ->  4.63u
- *   artist glyphs   25px          ->  2.31u
- *   times           17px          ->  1.57u
- *   hex labels      14px          ->  1.30u
- *   play button    170px          -> 15.74u
- *   shuffle/skip    46px          ->  4.26u
+ * Two deliberate departures from a literal copy of the reference:
  *
- * There is deliberately no "type uplift" multiplier: the measured values ARE the
- * reference's sizes, so the earlier mistake (converting its 1080px canvas as if it
- * used 13px type, making everything three times too small) cannot recur silently.
+ *  - `--u` has a floor (`MIN_UNIT_PX` in layout.js). The reference is a phone-sized
+ *    canvas where 1u = 10.8px; a desktop window is far smaller, so its literal sizes
+ *    would render around 6px. The structure stays proportional, the type stays legible.
+ *  - Each font size is clamped below so a small window cannot shrink text past the
+ *    point of being readable.
  */
 
 :root {
   /* Layout unit; set at runtime. Fallback suits a 360px-wide stage. */
-  --u: 3.6px;
-  --stage-width: 360px;
-  --stage-height: 640px;
+  --u: 2.4px;
+  --stage-width: 240px;
+  --stage-height: 427px;
+  --card-height: 427px;
 
-  /* The reference is a rectangle: no card rounding, only a small cover radius. */
-  --radius-card: 0;
-  --radius-cover: calc(var(--u) * 0.74);
+  /*
+   * Card rounding. The reference is a rectangle, but the brief is "a little rounded,
+   * like the NetEase client, not obvious" - so a small radius on the card and a
+   * barely-there one on the cover.
+   */
+  --radius-card: calc(var(--u) * 2.6);
+  --radius-cover: calc(var(--u) * 0.6);
 
-  --fs-title: calc(var(--u) * 4.63);
-  --fs-artist: calc(var(--u) * 2.31);
-  --fs-time: calc(var(--u) * 1.57);
-  --fs-credit: calc(var(--u) * 1.3);
-  --fs-hex: calc(var(--u) * 1.3);
-  --fs-lyric: calc(var(--u) * 2.31);
-  --fs-lyric-sub: calc(var(--u) * 1.65);
-  --fs-status: calc(var(--u) * 1.65);
+  /* Font sizes: measured from the reference, with a legibility floor. */
+  --fs-title: max(calc(var(--u) * 4.63), 15px);
+  --fs-artist: max(calc(var(--u) * 2.31), 10px);
+  --fs-time: max(calc(var(--u) * 1.57), 9px);
+  --fs-credit: max(calc(var(--u) * 1.3), 8px);
+  --fs-hex: max(calc(var(--u) * 1.3), 8px);
+  --fs-lyric: max(calc(var(--u) * 4.9), 15px);
+  --fs-lyric-sub: max(calc(var(--u) * 1.65), 9px);
+  --fs-status: max(calc(var(--u) * 1.65), 10px);
 
   --tracking-title: 0.01em;
   --tracking-artist: 0.02em;
@@ -56,10 +55,9 @@
   --accent-bottom: #4a6370;
   --accent-soft: rgba(152, 182, 190, 0.22);
 
-  /* Background: `--bg` is a flat palette colour, `--surface` the neutral default. */
-  --bg: transparent;
-  --surface: #ffffff;
-  --panel-line: rgba(44, 50, 54, 0.16);
+  /* Background: always one of the five palette colours (or the first one by default). */
+  --bg: #98b6be;
+  --panel-line: rgba(255, 255, 255, 0.32);
   --scrim: transparent;
 
   /* Text hierarchy, from the reference's own opacities. */
@@ -73,10 +71,10 @@
 
 /* Light text on dark backgrounds; `data-scheme` is set from the chosen background. */
 :root[data-scheme='dark'] {
-  --panel-line: rgba(237, 241, 243, 0.22);
+  --panel-line: rgba(255, 255, 255, 0.3);
   --text-strong: #edf1f3;
-  --text-muted: rgba(237, 241, 243, 0.66);
-  --text-faint: rgba(237, 241, 243, 0.44);
+  --text-muted: rgba(237, 241, 243, 0.7);
+  --text-faint: rgba(237, 241, 243, 0.48);
 }
 
 * {
@@ -97,7 +95,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* The largest 9:16 rectangle that fits the viewport, centred. */
+/* The stage carries the 9:16 proportions; the card may be taller (see layout.js). */
 .stage {
   width: min(94vw, calc(94vh * 9 / 16));
   height: min(calc(94vw * 16 / 9), 94vh);

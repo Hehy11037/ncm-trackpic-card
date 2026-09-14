@@ -79,7 +79,10 @@ function evaluate(expression, depth = 0) {
   if (!text) return 0;
 
   text = text.replace(/var\((--[a-z0-9-]+)(?:\s*,\s*([^)]+))?\)/gi, (_m, name, fallback) => {
-    if (name === '--u') return '1';
+    // `--u-pure` is the reference's exact unit before the legibility floor is applied
+    // at runtime. Using it here keeps this check comparing like with like: the rendered
+    // unit can be clamped, which would otherwise distort every derived size.
+    if (name === '--u' || name === '--u-pure') return '1';
     if (cache.has(name)) return String(cache.get(name));
     if (props.has(name)) {
       const resolved = evaluate(props.get(name), depth + 1);
@@ -88,6 +91,29 @@ function evaluate(expression, depth = 0) {
     }
     return fallback !== undefined ? String(evaluate(fallback, depth + 1)) : '0';
   });
+
+  // `max(a, b)` is used to floor font sizes for legibility; for the reference
+  // comparison the unfloored value is the one to check.
+  while (/max\(/.test(text)) {
+    const start = text.indexOf('max(');
+    let depth = 0;
+    let end = -1;
+    for (let i = start + 3; i < text.length; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')') {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end < 0) break;
+    const args = text.slice(start + 4, end);
+    // `max()` separates its arguments with commas, unlike a CSS shorthand's spaces.
+    const parts = splitTopLevel(args);
+    text = `${text.slice(0, start)}(${parts[0] ?? '0'})${text.slice(end + 1)}`;
+  }
 
   text = stripCalc(text);
   const numeric = text.replace(/px|deg|em|%/g, '').trim();
@@ -113,9 +139,28 @@ function declaration(selector, property) {
   return found ? found[1].trim() : null;
 }
 
-/** Split a shorthand into components, ignoring spaces inside parentheses. */
-function splitShorthand(text) {
+/** Split on any top-level separator (whitespace or comma), ignoring parentheses. */
+function splitTopLevel(text) {
   const parts = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of String(text)) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    const isSeparator = (/\s/.test(ch) || ch === ',') && depth === 0;
+    if (isSeparator) {
+      if (current.trim()) parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+/** Split a shorthand into components, ignoring spaces inside parentheses. */
+function splitShorthand(text) {  const parts = [];
   let depth = 0;
   let current = '';
   for (const ch of String(text)) {

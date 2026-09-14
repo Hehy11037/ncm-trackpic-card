@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { docFromClientSlice, docFromRawPayload } from './build.ts';
+import { docFromClientSlice, docFromRawPayload, hasOnlyCredits } from './build.ts';
 import { payloadFromApi } from './fetch.ts';
 import {
   finalizeLines,
@@ -238,6 +238,89 @@ describe('docFromClientSlice', () => {
 
   it('returns null while the client is still loading (so the host can wait)', () => {
     assert.equal(docFromClientSlice({ ...base, lyricLines: [], isLoading: true }), null);
+  });
+});
+
+describe('hasOnlyCredits', () => {
+  // Fixtures from a real case: song id 2650440016 ("芥") holds exactly these two entries
+  // while the previous track's 79 lines were still on screen under its id.
+  it('detects a credit-only set', () => {
+    assert.equal(
+      hasOnlyCredits([
+        { time: -0.001, lyric: '作词: FAIZ' },
+        { time: -0.001, lyric: '作曲: FAIZ' },
+      ]),
+      true,
+    );
+  });
+
+  it('does NOT treat an empty set as credit-only (that is a different state)', () => {
+    // Empty means the fetch completed with no lyric content, which the caller reports as
+    // instrumental. Only a set that has content but nothing but credits is untrustworthy.
+    assert.equal(hasOnlyCredits([]), false);
+    assert.equal(hasOnlyCredits(null), false);
+    assert.equal(hasOnlyCredits(undefined), false);
+  });
+
+  it('does not treat a blank-only set as credit-only', () => {
+    assert.equal(hasOnlyCredits([{ time: 0, lyric: '' }, { time: 1, lyric: '   ' }]), false);
+  });
+
+  it('returns false as soon as one real lyric line is present', () => {
+    assert.equal(
+      hasOnlyCredits([
+        { time: 0, lyric: '作词: FAIZ' },
+        { time: 12.3, lyric: ' and i can hear the silence' },
+      ]),
+      false,
+    );
+  });
+
+  it('does not mistake a lyric that mentions a credit word later on', () => {
+    // Past the credit window, a line starting with 作词: is treated as a real lyric.
+    assert.equal(hasOnlyCredits([{ time: 60, lyric: '作词: 我乱写的' }]), false);
+  });
+});
+
+describe('docFromClientSlice rejects untrustworthy data', () => {
+  const base = {
+    songId: 2650440016,
+    currentUsedLyric: 'lrc',
+    currentUsedLyricVersion: 1,
+    isLoading: false,
+    isLyricFetchFailed: false,
+    offset: 0,
+    lyricLines: [],
+    tlyricLines: [],
+    romaLyricLines: [],
+    at: Date.now(),
+  };
+
+  it('returns null for a credit-only set, so the caller keeps waiting or falls back', () => {
+    // This is the fix for "switching to a song showed the previous song's lyrics": the
+    // client reports the new song id while the store still holds the old track's data, and a
+    // credit-only set is also what an unloaded track looks like.
+    const doc = docFromClientSlice({
+      ...base,
+      lyricLines: [
+        { time: -0.001, lyric: '作词: FAIZ' },
+        { time: -0.001, lyric: '作曲: FAIZ' },
+      ],
+    });
+    assert.equal(doc, null);
+  });
+
+  it('still returns a document when real lyric lines are present', () => {
+    const doc = docFromClientSlice({
+      ...base,
+      lyricLines: [
+        { time: 0, lyric: '作词: FAIZ' },
+        { time: 5, lyric: 'a real line' },
+      ],
+    });
+    assert.ok(doc);
+    assert.equal(doc.source, 'client');
+    assert.equal(doc.lines.length, 1);
   });
 });
 

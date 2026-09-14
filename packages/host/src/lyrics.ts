@@ -1,20 +1,29 @@
 /**
- * Lyrics service: owns the fallback logic between the client's lyric document and
- * the public endpoint, plus the on-disk cache and request coalescing.
+ * Lyrics service: owns source selection, the on-disk cache and request coalescing.
  *
- * Flow, per song:
+ * ## Source order, and why the public endpoint comes first
  *
- *   1. `lyricsNeeded(songId)` fires on track change.
- *      - cache hit            -> emit immediately
- *      - otherwise            -> fetch the public endpoint (so the UI has
- *                                something even before the client resolves)
- *   2. `clientLyrics(slice)` arrives whenever the client's lyric slice changes.
- *      - if it has lines      -> it wins (client is authoritative and free); emit
- *      - if it is still empty -> keep whatever the public fetch produced, but do
- *                                not cache the empty client result as final
+ * The client's lyric store looked like the better source - no network, and it already reflects
+ * the client's own cache and account - but it **cannot be trusted across a track change**.
+ * Measured:
  *
- * The client result is preferred because it already reflects the client's cache,
- * session and - for account-gated tracks - data we cannot obtain ourselves.
+ *   t+0s   playing song id 2650440016, the client's lyric slice still holds the previous
+ *          track's lines, and its `version` does not change until the fetch completes
+ *   t+2s   playing song id 2650440015, slice = 79 lines starting "作词: KikKuU"
+ *
+ * The store's song id changes immediately while its lyric slice lags behind, so for a few
+ * hundred milliseconds the client reports the *new* id with the *old* lyrics. Real lyrics
+ * cannot be told apart from stale ones by inspection, and a credit-only set (what an unloaded
+ * track looks like) is not the only bad shape - the stale set can be full lyrics too. So the
+ * client is a fallback only.
+ *
+ * The public endpoint is keyed by song id and therefore cannot be wrong about which track it
+ * describes. It also returns word-by-word `yrc` when one exists.
+ *
+ * Flow per track:
+ *   1. `lyricsNeeded(songId)` -> cache, else the public endpoint; if that yields nothing
+ *      usable, the client slice fills in later via step 2.
+ *   2. `clientLyrics(slice)`  -> used only while the public result for that song is missing.
  */
 
 import type { ClientLyricSlice, LyricDoc } from '@ncm-trackpic-card/shared';
@@ -29,24 +38,43 @@ export interface LyricsServiceOptions {
   fetchOptions?: FetchOptions;
   log?: (level: 'debug' | 'info' | 'warn', message: string) => void;
   onDoc: (doc: LyricDoc) => void;
+  /**
+   * How long to wait for the public endpoint before accepting the client's lyrics.
+   *
+   * The client's store lags a track change by a few hundred milliseconds, which is what made
+   * it report the previous track's lyrics under the new id. Waiting this long guarantees the
+   * store has caught up, so a client fallback is safe by then. Short enough that a track whose
+   * lyrics only the client has still shows them quickly.
+   */
+  clientFallbackDelayMs?: number;
 }
+
+/** Default grace period before the client slice is trusted; see the option's doc comment. */
+const CLIENT_FALLBACK_DELAY_MS = 4000;
 
 export class LyricsService {
   private readonly session: ClientSession;
   private readonly fetchOptions: FetchOptions;
   private readonly log: (level: 'debug' | 'info' | 'warn', message: string) => void;
   private readonly onDoc: (doc: LyricDoc) => void;
+  private readonly fallbackDelayMs: number;
 
   /** Documents by song id, so a repeat visit needs no work. */
   private readonly docs = new Map<number, LyricDoc>();
   /** In-flight fetches, to coalesce duplicate requests. */
   private readonly inFlight = new Map<number, Promise<LyricDoc | null>>();
+  /** The track the service is currently answering for. */
+  private currentSongId: number | null = null;
+  /** The most recent client slice for the current track, held for the fallback. */
+  private pendingClientSlice: ClientLyricSlice | null = null;
+  private fallbackTimer: NodeJS.Timeout | null = null;
 
   constructor(options: LyricsServiceOptions) {
     this.session = options.session;
     this.fetchOptions = options.fetchOptions ?? {};
     this.log = options.log ?? (() => {});
     this.onDoc = options.onDoc;
+    this.fallbackDelayMs = options.clientFallbackDelayMs ?? CLIENT_FALLBACK_DELAY_MS;
   }
 
   start(): void {
@@ -67,28 +95,14 @@ export class LyricsService {
     return onDisk;
   }
 
-  /**
-   * Force a public-API fetch, ignoring both caches. Used when the overlay asks
-   * for lyrics explicitly (e.g. after a reconnect) so it never gets nothing back.
-   * Client-sourced documents still win.
-   */
-  async refresh(songId: number): Promise<LyricDoc | null> {
-    const existing = this.docs.get(songId) ?? readCachedLyrics(songId);
-    if (existing && existing.source === 'client' && existing.lines.length > 0) {
-      this.docs.set(songId, existing);
-      return existing;
-    }
-    const doc = await this.fetchFromApi(songId);
-    if (doc && doc.lines.length > 0) {
-      this.remember(doc);
-      return doc;
-    }
-    return this.docs.get(songId) ?? null;
-  }
-
   /** Drop expired cache entries. Called once on start. */
   prune(): { removed: number; kept: number } {
     return pruneLyricCache();
+  }
+
+  /** Release timers. Called on host shutdown so the process can exit. */
+  stop(): void {
+    this.clearFallbackTimer();
   }
 
   private remember(doc: LyricDoc): void {
@@ -98,6 +112,10 @@ export class LyricsService {
   }
 
   private async onTrackChange(songId: number): Promise<void> {
+    this.currentSongId = songId;
+    this.pendingClientSlice = null;
+    this.clearFallbackTimer();
+
     const cached = this.get(songId);
     if (cached && cached.lines.length > 0) {
       this.log('debug', `歌词命中缓存: ${songId}（${cached.lines.length} 行）`);
@@ -106,22 +124,60 @@ export class LyricsService {
     }
 
     const doc = await this.fetchFromApi(songId);
-    if (!doc || doc.lines.length === 0) {
-      this.log('debug', `公开接口暂无歌词: ${songId}（等待客户端）`);
+
+    // The track can change while this is in flight; the newer request owns the answer.
+    if (this.currentSongId !== songId) {
+      this.log('debug', `丢弃过期歌词结果: ${songId}`);
       return;
     }
 
-    // The client is authoritative. It may have answered while this fetch was in
-    // flight (it is the faster path in practice), so never clobber a
-    // client-sourced document with the fallback.
-    const clientDoc = this.docs.get(songId);
-    if (clientDoc && clientDoc.source === 'client' && clientDoc.lines.length > 0) {
-      this.log('debug', `公开接口结果被客户端结果取代: ${songId}`);
+    /*
+     * Only a document *with lines* is stored.
+     *
+     * A result with no lines is not kept: it would occupy the slot for this song and block the
+     * client slice from filling it in. That matters because the endpoint returns a credit-only
+     * stub - which parses to zero lines - for tracks whose lyrics the client does have.
+     */
+    if (doc && doc.lines.length > 0) {
+      this.remember(doc);
+      this.log(
+        'info',
+        `歌词来自公开接口: ${songId}（${doc.lines.length} 行，逐字=${doc.hasWordTiming}）`,
+      );
       return;
     }
 
-    this.remember(doc);
-    this.log('info', `歌词来自公开接口: ${songId}（${doc.lines.length} 行，逐字=${doc.hasWordTiming}）`);
+    this.log('debug', `公开接口暂无歌词: ${songId}（等待客户端）`);
+    this.scheduleClientFallback(songId);
+  }
+
+  /**
+   * Accept the client's lyrics if the public endpoint has produced nothing in time.
+   *
+   * By the time this fires the client's store has long since caught up with the track change,
+   * so its lyrics belong to this song. Without the delay the store may still hold the previous
+   * track's lines, which is the bug this ordering exists to prevent.
+   */
+  private scheduleClientFallback(songId: number): void {
+    this.clearFallbackTimer();
+    this.fallbackTimer = setTimeout(() => {
+      this.fallbackTimer = null;
+      if (this.currentSongId !== songId) return;
+      if (this.docs.get(songId)?.lines.length) return;
+
+      if (this.pendingClientSlice?.songId === songId) {
+        this.onClientLyrics(this.pendingClientSlice, { force: true });
+      } else {
+        this.log('debug', `宽限期结束，仍无歌词可用: ${songId}`);
+      }
+    }, this.fallbackDelayMs);
+  }
+
+  private clearFallbackTimer(): void {
+    if (this.fallbackTimer) {
+      clearTimeout(this.fallbackTimer);
+      this.fallbackTimer = null;
+    }
   }
 
   private fetchFromApi(songId: number): Promise<LyricDoc | null> {
@@ -137,41 +193,73 @@ export class LyricsService {
     return task;
   }
 
-  private onClientLyrics(slice: ClientLyricSlice): void {
+  /**
+   * Handle a lyric slice from the client.
+   *
+   * Used only to fill a gap: when there is no usable public result for this song. A slice that
+   * does not match the current track, or that carries nothing but credits, is ignored - which
+   * is what stops the previous track's lyrics appearing under the new one.
+   *
+   * The slice is also remembered, so the delayed fallback can use it once the store has had
+   * time to catch up with the track change.
+   *
+   * @param options.force set by the fallback timer, which runs after the grace period
+   */
+  private onClientLyrics(slice: ClientLyricSlice, options: { force?: boolean } = {}): void {
     if (slice.songId == null) return;
+
+    if (this.currentSongId != null && slice.songId !== this.currentSongId) {
+      this.log('debug', `忽略非当前歌曲的客户端歌词: ${slice.songId}（当前 ${this.currentSongId}）`);
+      return;
+    }
+
+    this.pendingClientSlice = slice;
+
+    const existing = this.docs.get(slice.songId);
+    if (existing && existing.lines.length > 0) {
+      // The public result already answered for this song; nothing to fill in.
+      return;
+    }
+
+    /*
+     * Before the grace period expires the client slice is only remembered, not used: the store
+     * can still be holding the previous track's lines under this song's id.
+     */
+    if (!options.force && this.fallbackTimer) {
+      return;
+    }
+
     const doc = docFromClientSlice(slice);
     if (!doc) {
-      // Still loading, or the client could not fetch: leave any public result be.
-      this.log('debug', `客户端歌词尚未就绪: ${slice.songId}`);
-      return;
-    }
-
-    if (doc.lines.length === 0) {
-      // The client is authoritative on "no lyrics" (instrumental, or gated).
-      // Only trust it once it is not loading and not failed.
-      if (slice.isLoading || slice.isLyricFetchFailed) return;
-      const existing = this.docs.get(slice.songId);
-      if (existing && existing.lines.length > 0) {
-        this.log('debug', `客户端报告无歌词，但已有公开接口结果，保留之: ${slice.songId}`);
-        return;
-      }
-      this.remember(doc);
-      this.log('info', `客户端报告为纯音乐/无歌词: ${slice.songId}`);
-      return;
-    }
-
-    const previous = this.docs.get(slice.songId);
-    if (previous && previous.lines.length === doc.lines.length && previous.source === 'client') {
-      // Same shape, nothing new to send.
-      this.docs.set(slice.songId, doc);
+      // Credit-only, empty while loading, or a failed fetch: not usable as lyrics.
+      this.log('debug', `客户端歌词不可用: ${slice.songId}`);
       return;
     }
 
     this.remember(doc);
-    this.log(
-      'info',
-      `歌词来自客户端: ${slice.songId}（${doc.lines.length} 行，逐字=${doc.hasWordTiming}，` +
-        `用法=${slice.currentUsedLyric ?? '?'}）`,
-    );
+    if (doc.lines.length === 0) {
+      this.log('info', `客户端报告为纯音乐/无歌词: ${slice.songId}`);
+    } else {
+      this.log(
+        'info',
+        `歌词来自客户端（公开接口无结果）: ${slice.songId}（${doc.lines.length} 行，` +
+          `逐字=${doc.hasWordTiming}）`,
+      );
+    }
+  }
+
+  /**
+   * Force a fetch, ignoring the caches. Used when the overlay asks explicitly.
+   *
+   * Always the public endpoint: unlike the client's store it is keyed by song id, so a stale
+   * answer for a different track is impossible.
+   */
+  async refresh(songId: number): Promise<LyricDoc | null> {
+    const doc = await this.fetchFromApi(songId);
+    if (doc && doc.lines.length > 0) {
+      this.remember(doc);
+      return doc;
+    }
+    return this.docs.get(songId) ?? null;
   }
 }

@@ -1,13 +1,21 @@
 /*
- * The 9:16 card.
+ * The 9:16 card, built from the reference's measured geometry.
  *
- * Measurements are in `--u` (1 unit = 1% of the card width). The cover is
- * deliberately *inset* rather than full width, which is what the reference layout
- * does and what gives the composition its whitespace.
+ * All values are in `--u` (1u = 1% of the card width). Measured positions from the
+ * reference image, which is the same 9:16 shape:
  *
- * Vertical structure: cover, title/artist, flex spacer, progress + controls, flex
- * spacer, colour band + hex labels + credit. The two spacers distribute the leftover
- * height so nothing is crowded against an edge.
+ *   cover          top 17.69u, 85.93u square, sides 7.04u
+ *   title glyphs   top 108.9u, 4.63u tall      (5.28u below the cover)
+ *   artist         top 115.9u, 2.31u tall      (2.04u below the title)
+ *   progress bar   top 121.2u, 1.48u tall      (2.31u below the artist)
+ *   times          top 123.5u
+ *   controls       centre 134.6u; play 15.74u, sides 4.26-4.6u
+ *   colour band    top 148.3u, 1.30u tall
+ *   hex labels     top 152.9u
+ *   credit         top 169.1u
+ *
+ * The reference is a rectangle: no card rounding, a small cover radius, and the
+ * column is compact with generous space above the cover and below the credit.
  */
 
 .card {
@@ -17,23 +25,15 @@
   border-radius: var(--radius-card);
   overflow: hidden;
   background: var(--bg);
-  transition: background 520ms var(--ease);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.32) inset, 0 20px 60px rgba(15, 18, 22, 0.3);
-  perspective: 1400px;
+  transition: background 420ms var(--ease);
 }
 
-/* Frosted glass: the default, used when no palette colour is selected. */
+/* Neutral surface when no palette colour is selected. Opaque: no blur, no glass. */
 .card[data-bg='glass'] {
-  background: var(--panel);
-  backdrop-filter: blur(26px) saturate(160%);
-  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  background: var(--surface);
 }
 
-/*
- * Wash derived from the cover palette. It sits under the content on every background
- * so the card stays tied to the artwork, and doubles as the scrim that keeps text
- * readable on mid-tone palette colours (see layout.js schemeFor()).
- */
+/* Faint wash from the cover palette; doubles as the readability scrim. */
 .card::before {
   content: '';
   position: absolute;
@@ -41,16 +41,11 @@
   pointer-events: none;
   background:
     linear-gradient(180deg, var(--scrim) 0%, transparent 30%, transparent 70%, var(--scrim) 100%),
-    radial-gradient(120% 55% at 15% 0%, var(--accent-top) 0%, transparent 60%),
-    radial-gradient(110% 50% at 90% 100%, var(--accent-bottom) 0%, transparent 58%);
-  opacity: 0.45;
+    radial-gradient(110% 45% at 10% 0%, var(--accent-top) 0%, transparent 60%),
+    radial-gradient(100% 40% at 94% 100%, var(--accent-bottom) 0%, transparent 58%);
+  opacity: 0.3;
   mix-blend-mode: soft-light;
-  transition: opacity 520ms var(--ease);
-}
-
-.card[data-bg='glass']::before {
-  opacity: 0.6;
-  mix-blend-mode: normal;
+  transition: opacity 420ms var(--ease);
 }
 
 /* ------------------------------------------------------------------- faces */
@@ -60,7 +55,8 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  padding: calc(var(--u) * 4.6) calc(var(--u) * 4.6) calc(var(--u) * 4.2);
+  /* Measured: 17.69u above the cover, 7.04u at the sides. */
+  padding: calc(var(--u) * 17.69) calc(var(--u) * 7.04) calc(var(--u) * 8);
   backface-visibility: hidden;
   transition: opacity var(--flip-duration) var(--ease), transform var(--flip-duration) var(--ease);
 }
@@ -74,7 +70,7 @@
   opacity: 0;
   transform: rotateY(180deg);
   pointer-events: none;
-  padding: calc(var(--u) * 4.6) calc(var(--u) * 2.4);
+  padding: calc(var(--u) * 14) calc(var(--u) * 4);
 }
 
 .card[data-face='back'] .face--front {
@@ -89,36 +85,17 @@
   pointer-events: auto;
 }
 
-/*
- * Flexible separators. The top one grows a little faster than the bottom one, so the
- * cover clears the top edge more generously than the playbar clears the bottom -
- * matching the reference, where the largest single gap sits under the artist line.
- */
-.spacer {
-  flex: 1 1 0;
-  min-height: calc(var(--u) * 2);
-}
-
-.spacer--top {
-  flex-grow: 1.15;
-}
-
 /* ------------------------------------------------------------------- cover */
 
 .cover-wrap {
   position: relative;
-  /*
-   * Inset cover, centred. 74% keeps clear margins on both sides, which is the single
-   * biggest visual difference from a full-bleed cover.
-   */
-  width: 74%;
+  width: 100%;
   aspect-ratio: 1 / 1;
-  margin: 0 auto;
+  /* Small radius so it reads as a square with softened corners, not an ellipse. */
   border-radius: var(--radius-cover);
   overflow: hidden;
   flex: 0 0 auto;
   background: var(--accent-bottom);
-  box-shadow: 0 10px 26px rgba(15, 18, 22, 0.26);
 }
 
 .cover {
@@ -128,7 +105,7 @@
   height: 100%;
   object-fit: cover;
   opacity: 0;
-  transition: opacity 420ms var(--ease);
+  transition: opacity 360ms var(--ease);
 }
 
 .cover.is-loaded {
@@ -139,7 +116,7 @@
   position: absolute;
   inset: 0;
   background: linear-gradient(160deg, var(--accent-top), var(--accent-bottom));
-  transition: opacity 420ms var(--ease);
+  transition: opacity 360ms var(--ease);
 }
 
 .cover.is-loaded ~ .cover-fallback {
@@ -148,16 +125,12 @@
 
 /* -------------------------------------------------------------- title/artist */
 
-.meta {
-  margin-top: calc(var(--u) * 4.2);
-  min-width: 0;
-}
-
 .title {
-  margin: 0;
+  /* Measured: title glyphs start 5.28u below the cover. */
+  margin: calc(var(--u) * 5.28) 0 0;
   font-size: var(--fs-title);
   font-weight: 600;
-  line-height: 1.24;
+  line-height: 1.06;
   letter-spacing: var(--tracking-title);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -166,9 +139,11 @@
 }
 
 .artist {
-  margin: calc(var(--u) * 1.6) 0 0;
+  /* Measured: artist glyphs start 2.53u below the title box. */
+  margin: calc(var(--u) * 2.53) 0 0;
   font-size: var(--fs-artist);
-  font-weight: 500;
+  font-weight: 400;
+  line-height: 1.1;
   letter-spacing: var(--tracking-artist);
   color: var(--text-muted);
   white-space: nowrap;
@@ -178,8 +153,14 @@
 
 /* ---------------------------------------------------------------- progress */
 
+.progress {
+  /* Measured gap from the artist box to the bar: 3.79u. */
+  margin-top: calc(var(--u) * 2.33);
+}
+
 .progress-track {
-  height: calc(var(--u) * 0.5);
+  /* Measured: 16px tall on the reference. */
+  height: calc(var(--u) * 1.48);
   border-radius: 999px;
   background: var(--panel-line);
   overflow: hidden;
@@ -196,7 +177,7 @@
 .progress-times {
   display: flex;
   justify-content: space-between;
-  margin-top: calc(var(--u) * 1.6);
+  margin-top: calc(var(--u) * 0.9);
   font-size: var(--fs-time);
   font-weight: 500;
   letter-spacing: var(--tracking-time);
@@ -206,46 +187,66 @@
 
 /* ---------------------------------------------------------------- controls */
 
+/*
+ * The reference places shuffle, previous, play, next, repeat on one centre line,
+ * with the play button much larger. Absolute centring of the play button and
+ * space-between for the outer buttons reproduces that without extra markup.
+ */
 .controls {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: calc(var(--u) * 8.4);
-  margin-top: calc(var(--u) * 3.6);
+  justify-content: space-between;
+  /* Measured: the controls row starts 2.60u below the bar's top edge. */
+  margin-top: calc(var(--u) * 0.72);
+  height: calc(var(--u) * 15.74);
 }
 
 .ctrl {
   display: grid;
   place-items: center;
-  width: calc(var(--u) * 5.2);
-  height: calc(var(--u) * 5.2);
+  width: calc(var(--u) * 4.6);
+  height: calc(var(--u) * 4.6);
   border-radius: 50%;
-  color: var(--text-muted);
-  transition: color 160ms, background 160ms, transform 160ms;
+  color: var(--text-strong);
+  opacity: 0.85;
+  transition: color 160ms, transform 160ms, opacity 160ms;
 }
 
 .ctrl svg {
-  width: 62%;
-  height: 62%;
+  width: 100%;
+  height: 100%;
   fill: currentColor;
 }
 
 .ctrl:hover {
-  color: var(--text-strong);
-  background: var(--accent-soft);
+  opacity: 1;
 }
 
 .ctrl:active {
   transform: scale(0.92);
 }
 
-/* The primary button is outlined in the reference; filled reads better on a photo
-   wash and on the flat palette backgrounds, so it stays filled. */
+/* Play/pause: the reference draws a thin ring around a filled triangle. */
 .ctrl--primary {
-  width: calc(var(--u) * 7.4);
-  height: calc(var(--u) * 7.4);
-  background: var(--text-strong);
-  color: var(--icon-on-primary);
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(var(--u) * 15.74);
+  height: calc(var(--u) * 15.74);
+  border: max(1px, calc(var(--u) * 0.28)) solid var(--text-strong);
+  color: var(--text-strong);
+  opacity: 1;
+}
+
+.ctrl--primary:active {
+  transform: translate(-50%, -50%) scale(0.96);
+}
+
+.ctrl--primary svg {
+  width: 40%;
+  height: 40%;
 }
 
 .card .icon-pause {
@@ -265,77 +266,71 @@
 .foot {
   display: flex;
   flex-direction: column;
-  gap: calc(var(--u) * 1.6);
+  /* Measured: 4.2u from the band to the hex labels, and the same again to the credit. */
+  gap: calc(var(--u) * 4.2);
+  /* Measured: the colour band starts 5.76u below the controls row. */
+  margin-top: calc(var(--u) * 5.76);
 }
 
-/*
- * The colour band is the background picker: five equal segments sampled from the
- * cover, followed by a "glass" segment. Clicking a segment paints the card;
- * clicking the active one returns to the frosted glass.
- */
+/* Colour band: the background picker. */
 .band {
   display: flex;
-  gap: calc(var(--u) * 0.8);
+  gap: calc(var(--u) * 0.9);
   align-items: stretch;
-  width: 90%;
-  height: calc(var(--u) * 2.6);
+  width: 100%;
+  height: calc(var(--u) * 1.4);
 }
 
 .band-segment {
   flex: 1 1 0;
-  border-radius: calc(var(--u) * 0.7);
+  border-radius: calc(var(--u) * 0.2);
   cursor: pointer;
-  transition: transform 200ms var(--ease), box-shadow 200ms var(--ease);
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease);
   -webkit-app-region: no-drag;
-  /* Keeps the glass chip's border from making it taller than the colour segments. */
   box-sizing: border-box;
 }
 
-/* The glass option: a translucent gradient chip, sized narrower than a colour. */
 .band-segment--glass {
-  flex: 0 0 calc(var(--u) * 7.4);
+  flex: 0 0 calc(var(--u) * 7);
   background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.12)),
+    linear-gradient(150deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.25)),
     linear-gradient(150deg, var(--accent-top), var(--accent-bottom));
-  border: max(1px, calc(var(--u) * 0.14)) solid var(--panel-line);
+  border: max(1px, calc(var(--u) * 0.12)) solid var(--panel-line);
 }
 
 .band-segment:hover {
-  transform: scale(1.06);
+  transform: translateY(calc(var(--u) * -0.2));
 }
 
-/* The active background is marked with a ring, so the current choice is obvious. */
 .band-segment[aria-pressed='true'] {
-  box-shadow: 0 0 0 max(1px, calc(var(--u) * 0.22)) var(--text-strong);
+  box-shadow: 0 0 0 max(1px, calc(var(--u) * 0.18)) var(--text-strong);
 }
 
-/* Hex codes under each segment, as in the reference. */
 .band-labels {
   display: flex;
-  gap: calc(var(--u) * 0.8);
-  width: 90%;
+  gap: calc(var(--u) * 0.9);
+  width: 100%;
 }
 
 .band-label {
   flex: 1 1 0;
   min-width: 0;
-  font-size: calc(var(--u) * 0.85);
+  font-size: var(--fs-hex);
   font-weight: 500;
-  letter-spacing: 0.01em;
-  font-variant-numeric: tabular-nums;
   color: var(--text-faint);
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .band-label--glass {
-  flex: 0 0 calc(var(--u) * 7.4);
+  flex: 0 0 calc(var(--u) * 7);
   text-align: center;
 }
 
 .credit {
+  margin-top: calc(var(--u) * 14);
+  align-self: center;
   font-size: var(--fs-credit);
   font-weight: 500;
   letter-spacing: var(--tracking-credit);
@@ -348,21 +343,21 @@
 
 .flip {
   position: absolute;
-  top: calc(var(--u) * 2.2);
-  right: calc(var(--u) * 2.2);
+  top: calc(var(--u) * 3);
+  right: calc(var(--u) * 3);
   display: grid;
   place-items: center;
-  width: calc(var(--u) * 4.2);
-  height: calc(var(--u) * 4.2);
+  width: calc(var(--u) * 5);
+  height: calc(var(--u) * 5);
   border-radius: 50%;
   color: var(--text-faint);
   opacity: 0;
-  transition: opacity 200ms, color 200ms, background 200ms, transform 300ms var(--ease);
+  transition: opacity 200ms, color 200ms, transform 300ms var(--ease);
 }
 
 .flip svg {
-  width: 58%;
-  height: 58%;
+  width: 60%;
+  height: 60%;
   fill: currentColor;
 }
 
@@ -372,11 +367,46 @@
 
 .flip:hover {
   color: var(--text-strong);
-  background: var(--accent-soft);
   transform: rotate(180deg);
 }
 
 /* ------------------------------------------------------------------ status */
+
+/*
+ * Startup failure banner. Sits above the card content so a boot error can never be
+ * mistaken for "nothing is playing".
+ */
+.boot-error {
+  position: absolute;
+  z-index: 10;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 1.4);
+  padding: calc(var(--u) * 8);
+  text-align: center;
+  background: rgba(20, 22, 26, 0.92);
+  color: #edf1f3;
+}
+
+.boot-error[hidden] {
+  display: none;
+}
+
+.boot-error strong {
+  font-size: calc(var(--u) * 2.4);
+}
+
+.boot-error span {
+  font-size: calc(var(--u) * 1.7);
+  opacity: 0.75;
+  line-height: 1.4;
+}
 
 .status {
   position: absolute;
@@ -387,7 +417,7 @@
   align-items: center;
   justify-content: center;
   gap: calc(var(--u) * 1.2);
-  padding: 0 calc(var(--u) * 5);
+  padding: 0 calc(var(--u) * 6);
   font-size: var(--fs-status);
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -399,8 +429,8 @@
 }
 
 .status .dot {
-  width: calc(var(--u) * 0.9);
-  height: calc(var(--u) * 0.9);
+  width: calc(var(--u) * 1.1);
+  height: calc(var(--u) * 1.1);
   border-radius: 50%;
   background: #d9a441;
   flex: 0 0 auto;
@@ -413,8 +443,8 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  mask-image: linear-gradient(180deg, transparent 0%, #000 18%, #000 82%, transparent 100%);
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 18%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
 }
 
 .lyrics-stack {
@@ -425,25 +455,21 @@
   will-change: transform;
 }
 
-/*
- * No karaoke sweep by design: line-level timing is all the client provides, so a
- * per-word fill would be invented. The active line is simply emphasised.
- */
+/* No karaoke sweep: line-level timing is all the client provides. */
 .lyric-line {
   margin: 0;
-  padding: calc(var(--u) * 1.5) calc(var(--u) * 2.6);
+  padding: calc(var(--u) * 1.8) calc(var(--u) * 2);
   font-size: var(--fs-lyric);
   font-weight: 500;
-  line-height: 1.36;
-  letter-spacing: 0.01em;
+  line-height: 1.32;
   color: var(--text-muted);
-  opacity: 0.4;
+  opacity: 0.42;
   transition: color 300ms, opacity 300ms;
 }
 
 .lyric-line .translation {
   display: block;
-  margin-top: calc(var(--u) * 0.7);
+  margin-top: calc(var(--u) * 0.8);
   font-size: var(--fs-lyric-sub);
   font-weight: 400;
   color: var(--text-faint);
@@ -465,6 +491,5 @@
   display: grid;
   place-items: center;
   font-size: var(--fs-lyric-sub);
-  letter-spacing: var(--tracking-artist);
   color: var(--text-faint);
 }

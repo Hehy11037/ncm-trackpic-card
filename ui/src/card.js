@@ -50,6 +50,8 @@ export class CardView {
 
     this.lastFraction = -1;
     this.lastSecond = -1;
+    /** Set by setIdle() so the reason for an empty card is visible. */
+    this.idleReason = null;
 
     this.renderBand();
     this.applyBackground();
@@ -75,6 +77,7 @@ export class CardView {
     const songKey = song ? `${song.id ?? ''}|${song.name}` : null;
     const trackChanged = songKey !== this.currentSongKey;
     this.currentSongKey = songKey;
+    this.idleReason = null;
 
     this.el.title.textContent = song?.name?.trim() || '未检测到播放';
     this.el.artist.textContent = song?.artists?.length
@@ -86,6 +89,18 @@ export class CardView {
 
     if (trackChanged) this.applyCover(song?.coverUrl ?? null);
     return trackChanged;
+  }
+
+  /**
+   * Show why nothing is playing. Distinguishing "host unreachable" from "client has
+   * no track" matters: previously both rendered as 未检测到播放 and the real cause was
+   * invisible.
+   */
+  setIdle(reason) {
+    if (this.currentSongKey || this.idleReason === reason) return;
+    this.idleReason = reason;
+    this.el.title.textContent = reason;
+    this.el.artist.textContent = '检查宿主是否在运行（npm run host）';
   }
 
   setConnection(info) {

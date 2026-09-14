@@ -1,57 +1,52 @@
 /*
  * Design tokens.
  *
- * The numeric scale comes from the reference design (TrackPic, a 9:16 wallpaper
- * maker): type sizes 9/10/11/12/13 px, letter-spacing 0.05em-0.28em, weights
- * 400-600, radii 6/8/20/24 px, and a text hierarchy expressed as three opacity
- * steps.
+ * Every number here is measured from the reference image, which is 1080x1920 - the
+ * same 9:16 shape as this card. `--u` is 1% of the card width, so on the reference
+ * 1u = 10.8px and its pixel measurements convert straight across with no guessing.
  *
- * `--u` is one layout unit = **1% of the stage width** (the stage is 100 units wide
- * and 9:16 tall). Every size below is an absolute measurement from the reference
- * divided by the reference width in px (1080), so the composition is identical
- * whatever the on-screen scale. src/layout.js sets `--u`.
+ * Measured (node tools/measure-reference.mjs):
+ *   cover          928px square   -> 85.93u,  corner radius ~8px -> 0.74u
+ *   card top inset 191px          -> 17.69u  (larger than the sides)
+ *   side inset      76px          ->  7.04u
+ *   title glyphs    50px          ->  4.63u
+ *   artist glyphs   25px          ->  2.31u
+ *   times           17px          ->  1.57u
+ *   hex labels      14px          ->  1.30u
+ *   play button    170px          -> 15.74u
+ *   shuffle/skip    46px          ->  4.26u
+ *
+ * There is deliberately no "type uplift" multiplier: the measured values ARE the
+ * reference's sizes, so the earlier mistake (converting its 1080px canvas as if it
+ * used 13px type, making everything three times too small) cannot recur silently.
  */
 
 :root {
-  /* Layout unit; set at runtime. The fallback suits a 360px-wide stage. */
+  /* Layout unit; set at runtime. Fallback suits a 360px-wide stage. */
   --u: 3.6px;
   --stage-width: 360px;
   --stage-height: 640px;
 
-  /*
-   * Type uplift over the reference's literal pixel sizes.
-   *
-   * The reference is a phone wallpaper viewed at arm's length, with a 1080px-wide
-   * canvas; this card is a desktop overlay a fraction of that size, where the
-   * reference's literal sizes read too small. So the type scale is multiplied by one
-   * factor rather than tuned size by size - that keeps the hierarchy intact, and this
-   * single number is the knob for "make the text bigger".
-   */
-  --type-scale: 1.28;
+  /* The reference is a rectangle: no card rounding, only a small cover radius. */
+  --radius-card: 0;
+  --radius-cover: calc(var(--u) * 0.74);
 
-  --radius-card: calc(var(--u) * 5.2);
-  --radius-cover: calc(var(--u) * 3.5);
+  --fs-title: calc(var(--u) * 4.63);
+  --fs-artist: calc(var(--u) * 2.31);
+  --fs-time: calc(var(--u) * 1.57);
+  --fs-credit: calc(var(--u) * 1.3);
+  --fs-hex: calc(var(--u) * 1.3);
+  --fs-lyric: calc(var(--u) * 2.31);
+  --fs-lyric-sub: calc(var(--u) * 1.65);
+  --fs-status: calc(var(--u) * 1.65);
 
-  /*
-   * Reference type sizes, converted honestly and then lifted by --type-scale: the
-   * reference draws 9/10/11/12/13px type on a 1080px-wide canvas, so Npx becomes
-   * N/10.8 units here (1 unit = 1% of the card width). Everything scales together.
-   */
-  --fs-title: calc(var(--u) * 1.2 * var(--type-scale)); /* 13px */
-  --fs-artist: calc(var(--u) * 1.02 * var(--type-scale)); /* 11px */
-  --fs-time: calc(var(--u) * 0.93 * var(--type-scale)); /* 10px */
-  --fs-credit: calc(var(--u) * 0.83 * var(--type-scale)); /* 9px */
-  --fs-lyric: calc(var(--u) * 1.2 * var(--type-scale)); /* 13px */
-  --fs-lyric-sub: calc(var(--u) * 0.93 * var(--type-scale)); /* 10px */
-  --fs-status: calc(var(--u) * 0.93 * var(--type-scale));
-
-  --tracking-title: 0.02em;
-  --tracking-artist: 0.16em;
-  --tracking-credit: 0.28em;
-  --tracking-time: 0.06em;
+  --tracking-title: 0.01em;
+  --tracking-artist: 0.02em;
+  --tracking-credit: 0.22em;
+  --tracking-time: 0.02em;
 
   /* Font stack from the reference. Its webfont is licensed, so we fall back to the
-     rounded CJK families available on this machine. */
+     rounded CJK families available locally. */
   --font-ui: 'fot-tsukuardgothic-std', 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN',
     'MiSans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
 
@@ -61,14 +56,13 @@
   --accent-bottom: #4a6370;
   --accent-soft: rgba(152, 182, 190, 0.22);
 
-  /* Background: `--bg` is a flat palette colour, `--panel` is the glass option. */
+  /* Background: `--bg` is a flat palette colour, `--surface` the neutral default. */
   --bg: transparent;
-  --panel: rgba(255, 255, 255, 0.32);
-  --panel-line: rgba(44, 50, 54, 0.12);
+  --surface: #ffffff;
+  --panel-line: rgba(44, 50, 54, 0.16);
   --scrim: transparent;
-  --icon-on-primary: #ffffff;
 
-  /* Three-step text hierarchy, as in the reference. */
+  /* Text hierarchy, from the reference's own opacities. */
   --text-strong: #2c3236;
   --text-muted: rgba(44, 50, 54, 0.62);
   --text-faint: rgba(44, 50, 54, 0.4);
@@ -77,14 +71,12 @@
   --flip-duration: 420ms;
 }
 
-/* Light text on dark backgrounds. `data-scheme` is set from the chosen background. */
+/* Light text on dark backgrounds; `data-scheme` is set from the chosen background. */
 :root[data-scheme='dark'] {
-  --panel: rgba(20, 24, 28, 0.32);
-  --panel-line: rgba(237, 241, 243, 0.18);
+  --panel-line: rgba(237, 241, 243, 0.22);
   --text-strong: #edf1f3;
-  --text-muted: rgba(237, 241, 243, 0.65);
-  --text-faint: rgba(237, 241, 243, 0.42);
-  --icon-on-primary: #14181c;
+  --text-muted: rgba(237, 241, 243, 0.66);
+  --text-faint: rgba(237, 241, 243, 0.44);
 }
 
 * {
@@ -105,12 +97,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/*
- * The stage carries the proportions: the largest 9:16 rectangle that fits the
- * viewport, centred. In the desktop shell the window is already 9:16 so it fills
- * exactly; in a browser it fills what it can and stays centred, which is what makes
- * the preview show the real proportions instead of a stretched layout.
- */
+/* The largest 9:16 rectangle that fits the viewport, centred. */
 .stage {
   width: min(94vw, calc(94vh * 9 / 16));
   height: min(calc(94vw * 16 / 9), 94vh);

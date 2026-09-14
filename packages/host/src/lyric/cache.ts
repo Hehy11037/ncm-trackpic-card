@@ -29,8 +29,13 @@ const NORMAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NO_LYRIC_TTL_MS = 60 * 1000;
 
 export function cacheDir(): string {
-  const base = process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
-  return join(base, 'ncm-trackpic-card', 'lyrics');
+  // `OVERLAY_CACHE_DIR` is set by the Electron shell to a writable userData directory; the
+  // sandboxed development shell cannot write under %LOCALAPPDATA%, so without this the cache
+  // silently missed every time and every track change re-fetched its lyrics.
+  const base = process.env.OVERLAY_CACHE_DIR
+    ? join(process.env.OVERLAY_CACHE_DIR, 'cache')
+    : (process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local')) + '/ncm-trackpic-card';
+  return join(base, 'lyrics');
 }
 
 function fileFor(songId: number): string {

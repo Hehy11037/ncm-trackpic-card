@@ -42,10 +42,17 @@ interface DiscoveryCache extends Partial<DiscoveryResult> {
   clientHint?: string;
 }
 
-const CACHE_DIR = join(
-  process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
-  'ncm-trackpic-card',
-);
+/**
+ * Where the discovery result is cached.
+ *
+ * `OVERLAY_CACHE_DIR` wins when set, which the Electron shell points at `app.getPath('userData')`.
+ * That matters: the development shell is sandboxed and cannot write to `%LOCALAPPDATA%`, so the
+ * cache silently missed on every start and the full module scan repeated; a desktop launch has a
+ * writable userData directory, so discovery runs once per client version.
+ */
+const CACHE_DIR = process.env.OVERLAY_CACHE_DIR
+  ? join(process.env.OVERLAY_CACHE_DIR, 'cache')
+  : join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'ncm-trackpic-card');
 const CACHE_FILE = join(CACHE_DIR, 'discovery.json');
 
 export function discoveryCachePath(): string {

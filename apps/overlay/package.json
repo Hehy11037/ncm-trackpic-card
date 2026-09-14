@@ -1,0 +1,8 @@
+{
+  "name": "@ncm-trackpic-card/overlay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron desktop shell: a frameless, always-on-top, transparent window over the host's UI.",
+  "type": "module",
+  "main": "main.mjs"
+}

@@ -32,6 +32,25 @@ const MAX_DISTANCE = Math.floor(ENTRIES_PER_PAGE / 2);
 /** Depth at which an entry has faded out completely. Keep in sync with --d-max in CSS. */
 const DEPTH_LIMIT = 3.6;
 
+/**
+ * Identity of a lyric document.
+ *
+ * The view rebuilds only when this changes. It must include the song id: the earlier guard
+ * compared node counts and timings only and never stored the incoming id, so a new track
+ * whose lyrics had the same line count was treated as "already rendered" and the previous
+ * track's lyrics stayed on screen.
+ *
+ * Exported so `ui/test/lyrics.test.mjs` can verify it directly instead of relying on a
+ * browser.
+ */
+export function documentSignature(doc) {
+  if (!doc) return 'none';
+  const lines = doc.lines ?? [];
+  const first = lines[0]?.startMs ?? 'x';
+  const last = lines[lines.length - 1]?.startMs ?? 'x';
+  return `${doc.songId ?? 'null'}|${lines.length}|${first}|${last}`;
+}
+
 /** WCAG relative luminance, 0..1. */
 function relativeLuminance({ r, g, b }) {
   const channel = (value) => {
@@ -65,6 +84,8 @@ export class LyricsView {
     this.scrollCurrent = 0;
     this.scrollTarget = 0;
     this.songId = null;
+    /** Signature of what is currently rendered, so a rebuild only happens when needed. */
+    this.renderedSignature = null;
     /** Leading nodes that are not lyric lines (the title/artist header). */
     this.headerCount = 0;
     /** Show translations on the current entry. */
@@ -133,26 +154,63 @@ export class LyricsView {
     if (label) label.textContent = [this.songTitle, this.songArtist].filter(Boolean).join(' — ');
   }
 
-  /** Replace the document. Cheap when the same song is re-sent unchanged. */
-  setDocument(doc) {
-    const sameSong = this.songId === doc.songId;
-    this.songId = doc.songId;
+  /**
+   * Show a placeholder instead of lyrics.
+   *
+   * Clears the document so a previous track's lines can never linger, and hides the
+   * title/artist header - with no lyrics the header would overlap the placeholder, which is
+   * what produced a large "title - artist" line sitting on top of "暂无歌词".
+   */
+  clear(message) {
+    this.songId = null;
+    this.lines = [];
+    this.nodes = [];
+    this.headerCount = 0;
+    this.activeIndex = -1;
+    this.stack.replaceChildren();
+    this.#setEmpty(message);
+  }
 
-    if (sameSong && this.nodes.length === doc.lines.length + this.headerCount && this.#sameTimings(doc)) {
-      return;
+  #setEmpty(message) {
+    if (!this.empty) return;
+    const text = message?.trim();
+    if (text) {
+      this.empty.textContent = text;
+      this.empty.style.display = '';
+    } else {
+      this.empty.style.display = 'none';
     }
+  }
 
+  /** Replace the document. Rebuilt whenever the song or the line set changes. */
+  setDocument(doc) {
+    const songId = doc.songId ?? null;
+
+    /*
+     * Rebuild when the song changes, or when its lines change.
+     *
+     * The previous guard compared only the *count* of nodes and the timings, and never
+     * stored the incoming song id. A new track whose lyrics happened to have the same line
+     * count was therefore treated as "already rendered" and the previous track's lyrics
+     * stayed on screen.
+     */
+    const signature = documentSignature(doc);
+    if (signature === this.renderedSignature) return;
+
+    this.songId = songId;
+    this.renderedSignature = signature;
     this.lines = doc.lines;
     this.activeIndex = -1;
     this.nodes = [];
     this.headerCount = 0;
     this.stack.replaceChildren();
 
-    if (this.empty) {
-      const isEmpty = !doc.lines.length;
-      this.empty.style.display = isEmpty ? '' : 'none';
-      if (isEmpty) this.empty.textContent = doc.instrumental ? '纯音乐，请欣赏' : '暂无歌词';
+    if (!doc.lines.length) {
+      // No lyrics: show the placeholder alone. No header entry, or the two overlap.
+      this.#setEmpty(doc.instrumental ? '纯音乐，请欣赏' : '暂无歌词');
+      return;
     }
+    this.#setEmpty(null);
 
     const fragment = document.createDocumentFragment();
     const build = (text, translation, className) => {
@@ -191,14 +249,6 @@ export class LyricsView {
       this.activeIndex = -1;
       this.#setActive(current);
     });
-  }
-
-  #sameTimings(doc) {
-    if (!this.lines.length || !doc.lines.length) return this.lines.length === doc.lines.length;
-    return (
-      this.lines[0]?.startMs === doc.lines[0]?.startMs &&
-      this.lines[this.lines.length - 1]?.startMs === doc.lines[doc.lines.length - 1]?.startMs
-    );
   }
 
   /** Index of the lyric containing `positionMs`, or -1 before the first line. */

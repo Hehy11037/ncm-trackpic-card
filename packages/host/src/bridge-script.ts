@@ -72,6 +72,46 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
     return null;
   };
 
+  const arr = (v) => (Array.isArray(v) ? v : []);
+
+  /** Build the lyric payload for a song (or null when it cannot be read). */
+  const buildLyricPayload = (songId) => {
+    if (songId == null) return null;
+    let slice;
+    try {
+      slice = store.getState()['async:lyric'] || {};
+    } catch (_) {
+      return null;
+    }
+    const pick = (list) => arr(list).map((e) => ({
+      time: e && typeof e.time === 'number' ? e.time : null,
+      lyric: e && typeof e.lyric === 'string' ? e.lyric : null,
+    }));
+    return {
+      songId,
+      currentUsedLyric: str(slice.currentUsedLyric),
+      currentUsedLyricVersion: num(slice.currentUsedLyricVersion),
+      isLoading: !!slice.isLoading,
+      isLyricFetchFailed: !!slice.isLyricFetchFailed,
+      offset: num(slice.offset),
+      lyricLines: pick(slice.lyricLines),
+      tlyricLines: pick(slice.tlyricLines),
+      romaLyricLines: pick(slice.romaLyricLines),
+      at: Date.now(),
+    };
+  };
+
+  /** If the client has not loaded lyrics for this song yet, prod it to. */
+  const requestLyrics = (songId) => {
+    try {
+      const slice = store.getState()['async:lyric'] || {};
+      const hasLines = arr(slice.lyricLines).length > 0;
+      if (!hasLines && !slice.isLoading) {
+        store.dispatch({ type: 'async:lyric/fetchLyric', payload: { force: true } });
+      }
+    } catch (_) {}
+  };
+
   /** Read the parts of the store the overlay cares about. Raw units preserved. */
   const readState = () => {
     let state;
@@ -146,9 +186,15 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
   };
 
   let lastSignature = null;
+  let lastLyricSignature = null;
+  let lastLyricSongId = null;
+  let lastStatePayload = null;
+  let lastLyricPayload = null;
+  let lastClientSongId = null;
   const emitState = () => {
     const snap = readState();
     if (!snap) return;
+    lastStatePayload = snap;
     const sig = [
       snap.songId,
       snap.raw.playingState,
@@ -160,9 +206,55 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
       snap.queue.length,
       snap.chorus ? snap.chorus.startMs + '-' + snap.chorus.endMs : '',
     ].join('|');
-    if (sig === lastSignature) return;
-    lastSignature = sig;
-    send('state', snap);
+    if (sig !== lastSignature) {
+      lastSignature = sig;
+      send('state', snap);
+    }
+
+    // Lyrics are worth re-sending when the song changes or the client swaps the
+    // lyric version (it refreshes them asynchronously after a track change).
+    let slice = null;
+    try { slice = store.getState()['async:lyric'] || {}; } catch (_) {}
+    if (slice) {
+      lastClientSongId = snap.songId;
+      const lsig = [
+        slice.currentUsedLyric,
+        slice.currentUsedLyricVersion,
+        Array.isArray(slice.lyricLines) ? slice.lyricLines.length : 0,
+        slice.isLoading ? 1 : 0,
+        slice.offset,
+      ].join('|');
+      if (snap.songId !== lastLyricSongId) {
+        lastLyricSongId = snap.songId;
+        lastLyricSignature = null;
+        if (snap.songId != null) requestLyrics(snap.songId);
+      }
+      if (lsig !== lastLyricSignature) {
+        lastLyricSignature = lsig;
+        lastLyricPayload = buildLyricPayload(snap.songId);
+        if (lastLyricPayload) send('lyrics', lastLyricPayload);
+      }
+    }
+  };
+
+  /**
+   * Re-send the current state. Called by the host right after injection and
+   * whenever an overlay client connects, because otherwise a UI that attaches
+   * after the last change would sit there empty until something moves.
+   */
+  const resend = () => {
+    const snap = lastStatePayload || readState();
+    if (snap) {
+      lastStatePayload = snap;
+      send('state', snap);
+    }
+    const songId = snap ? snap.songId : lastClientSongId;
+    const payload = lastLyricPayload || buildLyricPayload(songId);
+    if (payload) {
+      lastLyricPayload = payload;
+      send('lyrics', payload);
+    }
+    return true;
   };
 
   const subs = [];
@@ -265,6 +357,8 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
   window.__moBridge = {
     version: 2,
     audioModuleId: AUDIO_MODULE_ID,
+    /** Force a state + lyric re-send; used by the host when a UI attaches. */
+    resend,
     dispose() {
       try { clearInterval(timer); } catch (_) {}
       for (const s of subs) { try { s.unsubscribe(); } catch (_) {} }
@@ -294,5 +388,19 @@ export function bridgeHealthExpression(): string {
     return b
       ? { alive: !b.disposed, version: b.version, audioModuleId: b.audioModuleId }
       : { alive: false };
+  })()`;
+}
+
+/**
+ * Ask the bridge to re-send its current state and lyrics.
+ *
+ * Needed because the bridge deduplicates: if playback has not changed since it was
+ * injected, a UI that attaches afterwards would otherwise receive nothing.
+ */
+export function bridgeResendExpression(): string {
+  return `(() => {
+    const b = window.__moBridge;
+    if (!b || !b.resend) return false;
+    return !!b.resend();
   })()`;
 }

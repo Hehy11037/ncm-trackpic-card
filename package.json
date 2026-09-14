@@ -20,6 +20,8 @@
     "debug-launch": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/debug-launch.ps1",
     "host": "node tools/host-run.mjs",
     "smoke": "node tools/host-smoke.mjs",
+    "test": "node packages/host/src/lyric/parse.test.ts",
+    "check:bridge": "node tools/check-bridge-script.mjs",
     "typecheck": "tsc --noEmit --pretty"
   },
   "devDependencies": {

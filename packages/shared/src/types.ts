@@ -155,6 +155,29 @@ export interface LyricLine {
 
 export type LyricSource = 'client' | 'public-api' | 'none';
 
+/** One line exactly as the client stores it (`time` is in SECONDS there). */
+export interface ClientLyricEntry {
+  time?: number | null;
+  lyric?: string | null;
+}
+
+/** The client's parsed lyric slice, forwarded verbatim by the bridge. */
+export interface ClientLyricSlice {
+  /** Song these lines belong to, so the host can discard stale payloads. */
+  songId: number | null;
+  /** `lrc`, `yrc`, `none`, ... as reported by the client. */
+  currentUsedLyric: string | null;
+  currentUsedLyricVersion: number | null;
+  isLoading: boolean;
+  isLyricFetchFailed: boolean;
+  /** User-configured offset. The client stores it in SECONDS. */
+  offset: number | null;
+  lyricLines: ClientLyricEntry[];
+  tlyricLines: ClientLyricEntry[];
+  romaLyricLines: ClientLyricEntry[];
+  at: EpochMs;
+}
+
 export interface LyricDoc {
   songId: number;
   /** 'none' means the track is instrumental or has no lyrics. */

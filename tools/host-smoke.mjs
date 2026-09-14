@@ -24,6 +24,7 @@ const args = parseArgs(process.argv.slice(2));
 const counts = { hello: 0, connection: 0, snapshot: 0, playhead: 0, lyrics: 0, error: 0 };
 let lastSnapshot = null;
 let lastPlayhead = null;
+let lastLyricDoc = null;
 let firstPlayheadAt = null;
 let lastPlayheadAt = null;
 const connectionStates = new Set();
@@ -69,6 +70,7 @@ ws.addEventListener('message', (ev) => {
   if (msg.kind in counts) counts[msg.kind] += 1;
   if (msg.kind === 'connection') connectionStates.add(msg.connection?.state);
   if (msg.kind === 'snapshot') lastSnapshot = msg.snapshot;
+  if (msg.kind === 'lyrics') lastLyricDoc = msg.doc;
   if (msg.kind === 'playhead') {
     lastPlayhead = msg.playhead;
     if (firstPlayheadAt == null) firstPlayheadAt = Date.now();
@@ -77,7 +79,8 @@ ws.addEventListener('message', (ev) => {
 });
 
 // Force the host to resend current state.
-ws.send(JSON.stringify({ kind: 'requestSnapshot' }));
+ws.send(JSON.stringify({ kind: 'requestSnapshot', }));
+ws.send(JSON.stringify({ kind: 'requestLyrics' }));
 
 if (args.send) {
   await new Promise((r) => setTimeout(r, 500));
@@ -120,6 +123,24 @@ if (lastPlayhead) {
 } else {
   console.log('\n⚠️  未收到任何进度事件（音乐当前可能是暂停状态，属正常）。');
   console.log('   请在播放中重跑本工具以验证进度链路。');
+}
+
+if (lastLyricDoc) {
+  const d = lastLyricDoc;
+  console.log('\n=== 歌词 ===');
+  console.log(`  来源:     ${d.source}   歌曲ID: ${d.songId}`);
+  console.log(`  行数:     ${d.lines.length}   逐字: ${d.hasWordTiming}   纯音乐: ${d.instrumental}`);
+  console.log(`  偏移:     ${d.offsetMs} ms`);
+  for (const line of d.lines.slice(0, 4)) {
+    const trans = line.translation ? `   ／${line.translation.trim()}` : '';
+    console.log(`    [${String(line.startMs).padStart(6)}–${String(line.endMs).padStart(6)}] ${line.text.trim().slice(0, 60)}${trans}`);
+  }
+  const withWords = d.lines.find((l) => l.words?.length);
+  if (withWords) {
+    console.log(`  逐字样例: ${withWords.words.slice(0, 6).map((w) => `${w.text}@${w.startMs}+${w.durationMs}`).join(' ')}`);
+  }
+} else {
+  console.log('\n⚠️  未收到歌词消息。');
 }
 
 ws.close();

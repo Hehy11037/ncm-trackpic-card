@@ -20,6 +20,7 @@ import {
 } from '@ncm-trackpic-card/shared';
 
 import { DEFAULT_CDP_PORT } from './cdp.ts';
+import { LyricsService, type LyricsServiceOptions } from './lyrics.ts';
 import { ClientSession } from './session.ts';
 
 export const HOST_VERSION = '0.1.0';
@@ -29,8 +30,11 @@ export const PROTOCOL_VERSION = 1;
 export interface HostOptions {
   cdpPort?: number;
   hostPort?: number;
-  /** Resolve lyrics for a song id. Injected so the host stays testable. */
-  lyricsProvider?: (songId: number) => Promise<LyricDoc | null>;
+  /**
+   * Override the lyrics source. Defaults to the built-in LyricsService, which
+   * prefers the client's own lyric document and falls back to the public API.
+   */
+  lyrics?: Pick<LyricsService, 'start' | 'get' | 'refresh' | 'prune'> | LyricsService;
   log?: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
 }
 
@@ -57,17 +61,23 @@ export function createHost(options: HostOptions = {}): Host {
     server.broadcast(message);
   };
 
+  // Lyrics come from the shared service; it pushes documents as they resolve.
+  const lyrics: LyricsService =
+    options.lyrics instanceof LyricsService
+      ? options.lyrics
+      : new LyricsService({
+          session,
+          log: (level, message) => session.emit('log', level, message),
+          onDoc: (doc) => broadcast({ kind: 'lyrics', doc }),
+        } satisfies LyricsServiceOptions);
+
   session.on('snapshot', (snapshot: PlaybackSnapshot) => {
     broadcast({ kind: 'snapshot', snapshot });
+    // The service decides whether this needs work (it coalesces and caches).
     const songId = snapshot.song?.id;
-    if (songId != null && options.lyricsProvider) {
-      void options.lyricsProvider(songId)
-        .then((doc) => {
-          if (doc) broadcast({ kind: 'lyrics', doc });
-        })
-        .catch((err) => {
-          log('warn', `歌词获取失败(${songId}): ${err instanceof Error ? err.message : String(err)}`);
-        });
+    if (songId != null) {
+      const cached = lyrics.get(songId);
+      if (cached) broadcast({ kind: 'lyrics', doc: cached });
     }
   });
 
@@ -95,6 +105,8 @@ export function createHost(options: HostOptions = {}): Host {
     const snapshot = session.currentSnapshot;
     if (snapshot) broadcast({ kind: 'snapshot', snapshot });
     broadcast({ kind: 'connection', connection: session.connectionInfo });
+    // Ask the client bridge to replay state + lyrics for the newcomer.
+    void session.requestResend();
   });
 
   server.on('disconnect', () => {
@@ -124,9 +136,13 @@ export function createHost(options: HostOptions = {}): Host {
       }
       case 'requestLyrics': {
         const songId = message.songId ?? session.currentSnapshot?.song?.id ?? null;
-        if (songId != null && options.lyricsProvider) {
-          const doc = await options.lyricsProvider(songId).catch(() => null);
-          if (doc) broadcast({ kind: 'lyrics', doc });
+        if (songId != null) {
+          const cached = lyrics.get(songId);
+          if (cached) broadcast({ kind: 'lyrics', doc: cached });
+          else {
+            const fresh = await lyrics.refresh(songId).catch(() => null);
+            if (fresh) broadcast({ kind: 'lyrics', doc: fresh });
+          }
         }
         break;
       }
@@ -139,6 +155,11 @@ export function createHost(options: HostOptions = {}): Host {
     async start() {
       await server.listen();
       log('info', `宿主已监听 ws://127.0.0.1:${hostPort}`);
+      lyrics.start();
+      const pruned = lyrics.prune();
+      if (pruned.removed) {
+        log('info', `清理过期歌词缓存 ${pruned.removed} 条，保留 ${pruned.kept} 条`);
+      }
       await session.start();
     },
     async stop() {

@@ -16,6 +16,12 @@ import { css, paletteFor } from './palette.js';
 
 const $ = (id) => document.getElementById(id);
 
+/** #RRGGBB for a 0-255 channel triple. */
+function toHex({ r, g, b }) {
+  const part = (value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
+  return `#${part(r)}${part(g)}${part(b)}`.toUpperCase();
+}
+
 export class CardView {
   constructor(options = {}) {
     this.el = {
@@ -27,9 +33,11 @@ export class CardView {
       timeNow: $('time-now'),
       timeTotal: $('time-total'),
       palette: $('palette'),
+      paletteLabels: $('palette-labels'),
       status: $('status-text'),
       flip: $('flip'),
       credit: $('credit'),
+      stage: $('stage'),
     };
 
     this.onBackgroundChange = options.onBackgroundChange ?? (() => {});
@@ -43,12 +51,12 @@ export class CardView {
     this.lastFraction = -1;
     this.lastSecond = -1;
 
-    this.renderSwatches();
+    this.renderBand();
     this.applyBackground();
 
     // Keep the layout unit in step with the stage's rendered size. A ResizeObserver
     // catches cases a window resize event misses (e.g. the shell resizing us).
-    const stage = document.getElementById('stage');
+    const stage = this.el.stage;
     const relayout = () => applyLayoutUnit(stage);
     window.addEventListener('resize', relayout);
     if (stage && typeof ResizeObserver !== 'undefined') {
@@ -113,10 +121,10 @@ export class CardView {
   setPalette(colors) {
     if (!colors?.length) return;
     this.palette = colors.slice(0, 5);
-    this.renderSwatches();
+    this.renderBand();
     this.applyBackground();
 
-    // Accent colours drive the glow and the primary button.
+    // Accent colours drive the wash and the primary button.
     const root = document.documentElement;
     const sorted = [...this.palette].sort((a, b) => (a.r + a.g + a.b) - (b.r + b.g + b.b));
     root.style.setProperty('--accent-top', css(sorted[sorted.length - 1]));
@@ -126,33 +134,58 @@ export class CardView {
   }
 
   /**
-   * Build the swatch strip. Five palette colours plus nothing else: the glass option
-   * is "no swatch selected", which keeps the row short and matches the reference,
-   * where the palette is exactly five colours.
+   * Build the colour band and its hex labels.
+   *
+   * Layout follows the reference: five equal segments with their hex codes printed
+   * underneath, plus a separate "glass" chip so the frosted option is a visible,
+   * clickable choice rather than a hidden toggle.
    */
-  renderSwatches() {
-    const fragment = document.createDocumentFragment();
+  renderBand() {
+    const band = document.createDocumentFragment();
     this.palette.forEach((color, index) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'swatch';
-      button.style.background = css(color);
-      button.title = `背景色 ${index + 1}（再次点击回到毛玻璃）`;
-      const active = this.backgroundChoice === index;
-      button.setAttribute('aria-pressed', String(active));
-      button.addEventListener('click', () => {
-        // Tapping the active swatch toggles back to frosted glass.
+      const segment = document.createElement('button');
+      segment.type = 'button';
+      segment.className = 'band-segment';
+      segment.style.background = css(color);
+      const hex = toHex(color);
+      segment.title = `${hex} — 点击设为背景色`;
+      segment.setAttribute('aria-label', `背景色 ${hex}`);
+      segment.setAttribute('aria-pressed', String(this.backgroundChoice === index));
+      segment.addEventListener('click', () => {
         this.setBackground(this.backgroundChoice === index ? 'glass' : index);
       });
-      fragment.append(button);
+      band.append(segment);
     });
-    this.el.palette.replaceChildren(fragment);
+
+    const glass = document.createElement('button');
+    glass.type = 'button';
+    glass.className = 'band-segment band-segment--glass';
+    glass.title = '毛玻璃（跟随封面配色）';
+    glass.setAttribute('aria-label', '毛玻璃背景');
+    glass.setAttribute('aria-pressed', String(this.backgroundChoice === 'glass'));
+    glass.addEventListener('click', () => this.setBackground('glass'));
+    band.append(glass);
+
+    this.el.palette.replaceChildren(band);
+
+    const labels = document.createDocumentFragment();
+    this.palette.forEach((color) => {
+      const label = document.createElement('span');
+      label.className = 'band-label';
+      label.textContent = toHex(color).slice(0, 7);
+      labels.append(label);
+    });
+    const glassLabel = document.createElement('span');
+    glassLabel.className = 'band-label band-label--glass';
+    glassLabel.textContent = 'GLASS';
+    labels.append(glassLabel);
+    this.el.paletteLabels.replaceChildren(labels);
   }
 
   setBackground(choice) {
     this.backgroundChoice = choice;
     saveBackgroundChoice(choice);
-    this.renderSwatches();
+    this.renderBand();
     this.applyBackground();
     this.onBackgroundChange(choice);
   }

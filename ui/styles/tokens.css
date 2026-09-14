@@ -18,22 +18,32 @@
   --stage-width: 360px;
   --stage-height: 640px;
 
+  /*
+   * Type uplift over the reference's literal pixel sizes.
+   *
+   * The reference is a phone wallpaper viewed at arm's length, with a 1080px-wide
+   * canvas; this card is a desktop overlay a fraction of that size, where the
+   * reference's literal sizes read too small. So the type scale is multiplied by one
+   * factor rather than tuned size by size - that keeps the hierarchy intact, and this
+   * single number is the knob for "make the text bigger".
+   */
+  --type-scale: 1.28;
+
   --radius-card: calc(var(--u) * 5.2);
   --radius-cover: calc(var(--u) * 3.5);
 
   /*
-   * Reference type sizes, converted honestly: the reference design is drawn on a
-   * 1080px-wide canvas using 9/10/11/12/13px type, so a size of N px becomes N/10.8
-   * units here (1 unit = 1% of the card width). Everything scales together, which is
-   * what keeps the proportions identical to the reference at any screen size.
+   * Reference type sizes, converted honestly and then lifted by --type-scale: the
+   * reference draws 9/10/11/12/13px type on a 1080px-wide canvas, so Npx becomes
+   * N/10.8 units here (1 unit = 1% of the card width). Everything scales together.
    */
-  --fs-title: calc(var(--u) * 1.2); /* 13px */
-  --fs-artist: calc(var(--u) * 1.02); /* 11px */
-  --fs-time: calc(var(--u) * 0.93); /* 10px */
-  --fs-credit: calc(var(--u) * 0.83); /* 9px */
-  --fs-lyric: calc(var(--u) * 1.2); /* 13px */
-  --fs-lyric-sub: calc(var(--u) * 0.93); /* 10px */
-  --fs-status: calc(var(--u) * 0.93);
+  --fs-title: calc(var(--u) * 1.2 * var(--type-scale)); /* 13px */
+  --fs-artist: calc(var(--u) * 1.02 * var(--type-scale)); /* 11px */
+  --fs-time: calc(var(--u) * 0.93 * var(--type-scale)); /* 10px */
+  --fs-credit: calc(var(--u) * 0.83 * var(--type-scale)); /* 9px */
+  --fs-lyric: calc(var(--u) * 1.2 * var(--type-scale)); /* 13px */
+  --fs-lyric-sub: calc(var(--u) * 0.93 * var(--type-scale)); /* 10px */
+  --fs-status: calc(var(--u) * 0.93 * var(--type-scale));
 
   --tracking-title: 0.02em;
   --tracking-artist: 0.16em;

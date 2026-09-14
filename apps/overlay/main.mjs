@@ -31,16 +31,15 @@ import {
   MIN_WIDTH,
   cardWidthForWindow,
   clamp,
+  clampToWorkArea,
   createHoverState,
+  dragTarget,
   fitWindow,
   loadWindowState,
   makeIconPng,
   saveWindowState,
   stateFilePath,
 } from './shell-utils.mjs';
-
-// Shared with the renderer so the two sides cannot disagree about where a drag puts the window.
-import { dragTarget } from '../../ui/src/drag.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -60,8 +59,24 @@ const UI_PORT = Number(process.env.OVERLAY_UI_PORT ?? 8788);
 const UI_URL = `http://127.0.0.1:${UI_PORT}/`;
 const CDP_PORT = Number(process.env.OVERLAY_CDP_PORT ?? 9223);
 
-/** How often the pointer is sampled. Fast enough to feel immediate, cheap enough to ignore. */
-const HOVER_POLL_MS = 120;
+/**
+ * How often the pointer is sampled.
+ *
+ * 60ms rather than the original 120ms: this is the resolution of "did the pointer leave?", and at
+ * 120ms the roll-up felt sluggish on top of its own delay. The query is a cheap Win32 call.
+ */
+const HOVER_POLL_MS = 60;
+/**
+ * How long the pointer must stay away before the card rolls up.
+ *
+ * 300ms rather than the original 600ms, for the same reason: a deliberate move away is obvious
+ * well before half a second, and the delay is the part that is actually noticed.
+ */
+const COLLAPSE_DELAY_MS = 300;
+/** How long the pointer must rest on the rolled-up strip before it expands again. */
+const EXPAND_DELAY_MS = 80;
+/** How often the window follows the cursor during a drag: one display frame. */
+const DRAG_FOLLOW_MS = 16;
 /**
  * Grace period after the shell itself moves or shows the window.
  *
@@ -69,6 +84,21 @@ const HOVER_POLL_MS = 120;
  * outside the window - so without this the card would roll up again the moment it appeared.
  */
 const SUPPRESS_MS = 2500;
+
+/**
+ * What the window shows while the host is starting.
+ *
+ * A data URL rather than a file: it has to render before the host's HTTP server exists, which is
+ * the whole point. The card's own palette is used so the flash between this and the real UI is
+ * not jarring.
+ */
+const STARTUP_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
+  '<!doctype html><meta charset="utf-8"><style>' +
+    'html,body{margin:0;height:100%;background:transparent;overflow:hidden;' +
+    "font:13px/1.6 system-ui,'Microsoft YaHei',sans-serif;color:#8d9aa1}" +
+    'body{display:grid;place-items:center}' +
+    '</style><body>正在启动…</body>',
+)}`;
 
 /** Accent used for the tray icon; matches the app's default accent. */
 const ICON_COLOR = { r: 0x98, g: 0xb6, b: 0xbe };
@@ -111,13 +141,23 @@ let suppressUntil = 0;
 let hoverTimer = null;
 let hoverState = null;
 let saveTimer = null;
-/** Bounds captured at the start of a pointer drag, or null when no drag is in progress. */
-let dragOrigin = null;
+/** Consecutive hover-watch errors, so a repeating failure is reported without flooding. */
+let hoverErrors = 0;
+/**
+ * Offset of the press inside the window while the pointer is dragging it, or null.
+ *
+ * The window is moved so this offset stays constant under the cursor. Storing the *offset* rather
+ * than the deltas the renderer reports means the cursor cannot outrun the window and escape it -
+ * an escaped cursor meant no `pointerup`, a drag that never ended, and a card abandoned somewhere
+ * the user could not recover by hand.
+ */
+let dragGrab = null;
+let dragTimer = null;
 let dragMoved = false;
-/** When the last drag event arrived, so a gesture that never ends can be dropped. */
+/** When the drag last moved the window, so a gesture that never ends can be dropped. */
 let dragLastAt = 0;
 
-/** A drag with no traffic for this long is treated as abandoned rather than left open. */
+/** A drag with no movement for this long is treated as abandoned rather than left open. */
 const DRAG_STALE_MS = 30_000;
 
 /* -------------------------------------------------------------- single instance */
@@ -233,13 +273,21 @@ function applyGeometry() {
   cardWidth = fit.cardWidth;
 
   const height = collapsed ? fit.collapsedHeight : fit.height;
-  // Anchor the top edge, so rolling up eats the bottom of the window - which is what makes it
-  // read as the panel sliding up rather than the window jumping.
-  let y = bounds.y;
-  if (y + height > workArea.y + workArea.height) y = workArea.y + workArea.height - height;
-  if (y < workArea.y) y = workArea.y;
+  /*
+   * Anchor the top edge, so rolling up eats the bottom of the window - which is what makes it read
+   * as the panel sliding up rather than the window jumping - and keep the result fully on screen.
+   *
+   * The clamp is what makes a rolled-up card recoverable: the strip sits along the window's top
+   * edge, so a window left hanging above the top of the display would put the strip where no
+   * pointer can reach it, and the card could never be expanded again.
+   */
+  const position = clampToWorkArea(
+    { x: bounds.x, y: bounds.y },
+    { width: fit.width, height },
+    workArea,
+  );
 
-  mainWindow.setBounds({ x: bounds.x, y, width: fit.width, height }, false);
+  mainWindow.setBounds({ x: position.x, y: position.y, width: fit.width, height }, false);
   persistWindowState();
 }
 
@@ -300,7 +348,10 @@ function scheduleStateSave() {
  */
 function startHoverWatch() {
   if (hoverTimer) return;
-  hoverState = createHoverState({ collapseDelayMs: 600, expandDelayMs: 90 });
+  hoverState = createHoverState({
+    collapseDelayMs: COLLAPSE_DELAY_MS,
+    expandDelayMs: EXPAND_DELAY_MS,
+  });
 
   hoverTimer = setInterval(() => {
     try {
@@ -310,12 +361,12 @@ function startHoverWatch() {
         return;
       }
       // A drag moves the window under the pointer; rolling up mid-drag would be absurd, and the
-      // bounds sampled during one are meaningless. A drag that stops reporting is dropped, so
-      // this can never become a permanent "never rolls up again".
-      if (dragOrigin) {
+      // bounds sampled during one are meaningless. A drag that stops moving is dropped, so this
+      // can never become a permanent "never rolls up again".
+      if (dragGrab) {
         if (Date.now() - dragLastAt > DRAG_STALE_MS) {
           console.warn('[shell] 拖动超过 30 秒没有动静，已放弃该手势');
-          endDrag();
+          endDrag('stale');
         }
         hoverState.reset();
         return;
@@ -336,17 +387,49 @@ function startHoverWatch() {
         point.y < bounds.y + bounds.height;
 
       if (hoverState.update(Date.now(), inside, locked)) setCollapsed(hoverState.collapsed);
+      hoverErrors = 0;
     } catch (err) {
-      // An exception here would otherwise surface as an uncaught error in the middle of the
-      // main process, which looks nothing like "the pointer query failed".
-      console.error('[shell] 指针监听出错，已停止自动收起', err);
-      clearInterval(hoverTimer);
-      hoverTimer = null;
+      /*
+       * Keep the interval.
+       *
+       * This used to clear it, which turned one transient error into "the card never rolls up or
+       * expands again" - and a card stuck as a strip with no way back is the worst outcome this
+       * feature has. A bad tick is skipped and the next pointer sample re-adopts the position.
+       */
+      hoverErrors++;
+      if (hoverErrors <= 3 || hoverErrors % 100 === 0) {
+        console.error(`[shell] 指针监听出错（第 ${hoverErrors} 次，已跳过该次采样）`, err);
+      }
+      hoverState.reset();
     }
   }, HOVER_POLL_MS);
 }
 
 /* --------------------------------------------------------------------- window */
+
+/**
+ * Load the real UI, once its server is answering.
+ *
+ * `dom-ready` rather than an IPC handshake from the preload: the roll-up must not depend on the
+ * bridge. Attached here, and not in `createWindow`, because the window first shows the startup
+ * page - and that page must not be what marks the renderer ready, or the card could roll up before
+ * the real interface had ever been drawn.
+ */
+async function loadUi() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.once('dom-ready', () => {
+    rendererReady = true;
+    suppressUntil = Date.now() + SUPPRESS_MS;
+    // The renderer may have asked for the state before we could answer; a duplicate is harmless.
+    mainWindow?.webContents.send('overlay:state', { locked });
+    console.info('[shell] 界面已加载，自动收起开始工作');
+  });
+  try {
+    await mainWindow.loadURL(UI_URL);
+  } catch (err) {
+    console.error(`[shell] 加载界面失败 (${UI_URL})`, err);
+  }
+}
 
 function createWindow() {
   const workArea = screen.getPrimaryDisplay().workArea;
@@ -407,19 +490,15 @@ function createWindow() {
     console.log(`[ui] ${details.message}`);
   });
 
-  mainWindow.loadURL(UI_URL);
-
   /*
-   * `dom-ready` rather than an IPC handshake from the preload: the roll-up must not depend on
-   * the bridge. By this point the page has a document and a size, so shrinking the window
-   * cannot catch it mid-load.
+   * Show something immediately, and load the real UI once the host answers.
+   *
+   * Waiting for the host before creating the window left the shell with no window at all for
+   * however long the host took - and Windows shows its "starting" cursor (the arrow-with-hourglass
+   * the user saw) for a process that has not opened a window yet. The window now exists at once
+   * and says what it is waiting for.
    */
-  mainWindow.webContents.once('dom-ready', () => {
-    rendererReady = true;
-    // The renderer may have missed the state if it subscribed before we were ready; it asks for
-    // it too, and a duplicate is harmless.
-    mainWindow?.webContents.send('overlay:state', { locked });
-  });
+  mainWindow.loadURL(STARTUP_PAGE);
 
   mainWindow.on('show', () => {
     suppressUntil = Date.now() + SUPPRESS_MS;
@@ -454,8 +533,7 @@ function showWindow() {
   if (!mainWindow) {
     createWindow();
     return;
-  }
-  if (mainWindow.isMinimized()) mainWindow.restore();
+  }  if (mainWindow.isMinimized()) mainWindow.restore();
   // Bring it back as the full card: "显示" that produced a rolled-up strip would look like the
   // tray item had failed.
   setCollapsed(false);
@@ -484,6 +562,14 @@ function toggleWindow() {
 function trayTemplate() {
   return [
     { label: '显示 / 隐藏', click: () => toggleWindow() },
+    {
+      // An explicit way back to the full card, whatever state it is in. The card itself is
+      // normally enough - moving onto the strip expands it - but a control that only exists in
+      // the window cannot recover a window that is somewhere awkward.
+      label: '展开卡片',
+      enabled: collapsed,
+      click: () => showWindow(),
+    },
     {
       label: '居中显示',
       click: () => {
@@ -570,47 +656,79 @@ function bindIpc() {
 
   ipcMain.on('overlay:drag-start', (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
-    // The bounds are captured once, at the press. Every move is then measured from here, so the
-    // window's position is a pure function of the total pointer delta - no accumulation, and no
-    // drift if an event is dropped.
-    dragOrigin = mainWindow.getBounds();
+    const bounds = mainWindow.getBounds();
+    const cursor = screen.getCursorScreenPoint();
+    // The offset of the press inside the window is what the follow loop holds constant.
+    dragGrab = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
     dragMoved = false;
     dragLastAt = Date.now();
-  });
-
-  ipcMain.on('overlay:drag-move', (event, delta) => {
-    if (!mainWindow || !dragOrigin || event.sender !== mainWindow.webContents) return;
-    const target = dragTarget(dragOrigin, Number(delta?.dx) || 0, Number(delta?.dy) || 0);
-    const bounds = mainWindow.getBounds();
-    if (bounds.x === target.x && bounds.y === target.y) return;
-    dragMoved = true;
-    dragLastAt = Date.now();
-    // Never let the cursor leave the window mid-drag: the gesture would stop receiving events.
-    suppressUntil = Date.now() + SUPPRESS_MS;
-    mainWindow.setBounds({ ...bounds, x: target.x, y: target.y }, false);
+    startDragFollow();
   });
 
   ipcMain.on('overlay:drag-end', (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
-    endDrag();
+    endDrag('renderer');
   });
 
   // A renderer that goes away mid-drag must not leave the gesture (and with it the suppression
   // of auto-collapse) open.
-  mainWindow?.webContents.on('render-process-gone', () => endDrag());
+  mainWindow?.webContents.on('render-process-gone', () => endDrag('render-process-gone'));
+}
+
+/**
+ * Follow the cursor until the drag ends.
+ *
+ * The window chases the pointer in the *shell* rather than by applying deltas the renderer
+ * reports. Two things fall out of that, and both were bugs before:
+ *
+ *  - The cursor can never outrun the window and leave it, so the renderer keeps receiving pointer
+ *    events and `pointerup` always arrives. A drag that ended early because the pointer escaped
+ *    used to leave the card collapsed in a place the user could not reach.
+ *  - Every position is clamped to the display, so the window - and therefore the strip it rolls
+ *    up into - is always somewhere a pointer can get to.
+ */
+function startDragFollow() {
+  if (dragTimer) return;
+  dragTimer = setInterval(() => {
+    if (quitting || !mainWindow || mainWindow.isDestroyed() || !dragGrab) {
+      endDrag('follow-stopped');
+      return;
+    }
+    const bounds = mainWindow.getBounds();
+    const cursor = screen.getCursorScreenPoint();
+    const target = dragTarget(
+      cursor,
+      dragGrab,
+      { width: bounds.width, height: bounds.height },
+      workAreaForWindow(),
+    );
+    if (target.x === bounds.x && target.y === bounds.y) return;
+    dragMoved = true;
+    dragLastAt = Date.now();
+    // Never let the card roll up in the middle of being moved.
+    suppressUntil = Date.now() + SUPPRESS_MS;
+    mainWindow.setBounds({ ...bounds, x: target.x, y: target.y }, false);
+  }, DRAG_FOLLOW_MS);
 }
 
 /**
  * Forget an in-flight drag.
  *
- * A drag that never ends would leave `dragOrigin` set, and the pointer watcher skips every tick
- * while a drag is open - so the card would silently stop rolling up. That failure mode has
+ * A drag that never ends leaves `dragGrab` set, and the pointer watcher skips every tick while a
+ * drag is open - so the card would silently stop rolling up altogether. That failure mode has
  * already cost this project a round, so a stale drag is dropped rather than trusted.
  */
-function endDrag() {
-  if (!dragOrigin) return;
-  dragOrigin = null;
-  if (dragMoved) persistWindowState();
+function endDrag(reason) {
+  if (dragTimer) {
+    clearInterval(dragTimer);
+    dragTimer = null;
+  }
+  if (!dragGrab) return;
+  dragGrab = null;
+  if (dragMoved) {
+    persistWindowState();
+    console.info(`[shell] 拖动结束（${reason}）`);
+  }
   dragMoved = false;
 }
 
@@ -635,18 +753,16 @@ app
       console.error('[shell] 启动宿主失败', hostError);
     }
 
-    const ready = hostError ? false : await waitForUi();
-    if (!ready) {
-      // Still open the window: the UI shows a clear "not connected" state, which is more useful
-      // than silently exiting. A host already on the port is a normal cause - e.g. a leftover
-      // one from an earlier run - and the window simply talks to that instead.
-      console.error(`[shell] 界面服务未就绪 (${UI_URL})，仍打开窗口以便显示状态`);
-    }
-
     bindIpc();
     reportUiAssets();
-    // The pointer watcher is started first, and touches nothing that can fail: it only stores a
-    // timer. Everything after this point is allowed to break without disabling the roll-up.
+    /*
+     * The window comes up straight away, showing the startup page, and the tray and the pointer
+     * watcher with it. Everything that can be slow - waiting for the host - happens after, so the
+     * app is visibly alive instead of showing Windows' "starting" cursor over nothing.
+     *
+     * The watcher is started before the window and the tray on purpose: it only stores a timer,
+     * so nothing that follows can prevent it from existing.
+     */
     startHoverWatch();
     createWindow();
 
@@ -655,6 +771,15 @@ app
     } catch (err) {
       console.error('[shell] 托盘创建失败（收起/展开不受影响）', err);
     }
+
+    const ready = hostError ? false : await waitForUi();
+    if (!ready) {
+      // Still load the UI: it shows a clear "not connected" state, which is more useful than
+      // leaving the startup page up forever. A host already on the port is a normal cause - a
+      // leftover one from an earlier run - and the window simply talks to that instead.
+      console.error(`[shell] 界面服务未就绪 (${UI_URL})，仍加载界面以显示状态`);
+    }
+    await loadUi();
 
     app.on('activate', () => showWindow());
   })

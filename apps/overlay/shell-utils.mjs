@@ -87,6 +87,43 @@ export function cardWidthForWindow(windowWidth) {
   return clamp(Math.round(windowWidth) - SHADOW_PAD * 2, CARD_WIDTH_MIN, CARD_WIDTH_MAX);
 }
 
+/**
+ * Clamp a window position so the whole window stays on that display.
+ *
+ * Not cosmetic. The card rolls up to a strip along its **top** edge, so a window dragged above
+ * the top of the screen leaves the strip off-screen - with no way to reach it with the pointer
+ * to expand it again. Keeping the window fully visible makes every state recoverable by hand.
+ *
+ * @param {{x:number,y:number}} position wanted top-left corner
+ * @param {{width:number,height:number}} size window size
+ * @param {{x:number,y:number,width:number,height:number}} workArea
+ */
+export function clampToWorkArea(position, size, workArea) {
+  // `Math.max` on the upper bound: a window larger than the screen anchors to the top-left rather
+  // than being pushed to a negative coordinate.
+  const maxX = Math.max(workArea.x, workArea.x + workArea.width - size.width);
+  const maxY = Math.max(workArea.y, workArea.y + workArea.height - size.height);
+  return {
+    x: Math.round(Math.min(Math.max(position.x, workArea.x), maxX)),
+    y: Math.round(Math.min(Math.max(position.y, workArea.y), maxY)),
+  };
+}
+
+/**
+ * Where the window goes while the pointer drags it.
+ *
+ * The window follows the cursor, holding the point the press landed on at the same offset inside
+ * the window. That is better than moving by the deltas the renderer reports: the cursor can
+ * never outrun the window and escape it, which is what made a drag end early and leave the card
+ * somewhere unhelpful.
+ *
+ * @param {{x:number,y:number}} cursor current cursor position
+ * @param {{x:number,y:number}} grab offset of the press inside the window
+ */
+export function dragTarget(cursor, grab, size, workArea) {
+  return clampToWorkArea({ x: cursor.x - grab.x, y: cursor.y - grab.y }, size, workArea);
+}
+
 /* ------------------------------------------------- pointer -> collapse state */
 
 /**

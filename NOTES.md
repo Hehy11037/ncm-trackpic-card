@@ -469,6 +469,73 @@ an HTTP 500, give up after the second failure, do **not** retry an empty result,
 result that arrives after a track change, abandon the retry pause when the track changes during
 it, and serve a repeat visit from memory. The retry delay is injectable so the suite stays fast.
 
+## 2026-09-15 (6) — four reported symptoms, three mechanisms
+
+### The hourglass at startup was a window that did not exist yet
+
+`whenReady()` started the host and then `await waitForUi()` **before** `createWindow()`. For as
+long as the host took to spawn, load and bind its ports there was no window at all - and Windows
+shows its "starting" cursor (the arrow with an hourglass) for a process that has not opened a
+window yet. Nothing to do with memory; the fix is ordering. The window now comes up immediately
+with a data-URL placeholder, and the real UI is loaded once the host answers.
+
+The startup block's order is now asserted rather than described: watcher, then window, then tray,
+then the wait for the host, then `loadUi()`.
+
+### The roll-up felt slow because of two numbers
+
+Sampling every 120ms plus a 600ms delay is up to 720ms after the pointer leaves. Now 60ms and
+300ms - a deliberate move away is obvious well before half a second, and the delay is the part
+that is actually perceived.
+
+### The drag: the cursor was outrunning the window
+
+Reported as "dragging works at first, then it suddenly rolls up into a strip and cannot be
+expanded again". Both halves are the same mistake. The renderer reported pointer deltas and the
+shell applied them, so:
+
+* the window lagged the cursor, the cursor left the window, and `pointerup` never arrived;
+* Chromium's `pointercancel` / `lostpointercapture` - which fire when a window is moved under a
+  captured pointer - ended the gesture while the button was still held.
+
+With a drag open the shell skips every auto-collapse tick, and once it closed the pointer was
+outside, so the card rolled up. It then sat where the drag had left it, which is not necessarily
+anywhere reachable.
+
+Now the **shell** moves the window: it watches the OS cursor and holds the pressed point at a
+fixed offset inside the window. The cursor cannot outrun the window, so it cannot escape, so
+`pointerup` always arrives. Plus:
+
+* every position is clamped to the display (`clampToWorkArea`), which is what makes the strip
+  recoverable - it sits along the window's *top* edge, so a window above the top of the screen
+  would put the strip where no pointer can reach it;
+* a cancel or lost capture is recoverable: the next move with the button still down re-arms the
+  gesture, so a spurious cancel costs nothing;
+* every end is logged with its reason, so if it happens again the terminal says which path fired;
+* the tray has an explicit **展开卡片** item. A card whose only recovery is a pointer target
+  cannot recover from being somewhere the pointer cannot go.
+
+### The flip jitter, and a guess that was removed
+
+The previous round's `data-settled` (dropping the transform 470ms after a flip) did not help - and
+a style change shortly after an animation is itself something to see - so it is gone. The
+replacement is the opposite approach: `will-change: transform, opacity` on `.face` keeps both
+faces on their own compositor layers from the first paint, so a flip no longer promotes and then
+demotes a layer. A layer's raster can differ from the main frame's by a sub-pixel, which is what a
+slight shift of detailed artwork looks like. Still a hypothesis; it is flagged as such.
+
+### PowerShell mangled `main.mjs` again
+
+`Get-Content -Raw` followed by `Set-Content` destroyed every Chinese string literal in the file -
+the exact trap already written down in these notes, ignored because it was "only a mechanical
+line-range replacement". The file was restored with `git checkout --` and the edits were re-applied
+with the edit tool.
+
+**Rule, with no exceptions: never round-trip a source file through PowerShell.** Not for a
+one-line change, not for a whole-file rewrite. Use the editor tools, or `node` with
+`writeFileSync(..., 'utf8')`.
+
+
 
 
 

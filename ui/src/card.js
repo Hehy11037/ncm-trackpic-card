@@ -16,12 +16,6 @@ import { css, paletteFor } from './palette.js';
 
 const $ = (id) => document.getElementById(id);
 
-/**
- * How long after a flip the 3D transform is dropped. Must be longer than `--flip-duration`
- * (420ms); tools/check-interaction.mjs compares the two.
- */
-const FLIP_SETTLE_MS = 470;
-
 /** #RRGGBB for a 0-255 channel triple. */
 function toHex({ r, g, b }) {
   const part = (value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
@@ -90,13 +84,6 @@ export class CardView {
     this.renderBand();
     this.applyBackground();
     this.bindBand();
-    /*
-     * Settle immediately: the front face needs no transform while it is sitting still, and
-     * leaving it at `rotateY(0deg)` keeps a composited layer alive from the first paint. That is
-     * the same layer Chromium re-rasterises at the end of a flip, which is what made the
-     * just-flipped card differ from the static one by a sub-pixel.
-     */
-    this.el.card.dataset.settled = 'true';
 
     // Keep the layout unit and the expanded/collapsed mode in step with the stage's rendered
     // size. A ResizeObserver catches cases a window resize event misses (the shell resizing
@@ -420,28 +407,6 @@ export class CardView {
 
   setFace(face) {
     this.el.card.dataset.face = face;
-    this.#scheduleSettle();
-  }
-
-  /**
-   * Drop the 3D transform once a flip has finished.
-   *
-   * A face left at `rotateY(0deg)` keeps its own composited layer, and Chromium re-rasterises
-   * that layer when the transition ends - so the "settled" card could differ from the static
-   * one by a sub-pixel shift, which is the faint jitter reported after the last frame of a
-   * flip. Once nothing is animating, `transform` is not needed at all, and an untransformed
-   * element rasterises exactly like the plain front face.
-   *
-   * `transform: none` still animates: the spec treats `none` as the identity matrix when
-   * interpolating, so the next flip transitions out of it normally.
-   */
-  #scheduleSettle() {
-    this.el.card.removeAttribute('data-settled');
-    if (this.settleTimer) clearTimeout(this.settleTimer);
-    this.settleTimer = setTimeout(() => {
-      this.settleTimer = null;
-      this.el.card.dataset.settled = 'true';
-    }, FLIP_SETTLE_MS);
   }
 
   flip() {

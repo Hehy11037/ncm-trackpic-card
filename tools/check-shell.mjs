@@ -29,7 +29,9 @@ import {
   MIN_WIDTH,
   SHADOW_PAD,
   cardWidthForWindow,
+  clampToWorkArea,
   createHoverState,
+  dragTarget,
   fitWindow,
   loadWindowState,
   makeIconPng,
@@ -144,6 +146,50 @@ console.log('\n--- 窗口几何 ---');
 
   check('反推卡宽', cardWidthForWindow(DEFAULT_WIDTH) === CARD_WIDTH_DEFAULT);
   check('反推卡宽受下限约束', cardWidthForWindow(100) === CARD_WIDTH_MIN);
+}
+
+/* ------------------------------------------------------------ drag position */
+
+console.log('\n--- 拖动时的窗口位置 ---');
+{
+  const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
+  const size = { width: 448, height: 773 };
+
+  // The window follows the cursor, holding the pressed point at a fixed offset inside it.
+  const target = dragTarget({ x: 900, y: 500 }, { x: 200, y: 300 }, size, workArea);
+  check('按住内部的点拖动会跟随', target.x === 700 && target.y === 200, JSON.stringify(target));
+
+  /*
+   * The clamp is what makes a rolled-up card recoverable. The strip sits along the window's TOP
+   * edge, so a window left hanging above the top of the display would put the strip where no
+   * pointer can reach it and the card could never be expanded again.
+   */
+  const topLeft = dragTarget({ x: 10, y: 10 }, { x: 200, y: 300 }, size, workArea);
+  check('不能拖到屏幕左上角以外', topLeft.x === 0 && topLeft.y === 0, JSON.stringify(topLeft));
+
+  const bottomRight = dragTarget({ x: 5000, y: 5000 }, { x: 10, y: 10 }, size, workArea);
+  check(
+    '不能拖出右下角',
+    bottomRight.x === workArea.width - size.width && bottomRight.y === workArea.height - size.height,
+    JSON.stringify(bottomRight),
+  );
+
+  // A secondary display to the left has negative coordinates; the clamp must use them.
+  const leftDisplay = { x: -1920, y: 0, width: 1920, height: 1040 };
+  const negative = dragTarget({ x: -1000, y: 400 }, { x: 200, y: 100 }, size, leftDisplay);
+  check(
+    '副屏（负坐标）也能正确夹取',
+    negative.x === -1200 && negative.y === leftDisplay.height - size.height,
+    JSON.stringify(negative),
+  );
+
+  // A window larger than the display anchors to the top-left instead of a negative coordinate.
+  const oversized = clampToWorkArea({ x: 500, y: 500 }, { width: 3000, height: 2000 }, workArea);
+  check('窗口大于屏幕时贴左上角', oversized.x === 0 && oversized.y === 0, JSON.stringify(oversized));
+
+  // Sub-pixel positions make a scaled display blurry, so the result is always whole pixels.
+  const rounded = clampToWorkArea({ x: 10.4, y: 10.6 }, size, workArea);
+  check('位置取整', rounded.x === 10 && rounded.y === 11, JSON.stringify(rounded));
 }
 
 /* ------------------------------------------------------- hover -> collapse */
@@ -354,10 +400,33 @@ console.log('\n--- 启动顺序（一个坏掉的附加功能不能拖垮核心�
   check('不再把裸 Buffer 交给 Tray', !/new Tray\(makeIconPng/.test(shellJs));
   check('图标解码失败会告警', /isEmpty\(\)/.test(shellJs));
 
-  const watchAt = shellJs.indexOf('startHoverWatch();\n    createWindow()');
-  check('先启动指针监听再建窗口', watchAt > 0);
-  check('托盘创建被 try 包住', /try \{\n\s*createTray\(\);/.test(shellJs));
-  check('whenReady 链有 catch', /\}\)\s*\.catch\(\(err\) => \{\n\s*console\.error\('\[shell\] 启动失败'/.test(shellJs));
+  /*
+   * The order within the startup block, not adjacency: a comment between two calls is fine, but
+   * the pointer watcher must exist before anything that can throw, and the (possibly slow) wait
+   * for the host must come after the window so the app is never invisible.
+   */
+  const startBlock = shellJs.slice(shellJs.indexOf('.whenReady()'));
+  check('找到了启动块', startBlock.length > 0);
+  const order = ['startHoverWatch();', 'createWindow();', 'createTray();', 'await loadUi();'].map((needle) =>
+    startBlock.indexOf(needle),
+  );
+  check(
+    '启动顺序：监听 -> 窗口 -> 托盘 -> 加载界面',
+    order.every((at) => at > 0) && order.every((at, i) => i === 0 || order[i - 1] < at),
+    order.join(' < '),
+  );
+  check('托盘创建被 try 包住', /try\s*\{\s*createTray\(\);/.test(startBlock));
+  check('whenReady 链有 catch', /\.catch\(\(err\) => \{\s*console\.error\('\[shell\] 启动失败'/.test(shellJs));
+
+  // The window shows a placeholder at once so Windows never reports a windowless process with its
+  // "starting" cursor, and the real UI is loaded only once the host answers.
+  check('窗口先显示启动页', /STARTUP_PAGE/.test(shellJs) && /loadURL\(STARTUP_PAGE\)/.test(shellJs));
+  check('宿主就绪后才加载界面', /await waitForUi\(\)/.test(startBlock) && /loadUi\(\)/.test(shellJs));
+  check('界面就绪以 dom-ready 为准', /once\('dom-ready'/.test(shellJs));
+
+  // A drag must never be able to move the window somewhere the pointer cannot reach it again.
+  check('拖动位置被限制在工作区', /clampToWorkArea/.test(shellJs) && /clampToWorkArea/.test(readStyle('apps/overlay/shell-utils.mjs')));
+  check('收起/展开也用同一套限制', /clampToWorkArea\(\s*\{ x: bounds\.x/.test(shellJs));
 }
 
 console.log(`\n${failures ? `❌ ${failures} 项失败` : '✅ 桌面壳辅助逻辑通过'}`);

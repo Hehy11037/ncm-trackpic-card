@@ -161,32 +161,53 @@ export function parseYrc(text: string | null | undefined): ParsedLine[] {
   return compact;
 }
 
-/** Sort by start time and drop duplicate timestamps, keeping the richer line. */
+/**
+ * Sort by start time and drop *duplicates*.
+ *
+ * A duplicate means the same text at the same timestamp, which happens when an LRC line carries
+ * several timestamps. Two different lines may legitimately share a timestamp - the client emits
+ * "作词: …" and "作曲: …" both at time -0.001 - and an earlier version dropped one of them by
+ * de-duplicating on the timestamp alone.
+ *
+ * Lines with no timing at all (a negative time, which is how the client marks credits) keep their
+ * original order rather than being sorted, since their order is meaningful and their timestamps
+ * are not.
+ */
 function sortAndDedupe(lines: ParsedLine[]): ParsedLine[] {
-  const sorted = [...lines].sort((a, b) => a.startMs - b.startMs);
+  const timed = lines.filter((line) => line.startMs >= 0);
+  const untimed = lines.filter((line) => line.startMs < 0);
+  const sorted = [...timed].sort((a, b) => a.startMs - b.startMs);
+
   const out: ParsedLine[] = [];
   for (const line of sorted) {
-    const last = out[out.length - 1];
-    if (last && last.startMs === line.startMs) {
-      // Prefer the entry with word timings or longer text.
-      if (line.words.length > last.words.length || line.text.length > last.text.length) {
-        out[out.length - 1] = line;
-      }
+    const previous = out[out.length - 1];
+    if (previous && previous.startMs === line.startMs && previous.text === line.text) {
+      // Same text at the same time: the richer entry wins.
+      if (line.words.length > previous.words.length) out[out.length - 1] = line;
       continue;
     }
     out.push(line);
   }
-  return out;
+  return [...untimed, ...out];
 }
 
-/** Drop credit lines, then fill in end times and attach translations. */
+/**
+ * Fill in end times, attach translations, and optionally drop credit lines.
+ *
+ * `keepCredits` exists because NetEase's own lyric view shows "作词: …" / "作曲: …" for a track
+ * with no singable lyrics, and the overlay mirrors the client. Those lines carry no timing, so
+ * the caller renders them as static text instead of a scroll.
+ */
 export function finalizeLines(
   lines: ParsedLine[],
   translations?: ParsedLine[],
   romas?: ParsedLine[],
   offsetMs = 0,
+  keepCredits = false,
 ): LyricLine[] {
-  const kept = lines.filter((l) => !isCreditLine(l.text, l.startMs) && l.text.trim().length > 0);
+  const kept = lines.filter(
+    (l) => (keepCredits || !isCreditLine(l.text, l.startMs)) && l.text.trim().length > 0,
+  );
   const byTime = new Map<number, string>();
   for (const t of translations ?? []) {
     if (t.text.trim()) byTime.set(t.startMs, t.text);

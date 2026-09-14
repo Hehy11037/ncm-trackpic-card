@@ -29,33 +29,64 @@ import {
 } from './parse.ts';
 
 /**
- * True when a line set has content, but that content is nothing but production credits.
+ * Does a lyric set include the credits but no timed lyric lines?
  *
- * This matters more than it looks. Measured on a real track change:
- *
- *   t+0s   song id 2650440016   lyricLines = 2, both credits ("作词: FAIZ"), version 1
- *   t+2s   song id 2650440015   lyricLines = 79, first line "作词: KikKuU"
- *
- * The store's song id changes immediately but its *lyric slice* lags behind, so for a few
- * hundred milliseconds the bridge reads the previous track's lines while reporting the new
- * track's id - which put the previous song's lyrics on screen under the new song. A
- * credit-only set is also what the client holds for a track whose lyrics never loaded.
- *
- * An **empty** set is deliberately not credit-only: that is a different state (the fetch
- * completed and there is no lyric content), and the caller reports it as instrumental.
+ * Exactly what NetEase shows for a track that has no singable lyrics: it renders
+ * "作词: …" / "作曲: …". This is a legitimate state, not an error, and it is what the overlay
+ * should display too.
  */
-export function hasOnlyCredits(entries: ClientLyricEntry[] | null | undefined): boolean {
+export function isCreditOnlySet(entries: ClientLyricEntry[] | null | undefined): boolean {
   if (!Array.isArray(entries) || entries.length === 0) return false;
-  let sawText = false;
+  let sawCredit = false;
   for (const entry of entries) {
     const text = typeof entry?.lyric === 'string' ? entry.lyric.trim() : '';
     if (!text) continue;
-    sawText = true;
+    // A timed line means there is something to scroll, so this is not credit-only.
+    if (typeof entry?.time === 'number' && entry.time > 0.01) return false;
     const seconds = typeof entry?.time === 'number' ? entry.time : 0;
     if (!isCreditLine(text, seconds * 1000)) return false;
+    sawCredit = true;
   }
-  // Only blanks is not "credits"; it is simply empty, which the caller handles separately.
-  return sawText;
+  return sawCredit;
+}
+
+/**
+ * Does this lyric set plausibly belong to the given track?
+ *
+ * Needed because the client's store lags a track change: for a few hundred milliseconds it
+ * reports the *new* song id with the *previous* track's lines, and stale full lyrics are
+ * indistinguishable from real ones by inspection. Measured evidence for the lag:
+ *
+ *   t+0s   song id 2650440016, slice = 2 credit lines, version 1 (previous track's lyrics)
+ *   t+2s   song id 2650440015, slice = 79 lines starting "作词: KikKuU"
+ *
+ * The track's own name or artist appearing in the set is direct evidence the set describes this
+ * track. "芥" by FAIZ, for example, matches on "FAIZ" in its credit lines.
+ */
+export function lyricsMentionTrack(
+  entries: ClientLyricEntry[] | null | undefined,
+  trackName: string | null | undefined,
+  artistName: string | null | undefined,
+): boolean {
+  if (!Array.isArray(entries) || !entries.length) return false;
+
+  const needles: string[] = [];
+  if (trackName?.trim()) needles.push(trackName.trim().toLowerCase());
+  // Split a multi-artist string so "A / B" matches either name.
+  for (const part of (artistName ?? '').split(/[/、,]/)) {
+    const trimmed = part.trim().toLowerCase();
+    if (trimmed.length >= 2) needles.push(trimmed);
+  }
+  if (!needles.length) return false;
+
+  for (const entry of entries) {
+    const text = typeof entry?.lyric === 'string' ? entry.lyric.toLowerCase() : '';
+    if (!text) continue;
+    for (const needle of needles) {
+      if (text.includes(needle)) return true;
+    }
+  }
+  return false;
 }
 
 /** Build a document from the client's own slice (preferred when it is complete). */
@@ -69,25 +100,20 @@ export function docFromClientSlice(slice: ClientLyricSlice): LyricDoc | null {
 
   const usable = main.filter((l) => l.text.trim().length > 0);
 
-  /*
-   * Credit-only and empty sets are checked BEFORE anything else.
-   *
-   * Order matters: a credit-only set produces `usable.length === 0` once credit lines are
-   * dropped, so an empty-check placed first would treat the previous track's credit lines as
-   * "this track has no lyrics" and return an authoritative empty document - losing the chance
-   * to fall back to the public endpoint for a track that does have lyrics. Returning null
-   * instead tells the caller "not from me", which keeps the public result.
-   */
-  if (hasOnlyCredits(slice.lyricLines)) return null;
-
   if (usable.length === 0) {
-    // Genuinely empty: the client is the authority on instrumentals and account-gated tracks
-    // we cannot resolve ourselves.
+    // Nothing to show yet; the caller keeps waiting or reports plain "no lyrics".
     if (slice.isLyricFetchFailed || slice.isLoading) return null;
     return buildDoc(slice.songId, [], offsetMs, true, false, 'none');
   }
 
-  const lines = finalizeLines(usable, trans, roma, offsetMs);
+  /*
+   * Credit lines are kept, not filtered.
+   *
+   * NetEase's own lyrics view displays "作词: …" / "作曲: …" for a track that has no singable
+   * lyrics, and the brief is to mirror what the client shows. They carry no timings, so the
+   * overlay renders them as static text rather than a scroll.
+   */
+  const lines = finalizeLines(usable, trans, roma, offsetMs, true);
   return buildDoc(slice.songId, lines, offsetMs, false, false, 'client');
 }
 

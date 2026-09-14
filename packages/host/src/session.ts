@@ -13,6 +13,7 @@
 import { EventEmitter } from 'node:events';
 
 import type {
+  ClientLyricSlice,
   ConnectionInfo,
   ControlCommand,
   ControlResult,
@@ -29,6 +30,7 @@ import { rawPlayingStateToStatus, toSongId } from '@ncm-trackpic-card/shared';
 import {
   BRIDGE_PREFIX,
   bridgeHealthExpression,
+  bridgeResendExpression,
   buildBridgeScript,
   commandResultPollExpression,
 } from './bridge-script.ts';
@@ -46,6 +48,8 @@ export interface ClientSessionEvents {
   snapshot: (snapshot: PlaybackSnapshot) => void;
   playhead: (playhead: Playhead, songId: number | null) => void;
   connection: (info: ConnectionInfo) => void;
+  /** Forwarded verbatim from the client; the host decides what to do with it. */
+  clientLyrics: (slice: ClientLyricSlice) => void;
   lyricsNeeded: (songId: number) => void;
   log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
 }
@@ -258,6 +262,23 @@ export class ClientSession extends EventEmitter {
     this.reconnectDelay = RECONNECT_MIN_MS;
     this.setBridgeAlive(true, null);
     this.startHealthCheck();
+    // The bridge deduplicates its output, so ask it to replay the current state
+    // once - otherwise a UI attaching now would see nothing until something moves.
+    await this.requestResend();
+  }
+
+  /**
+   * Ask the bridge to re-send state and lyrics. Safe to call any time; returns
+   * false when there is no live bridge.
+   */
+  async requestResend(): Promise<boolean> {
+    const session = this.cdp;
+    if (!session || session.isClosed || !this.bridgeAlive) return false;
+    try {
+      return (await session.evaluate<boolean>(bridgeResendExpression())) === true;
+    } catch {
+      return false;
+    }
   }
 
   private async discoverWithRetry(session: CdpSession): Promise<DiscoveryResult | null> {
@@ -372,6 +393,10 @@ export class ClientSession extends EventEmitter {
 
       case 'progress':
         this.onBridgeProgress(envelope.payload);
+        break;
+
+      case 'lyrics':
+        this.emit('clientLyrics', envelope.payload as ClientLyricSlice);
         break;
 
       case 'warn':

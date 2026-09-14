@@ -1,0 +1,30 @@
+{
+  "name": "music-overlay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop overlay that mirrors the NetEase Cloud Music client playback state, with scrolling word-by-word lyrics.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "probe": "node tools/probe-cdp.mjs",
+    "discover": "node tools/discover.mjs",
+    "dump": "node tools/dump-state.mjs",
+    "watch": "node tools/watch-progress.mjs",
+    "relaunch": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/relaunch-ncm.ps1",
+    "debug-launch": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/debug-launch.ps1",
+    "host": "node tools/host-run.mjs",
+    "smoke": "node tools/host-smoke.mjs",
+    "typecheck": "tsc --noEmit --pretty"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.2"
+  }
+}

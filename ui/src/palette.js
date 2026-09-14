@@ -71,6 +71,17 @@ async function extract(url) {
   usable.sort((a, b) => b.population - a.population);
 
   /*
+   * Near-black and near-white extremes.
+   *
+   * A cover with a genuinely black or white area still produced a mid-tone palette, because
+   * median cut averages those areas away and the usability filter rejected anything at the
+   * luminance extremes. The result was a strip that never came close to the artwork's
+   * darkest or lightest colour. So the raw pixel population is checked directly: if a
+   * meaningful share of the cover is near-black or near-white, that tone is appended.
+   */
+  const extremes = detectExtremes(pixels);
+
+  /*
    * Pick the swatches by luminance band rather than by hue order.
    *
    * Five equal bands from dark to light, each contributing its most saturated candidate,
@@ -78,7 +89,8 @@ async function extract(url) {
    * contrast between neighbours - which is what a palette strip is read as. Sorting by hue
    * (the earlier approach) produced adjacent swatches of similar depth and low contrast.
    */
-  const colors = selectByLuminance(usable.map((entry) => entry.color), PALETTE_SIZE);
+  const candidates = [...usable.map((entry) => entry.color), ...extremes];
+  const colors = selectByLuminance(candidates, PALETTE_SIZE);
   const dominant = usable[0]?.color ?? { r: 128, g: 128, b: 128 };
 
   // Two anchor colours for the background wash: the most and least luminous of the
@@ -237,9 +249,54 @@ function selectByLuminance(candidates, count = 5) {
   return chosen.map(boostSaturation);
 }
 
+/**
+ * Find the cover's near-black and near-white tones, if they are genuinely present.
+ *
+ * Median cut averages these away, so a cover with a solid black or white region still
+ * yielded a mid-tone palette. Counting the raw pixels directly restores those extremes.
+ *
+ * @param {number[][]} pixels RGB triples sampled from the cover
+ * @returns {{r:number,g:number,b:number}[]} up to two additional colours
+ */
+function detectExtremes(pixels) {
+  let dark = 0;
+  let light = 0;
+  let darkSum = [0, 0, 0];
+  let lightSum = [0, 0, 0];
+
+  for (const [r, g, b] of pixels) {
+    const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b; // 0..255
+    if (luma <= 32) {
+      dark++;
+      darkSum[0] += r;
+      darkSum[1] += g;
+      darkSum[2] += b;
+    } else if (luma >= 223) {
+      light++;
+      lightSum[0] += r;
+      lightSum[1] += g;
+      lightSum[2] += b;
+    }
+  }
+
+  const total = pixels.length || 1;
+  const out = [];
+  // 1.5% of the image is enough to be a deliberate area rather than antialiasing noise.
+  if (dark / total >= 0.015 && dark > 0) {
+    out.push({ r: Math.round(darkSum[0] / dark), g: Math.round(darkSum[1] / dark), b: Math.round(darkSum[2] / dark) });
+  }
+  if (light / total >= 0.015 && light > 0) {
+    out.push({
+      r: Math.round(lightSum[0] / light),
+      g: Math.round(lightSum[1] / light),
+      b: Math.round(lightSum[2] / light),
+    });
+  }
+  return out;
+}
+
 /** HSL saturation of a colour, 0..1. */
-function saturation({ r, g, b }) {
-  const max = Math.max(r, g, b) / 255;
+function saturation({ r, g, b }) {  const max = Math.max(r, g, b) / 255;
   const min = Math.min(r, g, b) / 255;
   const lightness = (max + min) / 2;
   if (max === min) return 0;

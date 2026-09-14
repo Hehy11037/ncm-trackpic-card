@@ -152,8 +152,10 @@ export class CardView {
     root.style.setProperty('--accent-bottom', css(sorted[0]));
     root.style.setProperty('--accent-dominant', css(this.palette[0]));
     root.style.setProperty('--accent-soft', css(this.palette[0], 0.24));
-    // Let the lyrics view build its own light-to-dark ramp from the raw colours.
-    this.onPalette(this.palette);
+    // Hand the palette plus the colour actually painted behind it, so the lyrics view can
+    // pick text colours by contrast rather than assuming the palette is legible.
+    const background = this.palette[this.backgroundChoice] ?? this.palette[0];
+    this.onPalette(this.palette, background);
   }
 
   /**
@@ -212,6 +214,10 @@ export class CardView {
 
     // Exposed for the devtools console; handy when tuning palette choices.
     root.dataset.bgContrast = contrast ? contrast.toFixed(2) : '';
+
+    // The lyrics view picks its text colours by contrast against this background, so it
+    // must be told whenever the background changes.
+    this.onPalette(this.palette, color);
   }
 
   /* ------------------------------------------------------------------ tick */

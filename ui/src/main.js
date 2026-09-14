@@ -23,8 +23,9 @@ const STALE_FREEZE_MS = 2500;
  */
 const lyrics = new LyricsView(document.getElementById('lyrics'));
 const view = new CardView({
-  // Hand the extracted palette to the lyrics view, which builds its own colour ramp.
-  onPalette: (colors) => lyrics.setPalette(colors),
+  // Hand the palette and the current background to the lyrics view, which picks text
+  // colours by contrast against that background.
+  onPalette: (colors, background) => lyrics.setPalette(colors, background),
 });
 const clock = new PlayClock();
 

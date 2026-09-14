@@ -41,6 +41,12 @@ export class CardView {
     };
 
     this.onBackgroundChange = options.onBackgroundChange ?? (() => {});
+    /**
+     * Called with the extracted palette so the caller can hand it to the lyrics view,
+     * which orders its own ramp. Passed as a callback rather than imported to keep the two
+     * views decoupled.
+     */
+    this.onPalette = options.onPalette ?? (() => {});
     this.currentCoverUrl = null;
     this.currentSongKey = null;
     /** @type {{r:number,g:number,b:number}[]} */
@@ -146,6 +152,8 @@ export class CardView {
     root.style.setProperty('--accent-bottom', css(sorted[0]));
     root.style.setProperty('--accent-dominant', css(this.palette[0]));
     root.style.setProperty('--accent-soft', css(this.palette[0], 0.24));
+    // Let the lyrics view build its own light-to-dark ramp from the raw colours.
+    this.onPalette(this.palette);
   }
 
   /**

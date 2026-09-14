@@ -70,7 +70,15 @@ async function extract(url) {
   const usable = filtered.length ? filtered : buckets.map((b) => ({ color: b.mean, population: b.pixels.length }));
   usable.sort((a, b) => b.population - a.population);
 
-  const colors = orderForDisplay(usable.slice(0, PALETTE_SIZE).map((e) => e.color));
+  /*
+   * Pick the swatches by luminance band rather than by hue order.
+   *
+   * Five equal bands from dark to light, each contributing its most saturated candidate,
+   * plus a saturation nudge. That guarantees an even light-to-dark ramp with visible
+   * contrast between neighbours - which is what a palette strip is read as. Sorting by hue
+   * (the earlier approach) produced adjacent swatches of similar depth and low contrast.
+   */
+  const colors = selectByLuminance(usable.map((entry) => entry.color), PALETTE_SIZE);
   const dominant = usable[0]?.color ?? { r: 128, g: 128, b: 128 };
 
   // Two anchor colours for the background wash: the most and least luminous of the
@@ -185,9 +193,69 @@ function isUsable({ r, g, b }) {
   return saturation > 0.12 || (luma > 0.2 && luma < 0.8);
 }
 
-/** Order swatches by hue so the strip reads as a gradient rather than noise. */
-function orderForDisplay(colors) {
-  return [...colors].sort((a, b) => hue(a) - hue(b));
+/**
+ * Choose `count` colours spread across the luminance range, darkest first.
+ *
+ * Each of `count` equal luminance bands contributes its most saturated candidate. When a
+ * band is empty the nearest candidate is reused, so the result always has `count` entries.
+ * Saturation is nudged up slightly so the swatches carry some colour on muted covers.
+ */
+function selectByLuminance(candidates, count = 5) {
+  if (!candidates.length) return [];
+  if (candidates.length <= count) {
+    return [...candidates].sort((a, b) => luminance(a) - luminance(b));
+  }
+
+  const withLuma = candidates.map((color) => ({ color, luma: luminance(color) }));
+  const min = Math.min(...withLuma.map((c) => c.luma));
+  const max = Math.max(...withLuma.map((c) => c.luma));
+  const span = Math.max(max - min, 0.0001);
+
+  const bins = Array.from({ length: count }, () => []);
+  for (const entry of withLuma) {
+    const index = Math.min(count - 1, Math.floor(((entry.luma - min) / span) * count));
+    bins[index].push(entry);
+  }
+
+  const chosen = [];
+  for (let i = 0; i < count; i++) {
+    const bin = bins[i];
+    if (bin.length) {
+      // Most saturated wins, with population as the tie-breaker.
+      bin.sort((a, b) => saturation(b.color) - saturation(a.color));
+      chosen.push(bin[0].color);
+    } else {
+      // Empty band: borrow the candidate nearest this band's midpoint.
+      const midpoint = min + ((i + 0.5) / count) * span;
+      const nearest = [...withLuma].sort(
+        (a, b) => Math.abs(a.luma - midpoint) - Math.abs(b.luma - midpoint),
+      )[0];
+      chosen.push(nearest.color);
+    }
+  }
+
+  return chosen.map(boostSaturation);
+}
+
+/** HSL saturation of a colour, 0..1. */
+function saturation({ r, g, b }) {
+  const max = Math.max(r, g, b) / 255;
+  const min = Math.min(r, g, b) / 255;
+  const lightness = (max + min) / 2;
+  if (max === min) return 0;
+  return lightness > 0.5 ? (max - min) / (2 - max - min) : (max - min) / (max + min);
+}
+
+/** Push saturation up a little so muted covers still yield readable swatches. */
+function boostSaturation(color, factor = 1.22) {
+  const max = Math.max(color.r, color.g, color.b);
+  const min = Math.min(color.r, color.g, color.b);
+  const mid = (max + min) / 2;
+  const boost = (value) => {
+    const next = mid + (value - mid) * factor;
+    return Math.max(0, Math.min(255, Math.round(next)));
+  };
+  return { r: boost(color.r), g: boost(color.g), b: boost(color.b) };
 }
 
 /** Relative luminance (WCAG), 0..1. */

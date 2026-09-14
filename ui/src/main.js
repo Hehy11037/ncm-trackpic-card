@@ -8,13 +8,23 @@
 
 import { CardView } from './card.js';
 import { PlayClock, isSampleStale } from './clock.js';
-import { applyLayoutUnit } from './layout.js';
+import { relayout } from './layout.js';
 import { LyricsView } from './lyrics.js';
 import { HostLink } from './socket.js';
 
 const DEFAULT_HOST_PORT = 8787;
 /** If the client stops reporting for this long, stop extrapolating. */
 const STALE_FREEZE_MS = 2500;
+/** localStorage key for "do not auto-collapse". */
+const LOCK_KEY = 'ncm-card:locked';
+
+/**
+ * The Electron shell's bridge, or null in a plain browser.
+ *
+ * Everything here is optional: the page must run identically when served to a browser for
+ * development, where there is no window to resize or close. See apps/overlay/preload.cjs.
+ */
+const shell = () => globalThis.overlayShell ?? null;
 
 /*
  * Construction order matters: the lyrics view is referenced by the card view's palette
@@ -30,7 +40,7 @@ const view = new CardView({
 const clock = new PlayClock();
 
 // Size the composition to the stage before the first paint.
-applyLayoutUnit(document.getElementById('stage'));
+relayout(document.getElementById('stage'));
 
 let link = null;
 let connected = false;
@@ -39,6 +49,38 @@ let lastLyricsDoc = null;
 let lastFrameAt = performance.now();
 let hidden = false;
 let staleSince = 0;
+/** "Do not auto-collapse"; persisted here and pushed to the shell on boot and on every toggle. */
+let locked = loadLocked();
+
+/* ------------------------------------------------------------------- lock */
+
+function loadLocked() {
+  try {
+    return localStorage.getItem(LOCK_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * "Do not auto-collapse", owned by the renderer and pushed to the shell.
+ *
+ * The shell does the pointer watching - it is the only side that can ask the OS where the
+ * cursor is - so it has to be told. The renderer owns the setting because that is where it
+ * is persisted and where the button lives.
+ */
+function setLocked(next) {
+  locked = !!next;
+  try {
+    localStorage.setItem(LOCK_KEY, locked ? '1' : '0');
+  } catch {
+    /* storage may be unavailable; the choice simply does not persist */
+  }
+  view.setLocked(locked);
+  shell()?.setLocked?.(locked);
+  // Locking while rolled up must bring the card back, or the lock looks broken.
+  if (locked) shell()?.setCollapsed?.(false);
+}
 
 /* ------------------------------------------------------------------ messages */
 
@@ -114,7 +156,18 @@ function handleMessage(message) {
 /* -------------------------------------------------------------------- input */
 
 function bindInput() {
-  document.getElementById('flip').addEventListener('click', () => view.flip());
+  const on = (id, handler) => document.getElementById(id)?.addEventListener('click', handler);
+
+  on('flip', () => view.flip());
+  // Close hides the window and leaves the app in the tray; the tray's 退出 quits for real.
+  // The `window.close()` fallback keeps the button working if the preload ever fails to load.
+  on('close', () => {
+    const bridge = shell();
+    if (bridge?.close) bridge.close();
+    else window.close();
+  });
+  on('lock', () => setLocked(!locked));
+  on('mini-expand', () => shell()?.setCollapsed?.(false));
 
   for (const button of document.querySelectorAll('.ctrl[data-action]')) {
     button.addEventListener('click', () => {
@@ -144,6 +197,8 @@ function bindInput() {
       link.control({ type: 'previous' });
     } else if (event.key === 'f' || event.key === 'F') {
       view.flip();
+    } else if (event.key === 'l' || event.key === 'L') {
+      setLocked(!locked);
     } else if (event.key === 't' || event.key === 'T') {
       // Toggle lyric translations. Off is often preferred: a translation on every entry
       // makes them uneven heights and crowds the page.
@@ -153,6 +208,19 @@ function bindInput() {
 
   document.addEventListener('visibilitychange', () => {
     hidden = document.hidden;
+  });
+
+  /*
+   * Second way out of the rolled-up state.
+   *
+   * The shell decides when to roll up from the OS pointer position, which is the only source
+   * that can see outside the window. If that ever disagreed with reality, the card would be
+   * stuck as a strip, so any pointer movement over the strip - an unambiguous "the user is
+   * here" that needs no coordinates at all - also counts as a request to expand. The shell
+   * treats a repeated request as a no-op, so this cannot fight its own watcher.
+   */
+  document.addEventListener('mousemove', () => {
+    if (view.mode === 'mini') shell()?.setCollapsed?.(false);
   });
 
   // Pause the sweep while the mouse is away from the window (cheap CPU win).
@@ -181,8 +249,13 @@ function frame() {
   if (!frozen) clock.tick(now);
 
   view.tick(clock.positionMs, clock.fraction);
-  // Lyrics stay in sync even while the front face shows, so flipping is instant.
-  lyrics.tick(clock.positionMs, dt, !hidden);
+  /*
+   * Lyrics stay in sync even while the front face shows, so flipping is instant - but not
+   * while the card is rolled up. In that state the card is `display: none`, so the lyrics
+   * container has no height and every tick would ease the stack toward a meaningless target
+   * and then visibly drift back on expand.
+   */
+  if (view.mode === 'expanded') lyrics.tick(clock.positionMs, dt, !hidden);
 
   requestAnimationFrame(frame);
 }
@@ -222,11 +295,27 @@ async function boot() {
   link.connect();
   requestAnimationFrame(frame);
 
+  /*
+   * Tell the shell the persisted lock state before it starts watching the pointer, and only
+   * then tell it we are ready. Until `ready` arrives the shell suppresses auto-collapse, so
+   * the card cannot roll up before it has been drawn once.
+   */
+  view.setLocked(locked);
+  shell()?.setLocked?.(locked);
+  shell()?.ready?.();
+
   globalThis.__overlay = {
     view,
     clock,
     lyrics,
     link,
+    setLocked,
+    get locked() {
+      return locked;
+    },
+    get mode() {
+      return view.mode;
+    },
     get snapshot() {
       return lastSnapshot;
     },
@@ -237,6 +326,9 @@ async function boot() {
   const bootError = document.getElementById('boot-error');
   if (bootError) bootError.hidden = true;
   console.info(`[overlay] 已启动，宿主 ws://127.0.0.1:${config.port}`);
+  // Reported because a failed preload degrades quietly: the card still draws, but nothing
+  // rolls up and the close button does nothing. The shell forwards this to its terminal.
+  console.info(`[overlay] 桌面壳桥接: ${shell() ? '可用' : '不可用（浏览器预览模式）'}`);
 }
 
 void boot().catch((error) => {

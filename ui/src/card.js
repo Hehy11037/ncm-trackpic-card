@@ -11,7 +11,7 @@
  */
 
 import { formatTime } from './clock.js';
-import { applyLayoutUnit, loadBackgroundChoice, REFERENCE_PALETTE, saveBackgroundChoice, schemeFor } from './layout.js';
+import { loadBackgroundChoice, REFERENCE_PALETTE, relayout, saveBackgroundChoice, schemeFor } from './layout.js';
 import { css, paletteFor } from './palette.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,6 +20,25 @@ const $ = (id) => document.getElementById(id);
 function toHex({ r, g, b }) {
   const part = (value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
   return `#${part(r)}${part(g)}${part(b)}`.toUpperCase();
+}
+
+/**
+ * Which swatch a click at `clientX` selects.
+ *
+ * The five swatches are equal columns of the band, so the index is just the position divided
+ * into five. Extracted and exported because this is the path that runs whenever a click lands
+ * in the band's padded hit area rather than on a swatch box, and an off-by-one there silently
+ * paints the neighbouring colour. `ui/test/card.test.mjs` pins it down.
+ *
+ * @param {number} clientX pointer position in viewport coordinates
+ * @param {number} left band's left edge
+ * @param {number} width band's width
+ * @param {number} count number of swatches
+ */
+export function bandIndexFromX(clientX, left, width, count) {
+  if (!(width > 0) || !(count > 0)) return 0;
+  const ratio = (clientX - left) / width;
+  return Math.min(count - 1, Math.max(0, Math.floor(ratio * count)));
 }
 
 export class CardView {
@@ -35,9 +54,12 @@ export class CardView {
       palette: $('palette'),
       paletteLabels: $('palette-labels'),
       status: $('status-text'),
-      flip: $('flip'),
-      credit: $('credit'),
       stage: $('stage'),
+      miniCover: $('mini-cover'),
+      miniTitle: $('mini-title'),
+      miniArtist: $('mini-artist'),
+      miniFill: $('mini-fill'),
+      lock: $('lock'),
     };
 
     this.onBackgroundChange = options.onBackgroundChange ?? (() => {});
@@ -51,7 +73,7 @@ export class CardView {
     this.currentSongKey = null;
     /** @type {{r:number,g:number,b:number}[]} */
     this.palette = REFERENCE_PALETTE;
-    /** 'glass' or a palette index. */
+    /** Index into the palette. */
     this.backgroundChoice = loadBackgroundChoice();
 
     this.lastFraction = -1;
@@ -61,19 +83,26 @@ export class CardView {
 
     this.renderBand();
     this.applyBackground();
+    this.bindBand();
 
-    // Keep the layout unit in step with the stage's rendered size. A ResizeObserver
-    // catches cases a window resize event misses (e.g. the shell resizing us).
+    // Keep the layout unit and the expanded/collapsed mode in step with the stage's rendered
+    // size. A ResizeObserver catches cases a window resize event misses (the shell resizing
+    // us is exactly that case).
     const stage = this.el.stage;
-    const relayout = () => applyLayoutUnit(stage);
-    window.addEventListener('resize', relayout);
+    const onResize = () => relayout(stage);
+    window.addEventListener('resize', onResize);
     if (stage && typeof ResizeObserver !== 'undefined') {
-      new ResizeObserver(relayout).observe(stage);
+      new ResizeObserver(onResize).observe(stage);
     }
   }
 
   get background() {
     return this.backgroundChoice;
+  }
+
+  /** 'expanded' | 'mini' - which of the two subtrees the stage is showing. */
+  get mode() {
+    return this.el.stage?.dataset.mode ?? 'expanded';
   }
 
   /* -------------------------------------------------------------- playback */
@@ -85,10 +114,16 @@ export class CardView {
     this.currentSongKey = songKey;
     this.idleReason = null;
 
-    this.el.title.textContent = song?.name?.trim() || '未检测到播放';
-    this.el.artist.textContent = song?.artists?.length
+    const title = song?.name?.trim() || '未检测到播放';
+    const artist = song?.artists?.length
       ? song.artists.map((a) => a.name).join(' / ')
       : '等待网易云音乐';
+
+    this.el.title.textContent = title;
+    this.el.artist.textContent = artist;
+    // The rolled-up bar carries the same information, so it is updated from the same place.
+    this.el.miniTitle.textContent = title;
+    this.el.miniArtist.textContent = artist;
 
     this.el.card.dataset.status = snapshot.playback?.status ?? 'unknown';
     this.el.timeTotal.textContent = formatTime(song?.durationMs ?? 0);
@@ -107,6 +142,8 @@ export class CardView {
     this.idleReason = reason;
     this.el.title.textContent = reason;
     this.el.artist.textContent = '检查宿主是否在运行（npm run host）';
+    this.el.miniTitle.textContent = reason;
+    this.el.miniArtist.textContent = '检查宿主是否在运行';
   }
 
   setConnection(info) {
@@ -123,6 +160,7 @@ export class CardView {
     if (!url) {
       this.el.cover.classList.remove('is-loaded');
       this.el.cover.removeAttribute('src');
+      this.el.miniCover.removeAttribute('src');
       this.setPalette(REFERENCE_PALETTE);
       return;
     }
@@ -132,9 +170,15 @@ export class CardView {
       if (palette?.colors?.length) this.setPalette(palette.colors);
     });
 
+    /*
+     * The card fades its cover in over a gradient placeholder; the rolled-up thumbnail keeps
+     * its own gradient until the image paints instead, so a strip that has not loaded yet
+     * shows a colour rather than a hole.
+     */
     this.el.cover.onload = () => this.el.cover.classList.add('is-loaded');
     this.el.cover.onerror = () => this.el.cover.classList.remove('is-loaded');
     this.el.cover.src = url;
+    this.el.miniCover.src = url;
   }
 
   /* --------------------------------------------------------------- palette */
@@ -176,7 +220,7 @@ export class CardView {
       segment.title = `${hex} — 点击设为背景色`;
       segment.setAttribute('aria-label', `背景色 ${hex}`);
       segment.setAttribute('aria-pressed', String(this.backgroundChoice === index));
-      segment.addEventListener('click', () => this.setBackground(index));
+      segment.dataset.index = String(index);
       band.append(segment);
     });
     this.el.palette.replaceChildren(band);
@@ -189,6 +233,37 @@ export class CardView {
       labels.append(label);
     });
     this.el.paletteLabels.replaceChildren(labels);
+  }
+
+  /**
+   * Pick a colour from a click anywhere on the band.
+   *
+   * Delegated on the container rather than bound per swatch, and the index falls back to the
+   * pointer's position. Two reasons, both of which bit in practice:
+   *
+   *  - The swatches are rebuilt by renderBand() on every palette change, so per-swatch
+   *    listeners are thrown away and re-created; a container listener is stable.
+   *  - The band's clickable box is padded out beyond the visible strip (see `.band` in
+   *    card.css) so it is a comfortable target. Clicks in that padding land on the
+   *    container, not on a swatch, and would otherwise do nothing - the exact complaint
+   *    that the band "cannot be clicked".
+   */
+  bindBand() {
+    const band = this.el.palette;
+    if (!band) return;
+
+    const choose = (event) => {
+      const segment = event.target instanceof Element ? event.target.closest('.band-segment') : null;
+      if (segment) {
+        this.setBackground(Number(segment.dataset.index));
+        return;
+      }
+      // Clicked the padding: map the x position onto the five equal columns.
+      const rect = band.getBoundingClientRect();
+      this.setBackground(bandIndexFromX(event.clientX, rect.left, rect.width, this.palette.length));
+    };
+
+    band.addEventListener('click', choose);
   }
 
   setBackground(choice) {
@@ -225,13 +300,24 @@ export class CardView {
   tick(positionMs, fraction) {
     if (fraction !== this.lastFraction) {
       this.lastFraction = fraction;
-      this.el.fill.style.width = `${(fraction * 100).toFixed(2)}%`;
+      const percent = `${(fraction * 100).toFixed(2)}%`;
+      this.el.fill.style.width = percent;
+      this.el.miniFill.style.width = percent;
     }
     const second = Math.floor(positionMs / 1000);
     if (second !== this.lastSecond) {
       this.lastSecond = second;
       this.el.timeNow.textContent = formatTime(positionMs);
     }
+  }
+
+  /** Reflect the "do not auto-collapse" state on the lock button. */
+  setLocked(locked) {
+    const button = this.el.lock;
+    if (!button) return;
+    button.setAttribute('aria-pressed', String(!!locked));
+    button.title = locked ? '已锁定：不会自动收起（L）' : '锁定：不自动收起（L）';
+    this.el.stage?.setAttribute('data-locked', String(!!locked));
   }
 
   /* ------------------------------------------------------------------- face */

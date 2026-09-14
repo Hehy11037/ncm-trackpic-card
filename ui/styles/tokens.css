@@ -1,0 +1,87 @@
+/*
+ * Design tokens.
+ *
+ * The palette is driven by the cover art, so most colours here are variables the
+ * UI rewrites at runtime (see src/palette.js). The defaults are a neutral fallback
+ * for when nothing is playing yet.
+ *
+ * Typography follows the reference design: rounded/grotesque stack, generous
+ * letter-spacing on the title, small caps-ish metadata.
+ */
+
+:root {
+  /* Cover-derived accent colours (overwritten per track). */
+  --accent-dominant: #8fb4cd;
+  --accent-top: #8fb4cd;
+  --accent-bottom: #7fa8cd;
+  --accent-soft: rgba(143, 180, 205, 0.22);
+
+  /* Text colours chosen for contrast against the current background. */
+  --text-strong: #2c3236;
+  --text-muted: rgba(44, 50, 54, 0.62);
+  --text-faint: rgba(44, 50, 54, 0.34);
+
+  /* Surface: the card is translucent so the desktop shows through slightly. */
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-strong: rgba(255, 255, 255, 0.86);
+  --surface-line: rgba(44, 50, 54, 0.1);
+
+  --radius-card: 22px;
+  --radius-cover: 16px;
+
+  --card-width: 420px;
+  --card-height: 180px;
+
+  --font-ui: 'MiSans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+
+  --ease-flip: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --flip-duration: 420ms;
+}
+
+/*
+ * Dark scheme: when the cover is dark, the UI flips text to light and the surface
+ * to a dark translucent panel. Toggled by palette.js via [data-scheme].
+ */
+:root[data-scheme='dark'] {
+  --text-strong: #edf1f3;
+  --text-muted: rgba(237, 241, 243, 0.66);
+  --text-faint: rgba(237, 241, 243, 0.36);
+  --surface: rgba(20, 22, 26, 0.62);
+  --surface-strong: rgba(20, 22, 26, 0.8);
+  --surface-line: rgba(237, 241, 243, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  /* Transparent so the Electron window can be see-through. */
+  background: transparent;
+  font-family: var(--font-ui);
+  color: var(--text-strong);
+  overflow: hidden;
+  /* The window itself is draggable; interactive children opt out. */
+  -webkit-app-region: drag;
+  user-select: none;
+  cursor: default;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* Buttons must stay clickable inside a draggable window. */
+  -webkit-app-region: no-drag;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --flip-duration: 1ms;
+  }
+}

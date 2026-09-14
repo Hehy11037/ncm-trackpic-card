@@ -37,6 +37,35 @@ policy, **not** a system ACL problem. `Get-Acl` still reports FullControl for th
 user, and `%TEMP%` looks identical, so compare write behaviour across several
 `%LOCALAPPDATA%` subdirectories before concluding that permissions are broken.
 
+## 2026-09-14 — no Chromium can be launched from the tooling shell
+
+Confirmed independently three ways:
+
+* the NetEase client (CEF) dies with `FATAL:platform_channel.cc(85) ... Access is denied (0x5)`
+* Electron dies the same way (`platform_channel.cc:108`)
+* `chrome.exe --headless=new --screenshot` produces no image
+
+Cause: Chromium's Mojo platform channel uses a **named pipe**, which a confined
+shell cannot create. `app.commandLine.appendSwitch('single-process')` gets past the
+Mojo failure, after which Electron dies on profile/cache writes instead
+(`STATUS_BREAKPOINT`, exit `0x80000003`).
+
+Consequences worth remembering:
+
+* **Visual work cannot be verified from here.** Screenshots of the overlay or the
+  Electron shell have to be produced by the user, from a normal desktop session.
+  Do not burn time trying to render Chromium inside this shell.
+* Logic that would otherwise only be observable in a browser is worth extracting
+  into plain modules with tests. `ui/src/clock.js` is the clearest example: the
+  extrapolation, easing, seek-snap and pause-freeze rules are all verified by
+  `node ui/test/clock.test.mjs` with a stubbed `performance.now()`.
+* Static checks are the substitute for a browser: `tools/check-ui.mjs` (serving,
+  content types, path traversal), `tools/check-ui-dom.mjs` (every `getElementById`
+  in the UI resolves against `index.html`, and every referenced asset exists).
+* The overlay is served over HTTP by the host on purpose: the same URL works in a
+  normal browser during development and in the Electron shell once packaged, and
+  it needs no bundler.
+
 ## 2026-09-14 — phase 0 closed
 
 The debug channel works and the playback contract is measured; see

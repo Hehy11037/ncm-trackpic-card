@@ -95,11 +95,25 @@ try {
   });
   console.log(`  ${outcome === 'open' ? 'ok   ' : 'FAIL '} ws://127.0.0.1:${hostPort} -> ${outcome}`);
   if (outcome !== 'open') failures++;
-  ws.close();
+
+  /*
+   * Close and let the socket finish its closing handshake before exiting.
+   *
+   * Exiting while the handle is still closing trips a libuv assertion on Windows
+   * (`!(handle->flags & UV_HANDLE_CLOSING)` in win/async.c), which turns this script's exit code
+   * into 1 even when every check passed - so `npm run check`'s && chain broke at the first step.
+   */
+  await new Promise((resolve) => {
+    const done = () => resolve();
+    ws.addEventListener('close', done);
+    ws.addEventListener('error', done);
+    ws.close();
+    setTimeout(done, 1000);
+  });
 } catch (err) {
   console.log(`  FAIL  ${err.message}`);
   failures++;
 }
 
 console.log(`\n${failures ? `❌ ${failures} 项失败` : '✅ 界面服务检查通过'}`);
-process.exit(failures ? 1 : 0);
+process.exitCode = failures ? 1 : 0;

@@ -1,21 +1,33 @@
 // Development entry point for the host: runs it in the foreground and prints a
 // live view of what the overlay would receive.
 //
-//   node tools/host-run.mjs [--cdp-port 9223] [--host-port 8787] [--quiet]
+//   node tools/host-run.mjs [--cdp-port 9223] [--host-port 8787] [--ui-port 8788]
+//                           [--ui-root <dir>] [--quiet]
 //
 // This is the thing to keep running while building the overlay: it turns the
 // client's playback into a stream of HostMessages on ws://127.0.0.1:8787.
+//
+// The Electron shell launches this same file, so the desktop app and the dev
+// workflow cannot drift apart.
 
-import { createHost, DEFAULT_HOST_PORT } from '../packages/host/src/index.ts';
+import { createHost, DEFAULT_HOST_PORT, DEFAULT_UI_PORT } from '../packages/host/src/index.ts';
 import { DEFAULT_CDP_PORT } from '../packages/host/src/cdp.ts';
 
 function parseArgs(argv) {
-  const out = { cdpPort: DEFAULT_CDP_PORT, hostPort: DEFAULT_HOST_PORT, quiet: false };
+  const out = {
+    cdpPort: DEFAULT_CDP_PORT,
+    hostPort: DEFAULT_HOST_PORT,
+    uiPort: DEFAULT_UI_PORT,
+    uiRoot: undefined,
+    quiet: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--quiet') out.quiet = true;
     else if (a === '--cdp-port') out.cdpPort = Number(argv[++i]);
     else if (a === '--host-port') out.hostPort = Number(argv[++i]);
+    else if (a === '--ui-port') out.uiPort = Number(argv[++i]);
+    else if (a === '--ui-root') out.uiRoot = argv[++i];
   }
   return out;
 }
@@ -25,6 +37,8 @@ const args = parseArgs(process.argv.slice(2));
 const host = createHost({
   cdpPort: args.cdpPort,
   hostPort: args.hostPort,
+  uiPort: args.uiPort,
+  uiRoot: args.uiRoot,
   log: (level, message) => {
     if (args.quiet && level !== 'warn' && level !== 'error') return;
     const stamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });

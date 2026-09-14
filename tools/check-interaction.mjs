@@ -34,6 +34,31 @@ const check = (name, ok, detail = '') => {
 const CARD_WIDTH = 400;
 const UNIT_PX = CARD_WIDTH / 100;
 
+/* --------------------------------------------------------------- tool sanity */
+
+console.log('--- 样式读取工具 ---');
+{
+  /*
+   * Two traps that both produced confident but wrong answers, so they are pinned here.
+   *
+   * A selector can appear in several rules (`.card` gets a drag region near the top and its real
+   * box later), and for one selector the specificity is equal - so the last declaration must
+   * win. And a comma-separated selector group only ends with `{` after its *last* member, so a
+   * first-match `\.credit\s*\{` scan returns that group and hides the real rule.
+   */
+  const shadow = css.declaration('.card', 'box-shadow') ?? '';
+  check('同一选择器的后一条规则生效', shadow.includes('var(--shadow-float)'), shadow.slice(0, 40));
+  check('未声明的属性会继续向后找', css.declaration('.card', '-webkit-app-region') === 'no-drag');
+  check(
+    '逗号选择器组不会遮蔽真实规则',
+    css.value('.credit', 'margin-top') > 0,
+    `.credit margin-top = ${css.value('.credit', 'margin-top')}u`,
+  );
+  for (const selector of ['.cover-wrap', '.title', '.artist', '.progress', '.credit']) {
+    check(`${selector} 仍能读到布局属性`, css.declaration(selector, 'margin-top') !== null || css.declaration(selector, 'margin') !== null || css.declaration(selector, 'padding-top') !== null || css.declaration(selector, 'width') !== null);
+  }
+}
+
 /* ------------------------------------------------------------ hit targets */
 
 console.log('--- 命中区域 ---');
@@ -72,25 +97,31 @@ console.log('--- 命中区域 ---');
 console.log('\n--- 窗口拖拽区域 ---');
 {
   /*
-   * The scheme is deliberately inverted: nothing is draggable unless it opts in. Making the
-   * whole window a title bar and carving the controls out did not hold on a transparent
-   * Windows window - the colour band was swallowed even with a 26px carve-out, while an
-   * identical button in the top bar worked.
+   * The shape of the carve-outs is what broke the band: each control declared its own
+   * `no-drag`, and the band's box was 4px tall at the time, so a press one pixel off started a
+   * window drag instead. The card now subtracts itself in one rect, so nothing inside it can be
+   * swallowed, and the big non-interactive surfaces opt back in so the window can still be
+   * dragged.
    */
-  check('body 不再声明 drag', !/-webkit-app-region:\s*drag/.test(css.tokens.split('.stage')[0]));
-  check('拖拽手柄显式列出', /\.cover-wrap,[\s\S]{0,200}-webkit-app-region:\s*drag/.test(css.rules));
+  check('body 声明窗口拖拽区', /-webkit-app-region:\s*drag/.test(css.tokens));
+  check('整张卡片作为一次性挖空', css.declaration('.card', '-webkit-app-region') === 'no-drag');
+  check('收起条整条可拖动', css.declaration('.mini', '-webkit-app-region') === 'drag');
 
   const dragSelectors = new Set();
   for (const m of css.rules.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
     if (!/-webkit-app-region:\s*drag/.test(m[2])) continue;
     for (const selector of m[1].split(',')) dragSelectors.add(selector.trim());
   }
-  // A control inside a drag handle would be swallowed again, so the two lists must not overlap.
+  // Enough surface to actually move the window with, since the card's own rect is subtracted.
+  // `.lyrics` matters because the back face has no other handle.
+  for (const selector of ['.cover-wrap', '.title', '.artist', '.progress', '.lyrics', '.mini']) {
+    check(`${selector} 是拖拽手柄`, dragSelectors.has(selector));
+  }
+  // A control inside a drag handle would be swallowed, so the two lists must not overlap.
   const controls = ['.band', '.band-segment', '.ctrl', '.icon-btn', '.mini-action', '.foot'];
   for (const selector of controls) {
     check(`${selector} 不是拖拽手柄`, !dragSelectors.has(selector));
   }
-  check('封面可用于拖动窗口', dragSelectors.has('.cover-wrap'));
 
   const noDragSelectors = new Set();
   for (const m of css.rules.matchAll(/([^{}]+)\{([^}]*)\}/g)) {

@@ -15,6 +15,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { inflateSync } from 'node:zlib';
 
 import {
   CARD_ASPECT,
@@ -41,6 +42,8 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures++;
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  ${detail}` : ''}`);
 };
+
+const readStyle = (relativePath) => readFileSync(relativePath, 'utf8');
 
 const number = (source, pattern) => {
   const m = pattern.exec(source);
@@ -300,6 +303,61 @@ console.log('\n--- 托盘图标 PNG ---');
   const out = join(process.cwd(), '.scratch', 'tray-icon.png');
   writeFileSync(out, png);
   console.log(`    已写出用于人工查看: ${out}`);
+
+  /*
+   * Decode the pixels, not just the container.
+   *
+   * CRC checks say the PNG is well-formed; they do not say the image data is usable. Electron
+   * will not take a raw buffer at all (`Tray` wants a NativeImage or a path), so the shell wraps
+   * it in `nativeImage.createFromBuffer` - and that quietly returns an *empty* image rather than
+   * throwing if the stream cannot be decoded. Inflating the IDAT and probing two pixels is the
+   * cheap way to know the encoder produced a real picture.
+   */
+  let offset2 = 8;
+  const idat = [];
+  while (offset2 + 12 <= png.length) {
+    const length = png.readUInt32BE(offset2);
+    const type = png.subarray(offset2 + 4, offset2 + 8).toString('ascii');
+    if (type === 'IDAT') idat.push(png.subarray(offset2 + 8, offset2 + 8 + length));
+    offset2 += 12 + length;
+    if (type === 'IEND') break;
+  }
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * 4 + 1;
+  check('图像数据可解压且长度正确', raw.length === height * stride, `${raw.length} vs ${height * stride}`);
+  let filterOk = true;
+  for (let y = 0; y < height; y++) if (raw[y * stride] !== 0) filterOk = false;
+  check('每行过滤字节均为 0', filterOk);
+
+  const pixel = (x, y) => {
+    const at = y * stride + 1 + x * 4;
+    return [raw[at], raw[at + 1], raw[at + 2], raw[at + 3]];
+  };
+  check('圆角外为透明', pixel(0, 0)[3] === 0, `alpha=${pixel(0, 0)[3]}`);
+  const centre = pixel(Math.floor(width / 2), Math.floor(height / 2));
+  check('中心为不透明白色（播放三角）', centre.join(',') === '255,255,255,255', centre.join(','));
+}
+
+/* ----------------------------------------------------------- startup wiring */
+
+console.log('\n--- 启动顺序（一个坏掉的附加功能不能拖垮核心功能）---');
+{
+  const shellJs = readStyle('apps/overlay/main.mjs');
+
+  /*
+   * `new Tray(makeIconPng(...))` passed a raw PNG buffer, which Electron rejects with
+   * "Argument must be a file path or a NativeImage". The throw happened inside `createTray()`,
+   * in the middle of startup, so it silently skipped `startHoverWatch()` - and a broken tray
+   * icon presented as "the card never rolls up". Two things prevent a repeat.
+   */
+  check('图标包装为 NativeImage', /nativeImage\.createFromBuffer/.test(shellJs));
+  check('不再把裸 Buffer 交给 Tray', !/new Tray\(makeIconPng/.test(shellJs));
+  check('图标解码失败会告警', /isEmpty\(\)/.test(shellJs));
+
+  const watchAt = shellJs.indexOf('startHoverWatch();\n    createWindow()');
+  check('先启动指针监听再建窗口', watchAt > 0);
+  check('托盘创建被 try 包住', /try \{\n\s*createTray\(\);/.test(shellJs));
+  check('whenReady 链有 catch', /\}\)\s*\.catch\(\(err\) => \{\n\s*console\.error\('\[shell\] 启动失败'/.test(shellJs));
 }
 
 console.log(`\n${failures ? `❌ ${failures} 项失败` : '✅ 桌面壳辅助逻辑通过'}`);

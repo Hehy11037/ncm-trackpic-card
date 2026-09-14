@@ -13,28 +13,37 @@
 /*
  * Window dragging.
  *
- * Nothing is draggable by default (`html, body` declare no region at all - see tokens.css);
- * these are the explicit grab handles, and everything clickable is deliberately not among
- * them. Inverting the scheme like this is what finally made the colour band reliable: with the
- * old "whole window is a title bar, controls carve themselves out" arrangement the band was
- * swallowed on a transparent Windows window even after its hit box was enlarged, while an
- * identical button in the top bar worked.
+ * `html, body` declare the drag region for the whole window (tokens.css). The card then
+ * subtracts itself from it in **one rect**, which is the fix for the colour band: the band used
+ * to rely on its own `no-drag` carve-out, and at the time that box was 4px tall, so a press one
+ * pixel off the strip started a window drag instead. Subtracting the whole card means nothing
+ * inside it can be swallowed, however small it is.
  *
- * `no-drag` is still declared for every control. It is redundant while nothing above them is
- * draggable, but it keeps the intent explicit and means adding a drag handle in the wrong
- * place cannot silently kill a control.
+ * The large non-interactive surfaces then opt back in, so the card can still be moved by
+ * grabbing it - the cover most of all. Everything that is or contains a control stays out.
  */
+.card {
+  -webkit-app-region: no-drag;
+}
+
+/* The rolled-up strip is a title bar; its one button is carved back out below. */
+.mini {
+  -webkit-app-region: drag;
+}
+
 .cover-wrap,
 .title,
 .artist,
-.mini__cover,
-.mini__text {
+.progress,
+.credit,
+.lyrics {
   -webkit-app-region: drag;
 }
 
 button,
 .band,
 .band-segment,
+.controls,
 .foot,
 .ctrl,
 .icon-btn,

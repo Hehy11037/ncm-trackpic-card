@@ -195,9 +195,17 @@ export class LyricsView {
       if (!node) continue;
       const distance = index < 0 ? i + 1 : i - index;
 
-      // Lines above the current one recede faster than lines below it; that asymmetry is
-      // what makes the stack read as receding into the distance rather than as a list.
-      const depth = distance < 0 ? Math.abs(distance) + RECEDE_ABOVE : distance + RECEDE_BELOW;
+      /*
+       * The current line is exactly 0 - fully opaque, no blur, no scaling. Every other
+       * line gets a positive depth: lines above the current one recede faster than lines
+       * below it, and that asymmetry is what makes the stack read as receding rather than
+       * as a flat list.
+       */
+      let depth;
+      if (i === index) depth = 0;
+      else if (distance < 0) depth = Math.abs(distance) + RECEDE_ABOVE;
+      else depth = distance + RECEDE_BELOW;
+
       node.style.setProperty('--d', Math.max(0, depth).toFixed(2));
       node.classList.toggle('is-active', i === index);
       node.classList.toggle('is-offscreen', Math.abs(distance) > MAX_DISTANCE);
@@ -207,24 +215,27 @@ export class LyricsView {
   /**
    * Centre the current line by translating the stack.
    *
-   * Uses each line's measured offset rather than `index * lineHeight`, because a line with
-   * a translation is taller and a long line may wrap - uniform arithmetic drifted and made
-   * adjacent lines overlap.
+   * The stack is anchored to the container's top edge (`top: 0`), so the transform is
+   * simply "move the active line's centre to the container's centre":
+   *
+   *     offset = containerHeight / 2 - (activeTop + activeHeight / 2)
+   *
+   * An earlier version compared `offsetTop` (relative to the stack) against the stack's
+   * own height while the stack was positioned at `top: 50%`, mixing two coordinate
+   * systems. That produced a huge negative offset and pushed every line off screen, which
+   * is why the page appeared empty.
+   *
+   * Each line's measured offset is used rather than `index * lineHeight`, because a line
+   * with a translation is taller and a long line wraps - uniform arithmetic drifted and
+   * made adjacent lines overlap.
    */
   #centreOn(index, dtMs, animate) {
     let target = 0;
 
     const active = index >= 0 ? this.nodes[index] : null;
-    if (active) {
-      const containerHeight = this.container.clientHeight || 0;
-      const activeTop = active.offsetTop;
-      const activeHeight = active.offsetHeight;
-      if (containerHeight && activeHeight) {
-        // Stack centre is already at the container's middle, so shift by the active
-        // line's own centre relative to the stack's midpoint.
-        const stackCentre = this.stack.offsetHeight / 2;
-        target = -(activeTop + activeHeight / 2 - stackCentre);
-      }
+    const containerHeight = this.container.clientHeight || 0;
+    if (active && containerHeight) {
+      target = containerHeight / 2 - (active.offsetTop + active.offsetHeight / 2);
     }
 
     this.scrollTarget = target;

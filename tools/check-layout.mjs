@@ -185,9 +185,17 @@ const shorthand = (selector, property, index) => {
   return evaluate(parts[Math.min(index, parts.length - 1)]);
 };
 
-/* --------------------------------------------------------------------- compute */
+/**
+ * Stage height in units.
+ *
+ * Measured from the reference's own pixels: its content area is 1080 x 1958, so the card
+ * is 181.36 units tall, not 177.78 (which would be 9:16). Using 9:16 was the reason the
+ * front face's text was clipped: at that height the reference's literal type is
+ * proportionally too large, and the content total exceeded the card.
+ */
+const STAGE_HEIGHT_UNITS = 181.36;
 
-const cardHeight = 100 * (16 / 9);
+const cardHeight = STAGE_HEIGHT_UNITS;
 const padTop = shorthand('.face', 'padding', 0);
 const padLeft = shorthand('.face', 'padding', 1);
 const contentWidth = 100 - padLeft * 2;
@@ -255,7 +263,13 @@ const checks = [
   ['无 backdrop 模糊', !card.includes('backdrop-filter')],
   ['封面窄于内容列', coverSize <= contentWidth],
   ['底部留白 5..25u', bottomInset > 5 && bottomInset < 25],
-  ['内容在卡片内', creditTop < cardHeight],
+  /*
+   * The critical one. The content must fit inside the card: `overflow: hidden` clips
+   * whatever runs past the bottom, which is exactly how the title and artist disappeared
+   * in an earlier revision. A negative bottom inset means overflow.
+   */
+  ['内容不溢出卡片（正文被裁的根因）', creditTop < cardHeight],
+  ['内容充分占满卡片', bottomInset < 20],
 ];
 
 console.log('\n几何约束:');

@@ -16,7 +16,7 @@
 // The renderer is told the lock state and reports when it has drawn; everything else it works
 // out from the window size it is given.
 
-import { app, BrowserWindow, Menu, Tray, ipcMain, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -69,6 +69,20 @@ const SUPPRESS_MS = 2500;
 
 /** Accent used for the tray icon; matches the app's default accent. */
 const ICON_COLOR = { r: 0x98, g: 0xb6, b: 0xbe };
+
+/**
+ * The generated icon, as a `NativeImage`.
+ *
+ * `Tray` and `BrowserWindow.icon` want a NativeImage or a file path - handing them the raw PNG
+ * buffer throws `Argument must be a file path or a NativeImage`. That throw happened inside
+ * `createTray()`, which ran in the middle of startup and therefore silently skipped everything
+ * after it, including `startHoverWatch()`. Hence "the card never rolls up".
+ */
+function iconImage(size) {
+  const image = nativeImage.createFromBuffer(makeIconPng(ICON_COLOR, size));
+  if (image.isEmpty()) console.warn(`[shell] ${size}px 图标解码失败（托盘与任务栏图标会缺失）`);
+  return image;
+}
 
 let mainWindow = null;
 let tray = null;
@@ -351,7 +365,7 @@ function createWindow() {
     fullscreenable: false,
     maximizable: false,
     title: 'Now Playing',
-    icon: makeIconPng(ICON_COLOR, 64),
+    icon: iconImage(64),
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
@@ -504,7 +518,7 @@ function refreshTrayMenu() {
 }
 
 function createTray() {
-  tray = new Tray(makeIconPng(ICON_COLOR, 16));
+  tray = new Tray(iconImage(16));
   tray.setToolTip('Now Playing — 网易云同步卡片');
   refreshTrayMenu();
   tray.on('click', () => toggleWindow());
@@ -533,30 +547,51 @@ function bindIpc() {
 
 /* --------------------------------------------------------------------- start */
 
-app.whenReady().then(async () => {
-  let hostError = null;
-  try {
-    startHost();
-  } catch (err) {
-    hostError = err instanceof Error ? err.message : String(err);
-    console.error('[shell] 启动宿主失败', hostError);
-  }
+/*
+ * Each startup step is independent, and the roll-up starts before the tray.
+ *
+ * A throw in `createTray()` used to take down everything after it in this block - including
+ * `startHoverWatch()` - so a broken tray icon presented as "the card never rolls up". Optional
+ * extras must never be able to disable a core feature, and a failure here must say so rather
+ * than becoming an unhandled rejection.
+ */
+app
+  .whenReady()
+  .then(async () => {
+    let hostError = null;
+    try {
+      startHost();
+    } catch (err) {
+      hostError = err instanceof Error ? err.message : String(err);
+      console.error('[shell] 启动宿主失败', hostError);
+    }
 
-  const ready = hostError ? false : await waitForUi();
-  if (!ready) {
-    // Still open the window: the UI shows a clear "not connected" state, which is more useful
-    // than silently exiting.
-    console.error(`[shell] 界面服务未就绪 (${UI_URL})，仍打开窗口以便显示状态`);
-  }
+    const ready = hostError ? false : await waitForUi();
+    if (!ready) {
+      // Still open the window: the UI shows a clear "not connected" state, which is more useful
+      // than silently exiting. A host already on the port is a normal cause - e.g. a leftover
+      // one from an earlier run - and the window simply talks to that instead.
+      console.error(`[shell] 界面服务未就绪 (${UI_URL})，仍打开窗口以便显示状态`);
+    }
 
-  bindIpc();
-  reportUiAssets();
-  createWindow();
-  createTray();
-  startHoverWatch();
+    bindIpc();
+    reportUiAssets();
+    // The pointer watcher is started first, and touches nothing that can fail: it only stores a
+    // timer. Everything after this point is allowed to break without disabling the roll-up.
+    startHoverWatch();
+    createWindow();
 
-  app.on('activate', () => showWindow());
-});
+    try {
+      createTray();
+    } catch (err) {
+      console.error('[shell] 托盘创建失败（收起/展开不受影响）', err);
+    }
+
+    app.on('activate', () => showWindow());
+  })
+  .catch((err) => {
+    console.error('[shell] 启动失败', err);
+  });
 
 // Closing the window hides it instead of quitting, so the overlay stays available from the tray.
 app.on('window-all-closed', () => {

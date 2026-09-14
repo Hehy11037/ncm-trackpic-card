@@ -148,16 +148,16 @@ body {
   color: var(--text-strong);
   overflow: hidden;
   /*
-   * No drag region here on purpose.
+   * The window-wide drag region, so the card can be moved by grabbing its edges and its large
+   * non-interactive surfaces.
    *
-   * The first attempt made the whole window a title bar (`-webkit-app-region: drag` on body)
-   * and relied on `no-drag` carve-outs for the controls. That is the documented pattern, but
-   * on a *transparent* Windows window it did not hold: the colour band stayed unclickable even
-   * after its carve-out was padded out to 26px, while an identical `<button>` in the top bar
-   * worked. Rather than keep guessing at how the region is resolved, the scheme is inverted -
-   * nothing is draggable unless it says so, and the handles are listed in card.css. A control
-   * that is not inside a drag element cannot be swallowed by one.
+   * The original mistake was not this rule but the *shape* of the carve-outs: each control
+   * declared its own `no-drag`, and a 4px-tall colour band therefore got a 4px carve-out. The
+   * card as a whole is now subtracted in one rect (see `.card` in card.css) before any of its
+   * contents are considered, so a control cannot be swallowed however small it is; the
+   * per-control `no-drag` entries remain only to let the big surfaces opt back into dragging.
    */
+  -webkit-app-region: drag;
   user-select: none;
   cursor: default;
   -webkit-font-smoothing: antialiased;

@@ -145,20 +145,39 @@ export function makeCssReader({ tokens, rules }) {
     }
   }
 
-  /** Raw declaration text for a property in a rule, or null. */
-  function declaration(selector, property) {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const block = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`).exec(sheet);
-    if (!block) return null;
-    // `[^;{}]`: a value must not run past the end of the rule into the next one.
-    const found = new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;{}]+)`).exec(block[1]);
-    return found ? found[1].trim() : null;
+  /**
+   * Every rule whose selector *list* contains `selector`, as declaration blocks, in source order.
+   *
+   * Splitting the list matters: a naive `\.credit\s*\{` scan matches only the *last* selector of
+   * a comma-separated rule, so the moment `.credit` joined a group at the top of the file its
+   * real `margin-top` became invisible to every check that reads it - and the layout check
+   * reported a 14u shift that did not exist.
+   */
+  function blocks(selector) {
+    const out = [];
+    for (const m of sheet.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      const selectors = m[1].split(',').map((part) => part.trim());
+      if (selectors.includes(selector)) out.push(m[2]);
+    }
+    return out;
   }
 
-  /** Every declaration block whose selector matches, in source order. */
-  function blocks(selector) {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return [...sheet.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g'))].map((m) => m[1]);
+  /**
+   * Raw declaration text for a property, as the cascade resolves it.
+   *
+   * A selector legitimately appears in several rules - `.card` picks up its drag region near the
+   * top and its real box later on - and for one selector the specificity is equal, so the last
+   * declaration wins. Scanning only the first matching rule made the answer depend on where an
+   * unrelated rule happened to be written.
+   */
+  function declaration(selector, property) {
+    const found = new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;{}]+)`);
+    let result = null;
+    for (const block of blocks(selector)) {
+      const match = found.exec(block);
+      if (match) result = match[1].trim();
+    }
+    return result;
   }
 
   const value = (selector, property) => evaluate(declaration(selector, property));

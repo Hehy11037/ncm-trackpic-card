@@ -318,4 +318,67 @@ differ from the static card by a sub-pixel. So `data-settled` drops the transfor
 entirely once the flip is over. `transform: none` still animates - the spec treats it
 as the identity matrix when interpolating - so the next flip works normally.
 
+## 2026-09-15 (3) — reading the terminal output
+
+The user pasted the startup log, and it answered everything at once.
+
+### The tray icon was taking down the roll-up
+
+```
+UnhandledPromiseRejectionWarning: Error: Argument must be a file path or a NativeImage
+    at createTray (main.mjs:507)
+```
+
+`new Tray(makeIconPng(...))` handed Electron a raw PNG **Buffer**. `Tray` - and
+`BrowserWindow.icon` - want a `NativeImage` or a path. The throw happened in the middle
+of the `whenReady()` chain, so **everything after it never ran, including
+`startHoverWatch()`**. That is exactly the reported symptom: "no auto collapse, it stays
+expanded". Two unrelated bugs presented as one, and the second one hid behind the first.
+
+The icon itself was fine - the PNG decoded into a rounded square with a play triangle,
+checked with an image viewer. The shell now wraps it in `nativeImage.createFromBuffer`
+and warns if the result `isEmpty()`. Two lessons, both now enforced by
+`tools/check-shell.mjs`:
+
+* **Start optional features last, and wrap them.** `startHoverWatch()` runs before
+  `createWindow()` and `createTray()`, the tray is inside a `try`, and the whole chain
+  has a `.catch`. A broken tray icon must not be able to disable the roll-up.
+* **Check that the image data decodes, not just that the container is well-formed.** The
+  CRC checks all passed on a file whose pixels could still have been unusable. The check
+  now inflates the IDAT, asserts the scanline length, and probes two pixels.
+
+### Dragging had to come back
+
+Removing the window-wide drag region in the previous round was an overcorrection: it made
+the band work but left the window impossible to move. The right shape is to **subtract the
+card in one rect**:
+
+```
+html, body  { -webkit-app-region: drag }     /* the whole window, margins included */
+.card       { -webkit-app-region: no-drag }  /* one rect covering every control */
+.cover-wrap, .title, .artist, .progress, .credit, .lyrics { -webkit-app-region: drag }
+```
+
+The band's original failure was the *size* of its carve-out (4px), not the mechanism: an
+18px button in the top bar always worked under exactly the same scheme. Carving out the
+card as a whole means no control can be swallowed however small it is, and the large
+non-interactive surfaces opt back in so the window can still be dragged - `.lyrics` is in
+that list because the back face has no other handle. The transparent margin around the
+card is draggable too, so the window can be moved even if a handle is missed.
+
+### The layout check was reading the wrong rule
+
+Adding `.credit` to a comma-separated group near the top of `card.css` made
+`check-layout.mjs` report a 14u shift in the credit line that did not exist. Two separate
+flaws in `tools/css-values.mjs`:
+
+* `declaration()` used `\.credit\s*\{`, which matches only the **last** selector of a
+  comma-separated rule - so the group matched and the real rule was never seen.
+* It scanned only the *first* matching rule, so a selector appearing twice (`.card` has a
+  drag rule and then its real box) answered with whichever came first.
+
+It now splits selector lists and takes the last declaration, like the cascade. Both are
+pinned by checks, because both produced confident wrong answers rather than errors.
+
+
 

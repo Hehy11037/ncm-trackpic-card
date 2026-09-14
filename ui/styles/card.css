@@ -11,45 +11,17 @@
  */
 
 /*
- * Window dragging.
+ * Window dragging is *not* declared here, and no element is a `-webkit-app-region` region.
  *
- * `html, body` declare the drag region for the whole window (tokens.css). The card then
- * subtracts itself from it in **one rect**, which is the fix for the colour band: the band used
- * to rely on its own `no-drag` carve-out, and at the time that box was 4px tall, so a press one
- * pixel off the strip started a window drag instead. Subtracting the whole card means nothing
- * inside it can be swallowed, however small it is.
+ * Three rounds established that the CSS mechanism and this card's clickable controls cannot
+ * coexist: with the whole window draggable the colour band was unclickable however its carve-out
+ * was sized (4px, then 26px), with only the card's big surfaces draggable the band worked but
+ * the window could not be moved, and with nothing draggable the band worked and the window still
+ * could not be moved.
  *
- * The large non-interactive surfaces then opt back in, so the card can still be moved by
- * grabbing it - the cover most of all. Everything that is or contains a control stays out.
+ * So dragging is a pointer gesture implemented in ui/src/drag.js: press anywhere that is not a
+ * control and move. With no drag regions at all, there is nothing left that can swallow a press.
  */
-.card {
-  -webkit-app-region: no-drag;
-}
-
-/* The rolled-up strip is a title bar; its one button is carved back out below. */
-.mini {
-  -webkit-app-region: drag;
-}
-
-.cover-wrap,
-.title,
-.artist,
-.progress,
-.credit,
-.lyrics {
-  -webkit-app-region: drag;
-}
-
-button,
-.band,
-.band-segment,
-.controls,
-.foot,
-.ctrl,
-.icon-btn,
-.mini-action {
-  -webkit-app-region: no-drag;
-}
 
 .card {
   position: relative;

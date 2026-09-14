@@ -25,6 +25,15 @@ contextBridge.exposeInMainWorld('overlayShell', {
   /** Hide the window. The app stays in the tray; the tray's 退出 quits for real. */
   close: () => ipcRenderer.send('overlay:close'),
 
+  /*
+   * Moving the window, as a plain pointer gesture rather than a `-webkit-app-region` drag
+   * region. See ui/src/drag.js for why. The renderer reports the *total* delta since the press,
+   * so a dropped event cannot make the window drift.
+   */
+  dragStart: () => ipcRenderer.send('overlay:drag-start'),
+  dragMove: (dx, dy) => ipcRenderer.send('overlay:drag-move', { dx, dy }),
+  dragEnd: () => ipcRenderer.send('overlay:drag-end'),
+
   /**
    * Subscribe to the shell's state (`{ locked }`), and ask for it immediately.
    *

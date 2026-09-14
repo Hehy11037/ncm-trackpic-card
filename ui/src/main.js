@@ -8,6 +8,7 @@
 
 import { CardView } from './card.js';
 import { PlayClock, isSampleStale } from './clock.js';
+import { installDragToMove } from './drag.js';
 import { relayout } from './layout.js';
 import { LyricsView } from './lyrics.js';
 import { HostLink } from './socket.js';
@@ -198,6 +199,10 @@ function bindInput() {
       lyrics.setTranslationVisible(document.documentElement.dataset.lyricTranslation === 'off');
     }
   });
+
+  // Move the window by pressing anywhere that is not a control. See ui/src/drag.js for why this
+  // is a gesture rather than a `-webkit-app-region` drag region.
+  installDragToMove({ shell });
 
   document.addEventListener('visibilitychange', () => {
     hidden = document.hidden;

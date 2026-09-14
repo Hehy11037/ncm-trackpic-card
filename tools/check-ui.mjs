@@ -24,6 +24,7 @@ const ASSETS = [
   ['/src/main.js', 'text/javascript'],
   ['/src/card.js', 'text/javascript'],
   ['/src/clock.js', 'text/javascript'],
+  ['/src/drag.js', 'text/javascript'],
   ['/src/layout.js', 'text/javascript'],
   ['/src/lyrics.js', 'text/javascript'],
   ['/src/palette.js', 'text/javascript'],

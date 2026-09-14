@@ -114,11 +114,12 @@
 
 .title {
   /* Measured: title glyphs start 5.28u below the cover. */
-  margin: calc(var(--u) * 5.28) 0 0;
+  margin: calc(var(--u) * 4.6) 0 0;
   font-size: var(--fs-title);
   font-weight: 600;
-  /* Roomier than the reference's 1.06 so a two-line title is never clipped. */
-  line-height: 1.24;
+  /* 1.45 rather than the reference's 1.06: with a tighter box the descenders of y/p/g
+     fall outside the line box and `overflow: hidden` on the clamped title clipped them. */
+  line-height: 1.45;
   letter-spacing: var(--tracking-title);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -128,11 +129,10 @@
 }
 
 .artist {
-  /* Measured: artist glyphs start 2.53u below the title box. */
-  margin: calc(var(--u) * 2.53) 0 0;
+  margin: calc(var(--u) * 2) 0 0;
   font-size: var(--fs-artist);
   font-weight: 400;
-  line-height: 1.3;
+  line-height: 1.5;
   letter-spacing: var(--tracking-artist);
   color: var(--text-muted);
   white-space: nowrap;
@@ -143,8 +143,10 @@
 /* ---------------------------------------------------------------- progress */
 
 .progress {
-  /* Measured: 2.33u below the artist box. */
-  margin-top: calc(var(--u) * 2.33);
+  /* Compensated for the taller title/artist line boxes: their extra height is subtracted
+     here so the progress bar lands at the reference's 121.2u. Verified by
+     tools/check-layout.mjs. */
+  margin-top: calc(var(--u) * 3.54);
 }
 
 .progress-track {
@@ -261,32 +263,43 @@
   margin-top: calc(var(--u) * 5.76);
 }
 
-/* Colour band: the background picker. Five palette colours, nothing else. */
+/*
+ * Colour band: the background picker. Five colours from the cover, ordered low to high
+ * luminance so the strip reads as a ramp.
+ *
+ * The selected segment carries no ring or border: it grows slightly taller and becomes
+ * fully opaque, so the chosen colour flows into the page background behind it instead of
+ * looking like a UI chip.
+ */
 .band {
   display: flex;
-  gap: calc(var(--u) * 0.9);
-  align-items: stretch;
+  gap: calc(var(--u) * 0.8);
+  align-items: flex-end;
   width: 100%;
-  /* Measured from the reference. Kept literal so the hex row lands where it should;
-     the click target is enlarged with padding instead (see .band-segment). */
+  /* Measured from the reference. */
   height: calc(var(--u) * 1.3);
 }
 
 .band-segment {
   flex: 1 1 0;
-  border-radius: calc(var(--u) * 0.3);
+  height: 66%;
+  border: 0;
+  border-radius: calc(var(--u) * 0.25);
   cursor: pointer;
-  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease);
+  opacity: 0.72;
+  transition: height 220ms var(--ease), opacity 220ms var(--ease);
   -webkit-app-region: no-drag;
   box-sizing: border-box;
 }
 
 .band-segment:hover {
-  transform: translateY(calc(var(--u) * -0.25));
+  opacity: 1;
 }
 
+/* The chosen colour: taller, fully opaque, no ring. */
 .band-segment[aria-pressed='true'] {
-  box-shadow: 0 0 0 max(1.5px, calc(var(--u) * 0.22)) var(--text-strong);
+  height: 100%;
+  opacity: 1;
 }
 
 .band-labels {
@@ -413,10 +426,16 @@
 /*
  * Lyrics page.
  *
- * Layout: seven lines with the current one centred, in a shallow 3D perspective so the
- * centre line reads as nearest (largest, darkest, sharpest) and the lines above and
- * below recede. Only the seven visible lines are rendered per page, which is what makes
- * it readable - the previous version stacked the whole document into a masked strip.
+ * Seven *entries* per page, where an entry is the artist line plus one lyric line. The
+ * current entry is centred; everything above and below recedes in opacity, blur, scale and
+ * Z depth, and fades to nothing past a hard limit.
+ *
+ * Two decisions keep the geometry predictable:
+ *   - The artist line is a separate entry, not a sub-line attached to the first lyric, so
+ *     no entry has a variable two-part height. (Translations appear only on the current
+ *     entry, which is centred anyway.)
+ *   - Each entry is one line of text; anything longer fades out at the hard limit rather
+ *     than distorting the layout.
  */
 .lyrics {
   position: relative;
@@ -431,9 +450,8 @@
   position: absolute;
   left: 0;
   right: 0;
-  /* Anchored to the container's top edge, not its middle: the centring transform is then
-     a plain "move the active line's centre to the container's centre", which is easy to
-     verify. */
+  /* Anchored to the container's top edge: the centring transform is then a plain "move
+     the active entry's centre to the container's centre", which is easy to verify. */
   top: 0;
   transform-style: preserve-3d;
   will-change: transform;
@@ -441,38 +459,112 @@
 
 .lyric-line {
   margin: 0;
-  padding: calc(var(--u) * 1.1) calc(var(--u) * 3);
+  /* Generous block padding is the inter-entry gap; the previous 1.1u was too tight. */
+  padding: calc(var(--u) * 2.4) calc(var(--u) * 4);
   text-align: center;
   font-size: var(--fs-lyric);
   font-weight: 600;
-  line-height: 1.34;
+  /* 1.5 keeps descenders of y/p/g inside the box, so nothing is clipped. */
+  line-height: 1.5;
   color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
   /*
-   * Depth: `--d` is this line's distance from the current one (set from JS). The current
-   * line is fully opaque and unscaled; each step away shrinks, fades and blurs steeply.
+   * Depth: `--d` is this entry's distance from the current one. `--d-max` is where it
+   * fades out completely, so a long lyric several entries away stops contributing.
    */
   --d: 0;
-  opacity: calc(1 - var(--d) * 0.42);
-  filter: blur(calc(var(--d) * 1.25px));
-  transform: translateZ(calc(var(--d) * -70px)) scale(calc(1 - var(--d) * 0.11));
-  transition: opacity 240ms var(--ease), filter 240ms var(--ease), transform 240ms var(--ease);
+  --d-max: 3.4;
+  --arc: 0;
+  opacity: clamp(0, calc(1 - var(--d) * 0.46), 1);
+  filter: blur(calc(min(var(--d), var(--d-max)) * 1.3px));
+  transform: translateZ(calc(min(var(--d), var(--d-max)) * -66px))
+    scale(calc(1 - min(var(--d), var(--d-max)) * 0.105));
+  /*
+   * Per-entry transition delay: the stack jumps to its new position and the entries settle
+   * a few milliseconds apart, which is what gives the scroll its sense of motion instead
+   * of the whole block sliding as one rigid sheet.
+   */
+  transition:
+    opacity 260ms var(--ease) var(--stagger, 0ms),
+    filter 300ms var(--ease) var(--stagger, 0ms),
+    transform 320ms var(--ease) var(--stagger, 0ms);
 }
 
+/*
+ * The current entry: fully sharp and slightly larger, so it reads as the nearest row.
+ *
+ * Note on the "arc" idea: a per-character curve would need the text split into spans and
+ * re-split on every scroll, and it fights the per-entry transition. The nearest-row effect
+ * is therefore carried by scale, sharpness and colour, all of which are compositor-only.
+ */
+.lyric-line.is-active {
+  font-weight: 700;
+  /* The palette's darkest swatch, so the nearest row is also the most legible. */
+  color: var(--lyric-0, var(--text-strong));
+  opacity: 1;
+  filter: none;
+  transform: translateZ(0) scale(1.08);
+}
+
+/* Outer entries take progressively lighter palette colours, lightening with depth. */
+.lyric-line {
+  color: var(--lyric-2, var(--text-strong));
+}
+
+.lyric-line[data-depth='1'] {
+  color: var(--lyric-1, var(--text-strong));
+}
+
+.lyric-line[data-depth='2'] {
+  color: var(--lyric-2, var(--text-strong));
+}
+
+.lyric-line[data-depth='3'] {
+  color: var(--lyric-3, var(--text-strong));
+}
+
+.lyric-line .text {
+  display: inline-block;
+  max-width: 100%;
+  /* The glyph box needs headroom or descenders are cut by the entry's overflow: hidden. */
+  padding-bottom: 0.14em;
+}
+
+/*
+ * Translation, shown only on the current entry. Keeping it out of the other entries is what
+ * makes every entry one line tall: with a translation on every lyric the current entry was
+ * taller than its neighbours and the centring drifted.
+ */
 .lyric-line .translation {
-  display: block;
-  margin-top: calc(var(--u) * 0.5);
+  display: none;
+  margin-top: calc(var(--u) * 0.4);
   font-size: var(--fs-lyric-sub);
   font-weight: 400;
   opacity: 0.7;
+  white-space: normal;
 }
 
-.lyric-line.is-active {
-  font-weight: 700;
+.lyric-line.is-active .translation {
+  display: block;
 }
 
-/* Beyond the visible window the lines are not drawn at all. */
+/* Translations can be switched off entirely via the root data attribute. */
+:root[data-lyric-translation='off'] .lyric-line .translation {
+  display: none !important;
+}
+
+/* Past the hard limit the entry is gone rather than a faint smudge. */
 .lyric-line.is-offscreen {
   visibility: hidden;
+}
+
+/* The leading title/artist entry is quieter than the lyrics. */
+.lyric-line--header {
+  font-weight: 500;
+  opacity: clamp(0, calc(1 - var(--d) * 0.5), 0.92);
 }
 
 .lyrics-empty {

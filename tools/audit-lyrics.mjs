@@ -42,15 +42,12 @@ check(
 );
 
 console.log('\n--- --d 的计算 ---');
-const setD = /setProperty\(\s*'--d',\s*([\s\S]{0,80}?)\);/.exec(lyrics);
-check('设置了 --d', !!setD, setD ? setD[1].replace(/\s+/g, ' ').trim() : 'not found');
-if (setD) {
-  // A unitless number is required: `calc(1 - 0.5px)` is invalid and would discard the
-  // whole declaration, leaving lines unstyled.
-  check('  --d 格式化为无单位数字', /toFixed\(2\)/.test(setD[1]), setD[1].trim());
-  check('  --d 不会为负', /Math\.max\(0/.test(setD[1]), setD[1].trim());
-}
-check('当前行深度为 0', /i === index\)\s*depth = 0/.test(lyrics.replace(/\s+/g, ' ')) || /depth = 0;/.test(lyrics));
+const setD = /setProperty\('--d',\s*Math\.min\(depth, DEPTH_LIMIT\)\.toFixed\(2\)\)/.exec(
+  lyrics.replace(/\s+/g, ' '),
+);
+check('--d 被格式化为无单位的两位小数', !!setD, setD ? setD[0] : 'not found');
+check('当前行深度为 0', /if \(i === index\) depth = 0;/.test(lyrics.replace(/\s+/g, ' ')));
+check('深度上限存在（渐变有界）', /DEPTH_LIMIT = [\d.]+/.test(lyrics), /DEPTH_LIMIT = ([\d.]+)/.exec(lyrics)?.[1]);
 
 // The CSS consumers of --d must be valid expressions.
 console.log('\n--- CSS 里 --d 的用法 ---');

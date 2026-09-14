@@ -16,9 +16,17 @@ const DEFAULT_HOST_PORT = 8787;
 /** If the client stops reporting for this long, stop extrapolating. */
 const STALE_FREEZE_MS = 2500;
 
-const view = new CardView();
-const clock = new PlayClock();
+/*
+ * Construction order matters: the lyrics view is referenced by the card view's palette
+ * callback, so it must exist before the callback can fire. The card is built after it, and
+ * declared first so the module-level bindings are initialised in the right order.
+ */
 const lyrics = new LyricsView(document.getElementById('lyrics'));
+const view = new CardView({
+  // Hand the extracted palette to the lyrics view, which builds its own colour ramp.
+  onPalette: (colors) => lyrics.setPalette(colors),
+});
+const clock = new PlayClock();
 
 // Size the composition to the stage before the first paint.
 applyLayoutUnit(document.getElementById('stage'));
@@ -120,6 +128,10 @@ function bindInput() {
       link.control({ type: 'previous' });
     } else if (event.key === 'f' || event.key === 'F') {
       view.flip();
+    } else if (event.key === 't' || event.key === 'T') {
+      // Toggle lyric translations. Off is often preferred: a translation on every entry
+      // makes them uneven heights and crowds the page.
+      lyrics.setTranslationVisible(document.documentElement.dataset.lyricTranslation === 'off');
     }
   });
 

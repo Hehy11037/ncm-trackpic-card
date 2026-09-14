@@ -62,12 +62,15 @@ function handleMessage(message) {
 
       if (trackChanged) {
         staleSince = 0;
-        // Drop the previous track's lyrics so we never show them against the new
-        // song while the new document is in flight.
-        if (lastLyricsDoc && lastLyricsDoc.songId !== songId) {
-          lastLyricsDoc = null;
-          lyrics.setDocument({ songId, lines: [], hasWordTiming: false, instrumental: false });
-        }
+        /*
+         * Clear immediately rather than leaving the previous document on screen: when a new
+         * track's lyrics have not arrived yet, the old ones would otherwise render, which is
+         * how a song appeared to show the previous song's lyrics.
+         */
+        lastLyricsDoc = null;
+        lyrics.clear('歌词加载中…');
+        // The host answers from its cache when it has them, so this is cheap.
+        link.send({ kind: 'requestLyrics', songId: songId ?? undefined });
       }
       break;
     }
@@ -77,10 +80,22 @@ function handleMessage(message) {
       staleSince = 0;
       break;
 
-    case 'lyrics':
+    case 'lyrics': {
+      /*
+       * Discard a document that does not belong to the current track.
+       *
+       * The host can have a request in flight for the previous song when a track change
+       * happens; without this check that stale document renders for the new song.
+       */
+      const currentSongId = lastSnapshot?.song?.id ?? null;
+      if (currentSongId != null && message.doc?.songId != null && message.doc.songId !== currentSongId) {
+        console.debug('[overlay] 忽略过期歌词', message.doc.songId, '当前', currentSongId);
+        break;
+      }
       lastLyricsDoc = message.doc;
       lyrics.setDocument(message.doc);
       break;
+    }
 
     case 'connection':
       view.setConnection(message.connection);

@@ -5,23 +5,31 @@
  *  - The current line sits in the *middle* of the card, not at the bottom.
  *  - Seven lines per page. The document is never stacked into one masked strip, because
  *    that made the text too small to read.
- *  - The current line is the largest, darkest and sharpest; lines above and below
- *    recede (smaller, lighter, blurred) for a near-large/far-small effect.
- *  - Type is at least as large as the front face's song title.
+ *  - The current line is the largest, darkest and sharpest; lines above and below recede
+ *    steeply (much smaller, lighter, blurred) for a strong near-large/far-small effect.
+ *  - Type is larger than the front face's song title.
  *
- * Implementation: all lines are built once per document, and `#setActive` gives each one
- * a `--d` value for its distance from the active line. CSS turns `--d` into opacity,
- * blur, scale and a Z translation inside a perspective. Lines beyond the visible window
- * are hidden, so a 1000-line document costs nothing per frame.
+ * Two details that caused visible bugs before:
  *
- * No karaoke sweep: the client only provides line-level timings (its yrcInfo is empty
- * on every track measured), so a per-word fill would be invented rather than measured.
+ *  1. Lines are **not** uniform height: a line with a translation is taller, and long
+ *     lines wrap to two rows. Centring by `index * lineHeight` therefore drifted and
+ *     overlapped, so each line's measured offset is used instead.
+ *  2. Before the first lyric starts there is no current line. Treating that as "distance
+ *     0 for every line" made the whole page uniform (the reported "all lines the same
+ *     colour" at the beginning of a track). The document now also gets a leading
+ *     "曲名 / 艺术家" entry so there is always a current line to centre on.
+ *
+ * No karaoke sweep: the client only provides line-level timings (its yrcInfo is empty on
+ * every track measured), so a per-word fill would be invented rather than measured.
  */
 
 /** Lines per page, including the current one. Odd, so the current line can centre. */
 const VISIBLE_LINES = 7;
 /** Lines farther than this are hidden rather than blurred into mush. */
 const MAX_DISTANCE = Math.floor(VISIBLE_LINES / 2);
+/** How much further each step away recedes. Larger = stronger depth. */
+const RECEDE_ABOVE = 0.55;
+const RECEDE_BELOW = 0.15;
 
 export class LyricsView {
   /** @param {HTMLElement} container */
@@ -39,8 +47,30 @@ export class LyricsView {
     this.activeIndex = -1;
     this.scrollCurrent = 0;
     this.scrollTarget = 0;
-    this.lineHeight = 0;
     this.songId = null;
+    /** Used for the leading header line, so the start of a track is never uniform. */
+    this.songTitle = '';
+    this.songArtist = '';
+  }
+
+  /**
+   * Record the current track's title and artist.
+   *
+   * The header line is rebuilt in place rather than by reloading the document, so a
+   * metadata update never interrupts the lyric scroll. Returns true when the caller should
+   * reload the document (the song changed while a document was already loaded).
+   */
+  setSongInfo(title, artist) {
+    if (title === this.songTitle && artist === this.songArtist) return false;
+    this.songTitle = title ?? '';
+    this.songArtist = artist ?? '';
+    // The header node exists only when a document has been rendered.
+    const header = this.nodes[0];
+    if (header?.classList.contains('lyric-line--header')) {
+      const label = header.querySelector('.text');
+      if (label) label.textContent = [this.songTitle, this.songArtist].filter(Boolean).join('\n');
+    }
+    return false;
   }
 
   /** Replace the document. Cheap when the same song is re-sent unchanged. */
@@ -53,6 +83,8 @@ export class LyricsView {
     this.lines = doc.lines;
     this.activeIndex = -1;
     this.nodes = [];
+    /** Number of leading nodes that are not lyric lines (the title/artist header). */
+    this.headerCount = 0;
     this.stack.replaceChildren();
 
     if (this.empty) {
@@ -61,33 +93,52 @@ export class LyricsView {
       if (isEmpty) this.empty.textContent = doc.instrumental ? '纯音乐，请欣赏' : '暂无歌词';
     }
 
+    /*
+     * A leading "title / artist" line.
+     *
+     * Before the first lyric starts there is no current line, and treating every line as
+     * distance 0 made the whole page uniform (the reported "all lyrics the same colour at
+     * the beginning"). Giving the document a first entry means there is always a current
+     * line to centre on: the header sits in the middle, the first lyrics recede below it,
+     * and when the singing starts it scrolls away naturally.
+     */
+    const headerItems = [];
+    if (doc.songTitle) {
+      headerItems.push(doc.songTitle);
+      if (doc.songArtist) headerItems.push(doc.songArtist);
+    }
+
     const fragment = document.createDocumentFragment();
-    doc.lines.forEach((line) => {
+    const build = (text, translation, className) => {
       const node = document.createElement('div');
-      node.className = 'lyric-line is-offscreen';
+      node.className = `lyric-line is-offscreen${className ? ` ${className}` : ''}`;
 
-      const text = document.createElement('span');
-      text.className = 'text';
-      text.textContent = line.text;
-      node.append(text);
+      const label = document.createElement('span');
+      label.className = 'text';
+      label.textContent = text;
+      node.append(label);
 
-      if (line.translation) {
-        const translation = document.createElement('span');
-        translation.className = 'translation';
-        translation.textContent = line.translation;
-        node.append(translation);
+      if (translation) {
+        const sub = document.createElement('span');
+        sub.className = 'translation';
+        sub.textContent = translation;
+        node.append(sub);
       }
 
       fragment.append(node);
       this.nodes.push(node);
-    });
+    };
+
+    if (headerItems.length) {
+      build(headerItems.join('\n'), null, 'lyric-line--header');
+      this.headerCount = 1;
+    }
+    for (const line of doc.lines) build(line.text, line.translation, null);
 
     this.stack.replaceChildren(fragment);
 
-    // Measure after layout so the centring maths is exact.
+    // Re-apply the depth classes once layout is measurable.
     requestAnimationFrame(() => {
-      this.lineHeight = this.nodes[0]?.offsetHeight ?? 0;
-      // Force a re-application of the depth classes for the measured layout.
       const current = this.activeIndex;
       this.activeIndex = -1;
       this.#setActive(current);
@@ -128,9 +179,12 @@ export class LyricsView {
    * @param {boolean} animate whether to ease the scroll (false while hidden)
    */
   tick(positionMs, dtMs, animate = true) {
-    const index = this.indexAt(positionMs);
-    if (index !== this.activeIndex) this.#setActive(index);
-    this.#centreOn(index, dtMs, animate);
+    const lyricIndex = this.indexAt(positionMs);
+    // Node index = header offset + lyric index; -1 (before the first line) means the
+    // header is current, which is what keeps the page from looking uniform at the start.
+    const nodeIndex = lyricIndex < 0 ? 0 : lyricIndex + this.headerCount;
+    if (nodeIndex !== this.activeIndex) this.#setActive(nodeIndex);
+    this.#centreOn(nodeIndex, dtMs, animate);
   }
 
   #setActive(index) {
@@ -139,27 +193,40 @@ export class LyricsView {
     for (let i = 0; i < this.nodes.length; i++) {
       const node = this.nodes[i];
       if (!node) continue;
-      const distance = index < 0 ? 0 : i - index;
-      const magnitude = Math.abs(distance);
+      const distance = index < 0 ? i + 1 : i - index;
 
-      /*
-       * Lines after the current one are closer together than lines before it, so the
-       * upward direction recedes faster - that is what sells the depth.
-       */
-      const depth = distance < 0 ? magnitude + 0.4 : magnitude;
-      node.style.setProperty('--d', depth.toFixed(2));
+      // Lines above the current one recede faster than lines below it; that asymmetry is
+      // what makes the stack read as receding into the distance rather than as a list.
+      const depth = distance < 0 ? Math.abs(distance) + RECEDE_ABOVE : distance + RECEDE_BELOW;
+      node.style.setProperty('--d', Math.max(0, depth).toFixed(2));
       node.classList.toggle('is-active', i === index);
-      node.classList.toggle('is-offscreen', magnitude > MAX_DISTANCE);
+      node.classList.toggle('is-offscreen', Math.abs(distance) > MAX_DISTANCE);
     }
   }
 
-  /** Keep the active line vertically centred by translating the whole stack. */
+  /**
+   * Centre the current line by translating the stack.
+   *
+   * Uses each line's measured offset rather than `index * lineHeight`, because a line with
+   * a translation is taller and a long line may wrap - uniform arithmetic drifted and made
+   * adjacent lines overlap.
+   */
   #centreOn(index, dtMs, animate) {
-    const lineHeight = this.lineHeight || this.nodes[0]?.offsetHeight || 0;
+    let target = 0;
 
-    // The stack's origin is the container's vertical centre, so shifting by the active
-    // line's own offset puts that line in the middle.
-    const target = index < 0 || !lineHeight ? 0 : -(index * lineHeight) - lineHeight / 2;
+    const active = index >= 0 ? this.nodes[index] : null;
+    if (active) {
+      const containerHeight = this.container.clientHeight || 0;
+      const activeTop = active.offsetTop;
+      const activeHeight = active.offsetHeight;
+      if (containerHeight && activeHeight) {
+        // Stack centre is already at the container's middle, so shift by the active
+        // line's own centre relative to the stack's midpoint.
+        const stackCentre = this.stack.offsetHeight / 2;
+        target = -(activeTop + activeHeight / 2 - stackCentre);
+      }
+    }
+
     this.scrollTarget = target;
 
     if (!animate) {
@@ -173,3 +240,4 @@ export class LyricsView {
     this.stack.style.transform = `translate3d(0, ${this.scrollCurrent.toFixed(2)}px, 0)`;
   }
 }
+

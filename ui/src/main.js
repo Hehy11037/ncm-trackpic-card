@@ -45,6 +45,12 @@ function handleMessage(message) {
       const trackChanged = view.setSnapshot(message.snapshot);
       clock.onPlayback(message.snapshot.playback ?? {}, message.snapshot.song?.durationMs ?? 0);
 
+      // Keep the lyrics header (title/artist) in step with the current track.
+      lyrics.setSongInfo(
+        message.snapshot.song?.name ?? '',
+        (message.snapshot.song?.artists ?? []).map((a) => a.name).join(' / '),
+      );
+
       if (trackChanged) {
         staleSince = 0;
         // Drop the previous track's lyrics so we never show them against the new

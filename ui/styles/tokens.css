@@ -29,25 +29,32 @@
   --radius-card: calc(var(--u) * 2.6);
   --radius-cover: calc(var(--u) * 0.6);
 
-  /* Font sizes: measured from the reference, with a legibility floor. */
-  --fs-title: max(calc(var(--u) * 4.63), 15px);
-  --fs-artist: max(calc(var(--u) * 2.31), 10px);
-  --fs-time: max(calc(var(--u) * 1.57), 9px);
-  --fs-credit: max(calc(var(--u) * 1.3), 8px);
-  --fs-hex: max(calc(var(--u) * 1.3), 8px);
-  --fs-lyric: max(calc(var(--u) * 4.9), 15px);
-  --fs-lyric-sub: max(calc(var(--u) * 1.65), 9px);
-  --fs-status: max(calc(var(--u) * 1.65), 10px);
+  /* Font sizes are the reference's measurements, verbatim. No floors are needed because
+     the stage never goes below 380px wide, which keeps 1u >= 3.8px. */
+  --fs-title: calc(var(--u) * 4.63);
+  --fs-artist: calc(var(--u) * 2.31);
+  --fs-time: calc(var(--u) * 1.57);
+  --fs-credit: calc(var(--u) * 1.3);
+  --fs-hex: calc(var(--u) * 1.3);
+  --fs-lyric: calc(var(--u) * 5.2);
+  --fs-lyric-sub: calc(var(--u) * 1.8);
+  --fs-status: calc(var(--u) * 1.65);
 
   --tracking-title: 0.01em;
   --tracking-artist: 0.02em;
   --tracking-credit: 0.22em;
   --tracking-time: 0.02em;
 
-  /* Font stack from the reference. Its webfont is licensed, so we fall back to the
-     rounded CJK families available locally. */
+  /*
+   * Rounded sans stack. The reference uses fot-tsukuardgothic-std (a licensed rounded
+   * gothic) with Zen Maru Gothic as its fallback; neither ships with Windows, so the
+   * locally available rounded families come next: MiSans is a humanist sans with soft
+   * terminals, then Noto Sans SC and 微软雅黑. 'ui-rounded' is last for platforms that
+   * have a true rounded system face (macOS).
+   */
   --font-ui: 'fot-tsukuardgothic-std', 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN',
-    'MiSans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    'MiSans', 'ui-rounded', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei',
+    system-ui, sans-serif;
 
   /* Cover-derived accents, overwritten per track. Defaults are the reference palette. */
   --accent-dominant: #98b6be;
@@ -95,10 +102,19 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* The stage carries the 9:16 proportions; the card may be taller (see layout.js). */
+/* The stage carries the 9:16 proportions.
+ *
+ * It never shrinks below 380px wide. That matters more than it looks: at 380px the unit
+ * is 3.8px, which makes the reference's 4.63u title land at ~17.6px and every other size
+ * legible, so no font size needs a floor and the composition keeps the reference's exact
+ * proportions. Clamping the unit instead (an earlier attempt) made the content taller
+ * than the card and clipped the title and artist.
+ *
+ * If the window is too small the card simply overflows and scrolls, which is preferable
+ * to rendering unreadable text. */
 .stage {
-  width: min(94vw, calc(94vh * 9 / 16));
-  height: min(calc(94vw * 16 / 9), 94vh);
+  width: max(380px, min(94vw, calc(94vh * 9 / 16)));
+  height: max(675.6px, min(calc(94vw * 16 / 9), 94vh));
   position: absolute;
   top: 50%;
   left: 50%;

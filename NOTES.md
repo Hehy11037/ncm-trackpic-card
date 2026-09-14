@@ -437,6 +437,39 @@ lessons, both now enforced:
   CRC passed on a file whose pixels could still have been unusable. `check-shell.mjs` now
   inflates the IDAT, asserts the scanline length, and probes two pixels.
 
+## 2026-09-15 (5) — "no lyrics" and "the request failed" were the same thing
+
+Read from a leftover host's log rather than from a report:
+
+```
+[00:00:15] info  歌词来自客户端（仅制作人员信息）: 561981284（2 行，逐字=false）
+[00:00:15] debug 公开接口无可显示歌词: 561981284（等待客户端）
+[00:01:12] info  歌词来自客户端（仅制作人员信息）: 29185029（2 行，逐字=false）
+[00:01:13] debug 公开接口无可显示歌词: 29185029（等待客户端）
+[00:01:20] info  歌词来自客户端（仅制作人员信息）: 2013145999（2 行，逐字=false）
+[00:01:21] debug 公开接口无可显示歌词: 2013145999（等待客户端）
+```
+
+Four tracks in a row where the only lyrics on screen were the composer credits. That is a
+legitimate outcome for a track nobody uploaded lyrics for - but it was also what a **failed
+request** produced, because of two things in `lyrics.ts`:
+
+* `fetchFromApi` returned `null` both for "the request failed" and for "the response had
+  nothing in it", and the caller logged the same line for both.
+* Nothing retried. A single timeout, one HTTP 500, or one transient rate limit therefore left
+  that track showing credits only for the rest of the session.
+
+A failed fetch is now distinguished from an empty result, retried once after 1.5s (abandoned
+if the track changes first, including mid-pause), and never written to the cache - a network
+error says nothing about whether a track has lyrics. Retrying is what the 60-second no-lyric
+TTL was already trying to work around, from the wrong end.
+
+`packages/host/src/lyrics.test.ts` is new and covers all of it: retry on a thrown error and on
+an HTTP 500, give up after the second failure, do **not** retry an empty result, discard a
+result that arrives after a track change, abandon the retry pause when the track changes during
+it, and serve a repeat visit from memory. The retry delay is injectable so the suite stays fast.
+
+
 
 
 

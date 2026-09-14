@@ -42,6 +42,24 @@ export interface LyricsServiceOptions {
   fetchOptions?: FetchOptions;
   log?: (level: 'debug' | 'info' | 'warn', message: string) => void;
   onDoc: (doc: LyricDoc) => void;
+  /** Pause before retrying a failed public-endpoint fetch. Injectable so tests stay fast. */
+  retryDelayMs?: number;
+}
+
+/**
+ * How long to wait before retrying a failed public-endpoint fetch.
+ *
+ * Long enough not to hammer an endpoint that just rate-limited us, short enough that the lyrics
+ * still arrive while the track is playing.
+ */
+const FETCH_RETRY_DELAY_MS = 1500;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A public-endpoint attempt: the document, and whether the request itself failed. */
+interface FetchOutcome {
+  doc: LyricDoc | null;
+  failed: boolean;
 }
 
 export class LyricsService {
@@ -49,11 +67,12 @@ export class LyricsService {
   private readonly fetchOptions: FetchOptions;
   private readonly log: (level: 'debug' | 'info' | 'warn', message: string) => void;
   private readonly onDoc: (doc: LyricDoc) => void;
+  private readonly retryDelayMs: number;
 
   /** Documents by song id, so a repeat visit needs no work. */
   private readonly docs = new Map<number, LyricDoc>();
   /** In-flight fetches, to coalesce duplicate requests. */
-  private readonly inFlight = new Map<number, Promise<LyricDoc | null>>();
+  private readonly inFlight = new Map<number, Promise<FetchOutcome>>();
   /** The track the service is currently answering for. */
   private currentSongId: number | null = null;
   /** The latest client slice for the current track, tried again on each update. */
@@ -64,6 +83,7 @@ export class LyricsService {
     this.fetchOptions = options.fetchOptions ?? {};
     this.log = options.log ?? (() => {});
     this.onDoc = options.onDoc;
+    this.retryDelayMs = options.retryDelayMs ?? FETCH_RETRY_DELAY_MS;
   }
 
   start(): void {
@@ -77,7 +97,12 @@ export class LyricsService {
 
   /** Release timers. Called on host shutdown so the process can exit. */
   stop(): void {
-    /* no timers are held any more; kept for a stable interface */
+    /*
+     * The only timer this service can hold is the pause before retrying a failed fetch, which is
+     * at most `retryDelayMs` long. Interrupting it would need an abort signal threaded through
+     * the sleep, which is not worth the machinery: a shutdown waits at most 1.5 seconds, and the
+     * shell kills the host anyway.
+     */
   }
 
   /** Latest known document for a song, from memory or the disk cache. */
@@ -125,11 +150,35 @@ export class LyricsService {
      * handled by onClientLyrics, which can verify it; asking for it at this instant would very
      * likely return the previous track's lines.
      */
-    const doc = await this.fetchFromApi(songId);
+    let outcome = await this.fetchFromApi(songId);
     if (this.currentSongId !== songId) {
       this.log('debug', `丢弃过期歌词结果: ${songId}`);
       return;
     }
+
+    if (outcome.failed) {
+      /*
+       * Retry a failed request once.
+       *
+       * "The request failed" and "this track has no lyrics" used to be indistinguishable here:
+       * both fell through to the same log line, and nothing ever tried again. One timeout or one
+       * transient rate limit therefore left the track showing only its credits for the rest of
+       * the session - which reads exactly like a song that has no lyrics.
+       */
+      this.log('warn', `公开接口请求失败: ${songId}，${this.retryDelayMs}ms 后重试一次`);
+      await sleep(this.retryDelayMs);
+      if (this.currentSongId !== songId) {
+        this.log('debug', `放弃重试（已切歌）: ${songId}`);
+        return;
+      }
+      outcome = await this.fetchFromApi(songId);
+      if (this.currentSongId !== songId) {
+        this.log('debug', `丢弃过期歌词结果: ${songId}`);
+        return;
+      }
+    }
+
+    const { doc, failed } = outcome;
     if (doc && doc.lines.length > 0 && !this.docs.get(songId)?.lines.length) {
       this.remember(doc);
       this.log(
@@ -138,16 +187,21 @@ export class LyricsService {
       );
       return;
     }
+    if (failed) {
+      // Not cached: a network failure says nothing about whether the track has lyrics.
+      this.log('warn', `公开接口两次请求都失败: ${songId}（仅等待客户端，不写入缓存）`);
+      return;
+    }
     this.log('debug', `公开接口无可显示歌词: ${songId}（等待客户端）`);
   }
 
-  private fetchFromApi(songId: number): Promise<LyricDoc | null> {
+  private fetchFromApi(songId: number): Promise<FetchOutcome> {
     const existing = this.inFlight.get(songId);
     if (existing) return existing;
-    const task = (async () => {
+    const task = (async (): Promise<FetchOutcome> => {
       const payload = await fetchPublicLyrics(songId, this.fetchOptions);
-      if (payload.fetchFailed) return null;
-      return docFromRawPayload(songId, payload);
+      if (payload.fetchFailed) return { doc: null, failed: true };
+      return { doc: docFromRawPayload(songId, payload), failed: false };
     })();
     this.inFlight.set(songId, task);
     void task.finally(() => this.inFlight.delete(songId));
@@ -232,7 +286,7 @@ export class LyricsService {
    * Public endpoint first: it is keyed by song id, so it cannot answer for a different track.
    */
   async refresh(songId: number): Promise<LyricDoc | null> {
-    const doc = await this.fetchFromApi(songId);
+    const { doc } = await this.fetchFromApi(songId);
     if (doc && doc.lines.length > 0) {
       this.remember(doc);
       return doc;

@@ -8,6 +8,8 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   LoopbackWebSocketServer,
@@ -22,14 +24,27 @@ import {
 import { DEFAULT_CDP_PORT } from './cdp.ts';
 import { LyricsService, type LyricsServiceOptions } from './lyrics.ts';
 import { ClientSession } from './session.ts';
+import { UiServer } from './ui-server.ts';
 
 export const HOST_VERSION = '0.1.0';
 export const DEFAULT_HOST_PORT = 8787;
+export const DEFAULT_UI_PORT = 8788;
 export const PROTOCOL_VERSION = 1;
+
+/** Works from source (packages/host/src) and from a built/asar bundle alike. */
+function defaultUiRoot(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  // packages/host/src -> repository root
+  return resolve(here, '..', '..', '..', 'ui');
+}
 
 export interface HostOptions {
   cdpPort?: number;
   hostPort?: number;
+  /** Port for the static overlay UI. Pass 0 to disable serving the UI. */
+  uiPort?: number;
+  /** Where the UI lives. Defaults to <repo>/ui. */
+  uiRoot?: string;
   /**
    * Override the lyrics source. Defaults to the built-in LyricsService, which
    * prefers the client's own lyric document and falls back to the public API.
@@ -44,17 +59,29 @@ export interface Host {
   control(command: ControlCommand): Promise<ControlResult>;
   currentSnapshot(): PlaybackSnapshot | null;
   clientCount(): number;
+  /** URL of the static overlay UI, or null when UI serving is disabled. */
+  uiUrl(): string | null;
   on(event: 'log', listener: (level: string, message: string) => void): void;
 }
 
 export function createHost(options: HostOptions = {}): Host {
   const cdpPort = options.cdpPort ?? DEFAULT_CDP_PORT;
   const hostPort = options.hostPort ?? DEFAULT_HOST_PORT;
+  const uiPort = options.uiPort ?? DEFAULT_UI_PORT;
   const log = options.log ?? (() => {});
 
   const emitter = new EventEmitter();
   const session = new ClientSession(cdpPort);
   const server = new LoopbackWebSocketServer({ port: hostPort });
+  const ui =
+    uiPort > 0
+      ? new UiServer({
+          port: uiPort,
+          root: options.uiRoot ?? defaultUiRoot(),
+          config: { hostPort, hostVersion: HOST_VERSION, protocol: PROTOCOL_VERSION },
+          log: (level, message) => log(level, message),
+        })
+      : null;
 
   const broadcast = (message: HostMessage): void => {
     if (server.clientCount === 0) return;
@@ -155,6 +182,10 @@ export function createHost(options: HostOptions = {}): Host {
     async start() {
       await server.listen();
       log('info', `宿主已监听 ws://127.0.0.1:${hostPort}`);
+      if (ui) {
+        await ui.listen();
+        log('info', `界面地址 ${ui.url}`);
+      }
       lyrics.start();
       const pruned = lyrics.prune();
       if (pruned.removed) {
@@ -165,10 +196,12 @@ export function createHost(options: HostOptions = {}): Host {
     async stop() {
       await session.stop();
       await server.close();
+      await ui?.close();
     },
     control: (command) => session.control(command),
     currentSnapshot: () => session.currentSnapshot,
     clientCount: () => server.clientCount,
+    uiUrl: () => ui?.url ?? null,
     on(event, listener) {
       emitter.on(event, listener as (...args: any[]) => void);
     },

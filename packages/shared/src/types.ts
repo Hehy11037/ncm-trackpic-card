@@ -89,6 +89,28 @@ export interface ChorusRange {
   endMs: number;
 }
 
+/** An sRGB colour with 0-255 channels. */
+export interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/**
+ * Colour palette for the current track.
+ *
+ * The client already extracts this from the cover art
+ * (`page:vinylPage/setColor`), so the overlay can usually skip decoding the image
+ * entirely. `source` says where it came from, so the UI can decide whether to
+ * compute its own palette instead.
+ */
+export interface CoverPalette {
+  dominant: Rgb | null;
+  top: Rgb | null;
+  bottom: Rgb | null;
+  source: 'client' | 'computed';
+}
+
 export interface QueueInfo {
   length: number;
   /** Ids of the upcoming/known entries, in client order (capped). */
@@ -109,6 +131,8 @@ export interface PlaybackSnapshot {
   queue: QueueInfo;
   /** Chorus range for the current track, when the client knows it. */
   chorus: ChorusRange | null;
+  /** Cover-derived colours, when known. */
+  palette: CoverPalette | null;
   lyricLine: number | null;
 }
 

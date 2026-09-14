@@ -20,13 +20,16 @@
     "debug-launch": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/debug-launch.ps1",
     "host": "node tools/host-run.mjs",
     "smoke": "node tools/host-smoke.mjs",
-    "test": "node packages/host/src/lyric/parse.test.ts",
+    "test": "node packages/host/src/lyric/parse.test.ts && node ui/test/clock.test.mjs",
     "check:bridge": "node tools/check-bridge-script.mjs",
+    "check:ui": "node tools/check-ui.mjs && node tools/check-ui-dom.mjs",
+    "shot": "electron tools/shot.mjs",
     "typecheck": "tsc --noEmit --pretty"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
+    "electron": "^44.3.0",
     "typescript": "^5.7.2"
   }
 }

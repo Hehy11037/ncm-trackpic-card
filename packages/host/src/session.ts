@@ -449,6 +449,10 @@ export class ClientSession extends EventEmitter {
       playhead: this.lastSnapshot?.playhead ?? null,
       queue,
       chorus: payload.chorus ?? null,
+      // The UI extracts its palette from the cover image it already loads (the
+      // image CDN allows cross-origin reads), so the host does not compute one.
+      // The field stays in the contract for a future client-side palette source.
+      palette: null,
       lyricLine: (raw.lyricLineNumber as number | null) ?? null,
     };
 

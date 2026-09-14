@@ -24,28 +24,27 @@ const LIGHT_TEXT = { r: 0xed, g: 0xf1, b: 0xf3 };
 const DARK_TEXT = { r: 0x2c, g: 0x32, b: 0x36 };
 
 /**
- * Design size of the stage, in layout units. The stage is 100 units wide and 9:16
- * tall, and `--u` is **1% of the stage's rendered width**, so every measurement
- * scales with the card and the proportions never change.
- */
-/**
  * Smallest stage width in CSS pixels.
  *
  * The reference's proportions assume a phone-sized canvas where 1u = 10.8px. Below a
  * certain width its literal sizes stop being legible, and clamping the *unit* to fix that
  * makes the content taller than the card (which clipped the title and artist). So the
  * stage itself is held at this minimum instead: 380px gives 1u = 3.8px, at which the
- * 4.63u title renders at ~17.6px. Keep in sync with the `.stage` rule in tokens.css.
+ * 4.63u title renders at ~17.6px. Keep in sync with `.stage` in tokens.css.
  */
 const MIN_STAGE_WIDTH = 380;
 
-/** Stage aspect: 100u wide and 9:16 tall. */
-export const STAGE_HEIGHT_UNITS = (100 * 16) / 9;
+/**
+ * Stage aspect, measured from the reference's own pixels: its content area is
+ * 1080 x 1958, so the ratio is 1 : 1.8136. This is *not* 9:16 (1 : 1.778); using 9:16
+ * made the reference's literal type proportionally too tall and clipped the front face.
+ */
+export const STAGE_ASPECT = 181.36 / 100;
 
 /**
  * Set `--u` from the stage's actual rendered size.
  *
- * The stage size is CSS (`max(380px, min(94vw, 94vh * 9/16))`), so this converts
+ * The stage size is CSS (`max(380px, min(94vw, 94vh * 100/181.36))`), so this converts
  * "current width in px" into the unit the stylesheet is written in. Measured from the
  * element rather than the viewport so the two cannot disagree.
  *
@@ -56,7 +55,7 @@ export function applyLayoutUnit(stage = document.getElementById('stage')) {
   const root = document.documentElement;
 
   const width = stage?.clientWidth || MIN_STAGE_WIDTH;
-  const height = stage?.clientHeight || width * (16 / 9);
+  const height = stage?.clientHeight || width * STAGE_ASPECT;
   const unit = width / 100;
 
   root.style.setProperty('--u', `${unit.toFixed(5)}px`);

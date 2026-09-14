@@ -15,11 +15,15 @@
  */
 
 :root {
-  /* Layout unit; set at runtime. Fallback suits a 360px-wide stage. */
-  --u: 2.4px;
-  --stage-width: 240px;
-  --stage-height: 427px;
-  --card-height: 427px;
+  /*
+   * Layout unit; set at runtime from the stage width. The fallback matches the stage's
+   * minimum (380px), so a first paint before JS runs is already the right scale. Keep in
+   * sync with `.stage` below and MIN_STAGE_WIDTH in layout.js.
+   */
+  --u: 3.8px;
+  --stage-width: 380px;
+  --stage-height: 688.9px;
+  --card-height: 688.9px;
 
   /*
    * Card rounding. The reference is a rectangle, but the brief is "a little rounded,
@@ -102,19 +106,18 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* The stage carries the 9:16 proportions.
+/* The stage carries the proportions. It is *not* 9:16 (1.778) but the reference's own
+ * content ratio, 1 : 1.8136 (1080 x 1958 measured from its pixels). That difference is
+ * why an earlier 9:16 card overflowed: at 9:16 the reference's literal type is
+ * proportionally too large for the height, and `overflow: hidden` clipped the title and
+ * artist. At 1.8136 every measured position fits.
  *
- * It never shrinks below 380px wide. That matters more than it looks: at 380px the unit
- * is 3.8px, which makes the reference's 4.63u title land at ~17.6px and every other size
- * legible, so no font size needs a floor and the composition keeps the reference's exact
- * proportions. Clamping the unit instead (an earlier attempt) made the content taller
- * than the card and clipped the title and artist.
- *
- * If the window is too small the card simply overflows and scrolls, which is preferable
- * to rendering unreadable text. */
+ * It never shrinks below 380px wide, which keeps 1u >= 3.8px so the reference's 4.63u
+ * title renders at ~17.6px with no font-size floors needed. If the window is smaller the
+ * card overflows and scrolls, which beats rendering unreadable text. */
 .stage {
-  width: max(380px, min(94vw, calc(94vh * 9 / 16)));
-  height: max(675.6px, min(calc(94vw * 16 / 9), 94vh));
+  width: max(380px, min(94vw, calc(94vh * 100 / 181.36)));
+  height: max(688.9px, min(calc(94vw * 181.36 / 100), 94vh));
   position: absolute;
   top: 50%;
   left: 50%;

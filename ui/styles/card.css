@@ -431,9 +431,10 @@
   position: absolute;
   left: 0;
   right: 0;
-  /* The stack's own centre is the origin, so centring a line is a plain translate. */
-  top: 50%;
-  transform: translateY(-50%);
+  /* Anchored to the container's top edge, not its middle: the centring transform is then
+     a plain "move the active line's centre to the container's centre", which is easy to
+     verify. */
+  top: 0;
   transform-style: preserve-3d;
   will-change: transform;
 }

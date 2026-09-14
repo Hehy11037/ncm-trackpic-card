@@ -13,8 +13,7 @@
 //   - the floating shadow fits inside the transparent margin the window leaves for it
 //   - the roll-up actually has two mutually exclusive states with the right contents
 
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { makeCssReader, readStyle, shorthandSides, splitCommas, splitWhitespace, stripComments } from './css-values.mjs';
 
@@ -128,24 +127,35 @@ console.log('\n--- 窗口拖动 ---');
   // Capture keeps a fast flick from releasing outside the window and leaving the drag running.
   check('使用指针捕获', /setPointerCapture/.test(dragJs));
   check('有兜底结束（取消 / 失焦）', /pointercancel/.test(dragJs) && /lostpointercapture/.test(dragJs));
+  /*
+   * A cancel or a lost capture used to strand the drag: the button was still held but the window
+   * had stopped following it. Re-arming on the next move while the button is down recovers from
+   * that, so a spurious cancel costs nothing.
+   */
+  check('取消后按住仍可续拖', /event\.buttons & 1/.test(dragJs));
   // A press sends `drag-start`, so the gesture must be closed even when nothing moved - otherwise
   // a drag stays open forever and the shell skips every auto-collapse tick while it is open.
   check(
     '未移动的按压也会结束手势',
     /bridge\(\)\?\.dragEnd\?\.\(\);/.test(dragJs) && !/if \(dragging\) bridge/.test(dragJs),
   );
-  check('壳端有放弃僵死拖动的兜底', /DRAG_STALE_MS/.test(shellJs) && /endDrag\(\)/.test(shellJs));
+  check('壳端有放弃僵死拖动的兜底', /DRAG_STALE_MS/.test(shellJs) && /endDrag\(/.test(shellJs));
 
-  const preload = preloadJs;
-  for (const verb of ['dragStart', 'dragMove', 'dragEnd']) {
-    check(`桥接暴露 ${verb}`, new RegExp(`${verb}:`).test(preload));
-  }  // The window position must be a pure function of the *total* delta, so a dropped event cannot
-  // make the window drift.
-  check('按总位移计算位置（不累加）', /dragTarget\(dragOrigin,/.test(shellJs) && /dragOrigin = mainWindow\.getBounds\(\)/.test(shellJs));
-  check('拖动期间不自动收起', /if \(dragOrigin\)/.test(shellJs));
-  // The shell imports the gesture's arithmetic from the renderer's module, so the relative path
-  // has to actually resolve.
-  check('壳能引到 drag.js', existsSync(resolve('apps/overlay', '../../ui/src/drag.js')));
+  /*
+   * The window follows the cursor in the shell, holding the pressed point at a fixed offset. That
+   * is what stops the cursor from outrunning the window: an escaped cursor meant no `pointerup`, a
+   * drag that never ended, and a card left somewhere unreachable.
+   */
+  check('壳自己跟随指针', /startDragFollow/.test(shellJs) && /screen\.getCursorScreenPoint\(\)/.test(shellJs));
+  check('不再由渲染层上报位移', !/dragMove/.test(preloadJs) && !/overlay:drag-move/.test(shellJs));
+  check('拖动期间不自动收起', /if \(dragGrab\)/.test(shellJs));
+
+  for (const verb of ['dragStart', 'dragEnd']) {
+    check(`桥接暴露 ${verb}`, new RegExp(`${verb}:`).test(preloadJs));
+  }
+  // The shell owns the arithmetic now, and it lives with the other window geometry.
+  check('拖动算法在壳里', /export function dragTarget/.test(shellUtils));
+  check('壳不再引用渲染层的 drag.js', !/ui\/src\/drag\.js/.test(shellJs));
 }
 
 /* ------------------------------------------------------------ stale assets */
@@ -293,18 +303,19 @@ console.log('\n--- 收起 / 展开 ---');
   check('三个按键在锁定时也照常隐藏', !/data-locked/.test(cardJs) && !/\[data-locked=/.test(css.rules));
 
   /*
-   * Dropping the 3D transform once a flip finishes: a face left at rotateY(0deg) keeps its own
-   * composited layer, which Chromium re-rasterises when the transition ends - the faint jitter
-   * on the last frame of a flip.
+   * The flip, and the faint shift of the cover reported after one.
+   *
+   * A flip promotes each face to a compositor layer and Chromium drops it again when the
+   * transition ends; a layer's raster can differ from the main frame's by a sub-pixel, which is
+   * exactly what a slight shift of detailed artwork looks like. `will-change` keeps both faces
+   * promoted for the card's whole life, so there is no promotion or demotion to notice.
+   *
+   * A previous attempt instead *removed* the transform after the flip finished. It did not help -
+   * and a style change 470ms after the animation is itself something to see - so it is gone.
    */
-  check('翻面结束后清除 3D 变换', /data-settled/.test(cardJs) && /\[data-settled='true'\]/.test(css.rules));
-  const flipDuration = /--flip-duration:\s*(\d+)ms/.exec(css.tokens)?.[1];
-  const settleMs = /FLIP_SETTLE_MS = (\d+)/.exec(cardJs)?.[1];
-  check(
-    '结算延迟晚于翻转时长',
-    Number(settleMs) > Number(flipDuration),
-    `${settleMs}ms > ${flipDuration}ms`,
-  );
+  // `declaration()` returns the value, not the whole declaration.
+  check('两面常驻独立合成层', /^transform,\s*opacity$/.test(css.declaration('.face', 'will-change') ?? ''));
+  check('不再延迟改动翻面样式', !/data-settled/.test(cardJs) && !/data-settled/.test(css.rules));
 
   // A stuck strip would be unrecoverable from the card itself, so there is a second way out.
   check('指针移到条上也能展开', /addEventListener\('mousemove'/.test(mainJs) && /view\.mode === 'mini'/.test(mainJs));

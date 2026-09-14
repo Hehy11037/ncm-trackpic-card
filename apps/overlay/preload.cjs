@@ -26,12 +26,12 @@ contextBridge.exposeInMainWorld('overlayShell', {
   close: () => ipcRenderer.send('overlay:close'),
 
   /*
-   * Moving the window, as a plain pointer gesture rather than a `-webkit-app-region` drag
-   * region. See ui/src/drag.js for why. The renderer reports the *total* delta since the press,
-   * so a dropped event cannot make the window drift.
+   * Moving the window, as a plain pointer gesture rather than a `-webkit-app-region` drag region.
+   * See ui/src/drag.js for why. Only the start and the end cross the bridge: the shell watches the
+   * OS cursor itself and keeps the pressed point at the same offset inside the window, so the
+   * cursor can never outrun the window and escape it.
    */
   dragStart: () => ipcRenderer.send('overlay:drag-start'),
-  dragMove: (dx, dy) => ipcRenderer.send('overlay:drag-move', { dx, dy }),
   dragEnd: () => ipcRenderer.send('overlay:drag-end'),
 
   /**

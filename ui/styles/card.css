@@ -60,6 +60,15 @@
   /* Measured: 17.69u above the cover, 7.04u at the sides. */
   padding: calc(var(--u) * 17.69) calc(var(--u) * 7.04) calc(var(--u) * 8);
   backface-visibility: hidden;
+  /*
+   * Keep both faces on their own compositor layers for the card's whole life.
+   *
+   * A flip promotes each face to a layer, and when the transition ends Chromium drops it again -
+   * and the layer's raster can differ from the main frame's by a sub-pixel, which shows up as a
+   * faint shift of the cover once a flip has happened. Promoting from the very first paint means
+   * the card is rasterised the same way before and after, so there is no transition to notice.
+   */
+  will-change: transform, opacity;
   transition: opacity var(--flip-duration) var(--ease), transform var(--flip-duration) var(--ease);
 }
 
@@ -85,20 +94,6 @@
   opacity: 1;
   transform: rotateY(0deg);
   pointer-events: auto;
-}
-
-/*
- * Once a flip has finished, drop the 3D transform entirely.
- *
- * A face left at `rotateY(0deg)` keeps its own composited layer, and Chromium re-rasterises it
- * when the transition ends - so the card that has just flipped can differ from a plain front
- * face by a sub-pixel shift, which reads as a faint jitter on the last frame. An untransformed
- * element rasterises exactly like the static one. `transform: none` still animates, because
- * the spec treats it as the identity matrix when interpolating.
- */
-.card[data-settled='true'][data-face='front'] .face--front,
-.card[data-settled='true'][data-face='back'] .face--back {
-  transform: none;
 }
 
 /* ------------------------------------------------------------------- cover */

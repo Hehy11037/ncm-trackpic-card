@@ -46,9 +46,14 @@ export class CardView {
     this.renderSwatches();
     this.applyBackground();
 
-    window.addEventListener('resize', () => {
-      applyLayoutUnit();
-    });
+    // Keep the layout unit in step with the stage's rendered size. A ResizeObserver
+    // catches cases a window resize event misses (e.g. the shell resizing us).
+    const stage = document.getElementById('stage');
+    const relayout = () => applyLayoutUnit(stage);
+    window.addEventListener('resize', relayout);
+    if (stage && typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(relayout).observe(stage);
+    }
   }
 
   get background() {

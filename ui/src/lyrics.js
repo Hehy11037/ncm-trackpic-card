@@ -29,8 +29,24 @@
 const ENTRIES_PER_PAGE = 7;
 /** Entries farther than this are hidden outright. */
 const MAX_DISTANCE = Math.floor(ENTRIES_PER_PAGE / 2);
-/** Depth at which an entry has faded out completely. */
-const DEPTH_LIMIT = 3.4;
+/** Depth at which an entry has faded out completely. Keep in sync with --d-max in CSS. */
+const DEPTH_LIMIT = 3.6;
+
+/** WCAG relative luminance, 0..1. */
+function relativeLuminance({ r, g, b }) {
+  const channel = (value) => {
+    const v = value / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+/** WCAG contrast ratio between two luminances, 1..21. */
+function contrastRatio(a, b) {
+  const high = Math.max(a, b);
+  const low = Math.min(a, b);
+  return (high + 0.05) / (low + 0.05);
+}
 
 export class LyricsView {
   /** @param {HTMLElement} container */
@@ -62,24 +78,42 @@ export class LyricsView {
   }
 
   /**
-   * Apply the track's palette.
+   * Apply the track's palette to the lyric text.
    *
-   * Each depth step gets its own colour from the ramp, ordered by luminance so the current
-   * entry takes the darkest (most legible) swatch and the rows around it lighten outward.
-   * That makes the depth read as a single colour family rather than uniform grey.
+   * Colours are chosen by **contrast against the current background**, not by luminance
+   * order. Ordering by luminance and using the darkest swatch made the text vanish whenever
+   * the chosen background was itself dark: the "most legible" swatch was the one closest to
+   * the background. So the palette is sorted by contrast ratio against the background, the
+   * highest-contrast colour is used for the current entry, and each subsequent depth step
+   * takes the next best contrast.
+   *
+   * @param {{r:number,g:number,b:number}[]} colors palette from the cover
+   * @param {{r:number,g:number,b:number}} [background] the colour currently painted behind
    */
-  setPalette(colors) {
+  setPalette(colors, background) {
     if (!Array.isArray(colors) || !colors.length) return;
-    const ramp = [...colors]
-      .map((c) => ({ c, luma: 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b }))
-      .sort((a, b) => a.luma - b.luma)
-      .map((entry) => entry.c);
+
+    const backgroundRgb = background ?? colors[0];
+    const bgLuma = relativeLuminance(backgroundRgb);
+
+    // Highest contrast first, so depth 0 gets the most readable colour.
+    const ranked = [...colors]
+      .map((color) => ({ color, ratio: contrastRatio(bgLuma, relativeLuminance(color)) }))
+      .sort((a, b) => b.ratio - a.ratio)
+      .map((entry) => entry.color);
 
     const root = document.documentElement;
-    root.style.setProperty('--lyric-0', `rgb(${ramp[0].r}, ${ramp[0].g}, ${ramp[0].b})`);
-    for (let i = 1; i < 4; i++) {
-      const swatch = ramp[Math.min(i, ramp.length - 1)];
-      root.style.setProperty(`--lyric-${i}`, `rgb(${swatch.r}, ${swatch.g}, ${swatch.b})`);
+    for (let i = 0; i < 4; i++) {
+      const swatch = ranked[Math.min(i, ranked.length - 1)];
+      const ratio = contrastRatio(bgLuma, relativeLuminance(swatch));
+      /*
+       * If even the best swatch is weak against this background (a mid-tone cover can
+       * produce no usable light or dark colour), fall back to plain white or near-black,
+       * which is what the text-scheme decision already uses elsewhere.
+       */
+      const usable = ratio >= 3;
+      const rgb = usable ? swatch : bgLuma < 0.42 ? { r: 237, g: 241, b: 243 } : { r: 28, g: 32, b: 36 };
+      root.style.setProperty(`--lyric-${i}`, `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`);
     }
   }
 

@@ -459,29 +459,40 @@
 
 .lyric-line {
   margin: 0;
-  /* Generous block padding is the inter-entry gap; the previous 1.1u was too tight. */
-  padding: calc(var(--u) * 2.4) calc(var(--u) * 4);
+  /* Block padding is the inter-entry gap. Verified to fit five entries at the stage's
+     minimum width (see tools/check-layout.mjs). */
+  padding: calc(var(--u) * 2.2) calc(var(--u) * 4);
   text-align: center;
   font-size: var(--fs-lyric);
   font-weight: 600;
-  /* 1.5 keeps descenders of y/p/g inside the box, so nothing is clipped. */
-  line-height: 1.5;
+  /* 1.34 is enough that ascenders and descenders of p/j/y/g sit inside the line box. With
+     a tighter value the glyphs were clipped by the entry's overflow. */
+  line-height: 1.34;
   color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 
   /*
-   * Depth: `--d` is this entry's distance from the current one. `--d-max` is where it
-   * fades out completely, so a long lyric several entries away stops contributing.
+   * Depth ramp. `--d` is this entry's distance from the current one (0 at the centre).
+   *
+   * Opacity uses the reciprocal curve `1 / (1 + 0.45d)`, which falls gently at first and
+   * steeply later: 1.0, 0.69, 0.53, 0.43, 0.36 ... Enough that the first neighbours stay
+   * clearly readable. A linear ramp killed the second neighbour outright (0.08 opacity),
+   * which is why only about three entries were legible.
+   *
+   * Only basic calc() operations are used on purpose: a function this browser does not know
+   * would invalidate the whole declaration and make every entry fully opaque.
+   *
+   * Blur and scale use the full depth range, so the near-large/far-small read comes mostly
+   * from size and sharpness rather than from opacity alone.
    */
   --d: 0;
-  --d-max: 3.4;
-  --arc: 0;
-  opacity: clamp(0, calc(1 - var(--d) * 0.46), 1);
-  filter: blur(calc(min(var(--d), var(--d-max)) * 1.3px));
-  transform: translateZ(calc(min(var(--d), var(--d-max)) * -66px))
-    scale(calc(1 - min(var(--d), var(--d-max)) * 0.105));
+  --d-max: 3.6;
+  opacity: clamp(0, calc(1 / (1 + var(--d) * 0.45)), 1);
+  filter: blur(calc(min(var(--d), var(--d-max)) * 0.85px));
+  transform: translateZ(calc(min(var(--d), var(--d-max)) * -52px))
+    scale(calc(1 - min(var(--d), var(--d-max)) * 0.075));
   /*
    * Per-entry transition delay: the stack jumps to its new position and the entries settle
    * a few milliseconds apart, which is what gives the scroll its sense of motion instead
@@ -529,8 +540,12 @@
 .lyric-line .text {
   display: inline-block;
   max-width: 100%;
-  /* The glyph box needs headroom or descenders are cut by the entry's overflow: hidden. */
-  padding-bottom: 0.14em;
+  /*
+   * Headroom for descenders. With `line-height: 1.34` the glyph box of p/j/y/g sits close
+   * to the line box edge, and the padding here is what keeps the tails visible when the
+   * active entry is scaled up.
+   */
+  padding-bottom: 0.22em;
 }
 
 /*

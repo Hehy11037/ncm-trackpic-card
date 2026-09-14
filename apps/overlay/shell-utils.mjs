@@ -175,11 +175,20 @@ export function createHoverState(options = {}) {
 /* ---------------------------------------------------------------- window state */
 
 /**
- * Remember the card width and where the window was, so reopening it does not move it.
+ * Remember the card width, the lock state and where the window was, so reopening it does not
+ * move it.
  *
  * Stores the *card* width rather than the window width, because the window width carries the
  * shadow margin - which is a rendering detail that has already changed once, and a persisted
  * window width would have silently changed the card size with it.
+ *
+ * The lock state lives here rather than in the renderer's `localStorage` because it is the
+ * shell that has to act on it, and because the tray menu offers the same toggle: one owner,
+ * one file, and the tray keeps working even if the preload bridge does not load.
+ *
+ * `locked` defaults to **true**. An overlay that rolls itself up the first time the pointer
+ * wanders off is surprising on first run; not rolling up is merely inert, and the card's lock
+ * button (or the tray) turns it on.
  */
 export function loadWindowState(file, displayBounds) {
   try {
@@ -196,9 +205,14 @@ export function loadWindowState(file, displayBounds) {
       x !== undefined &&
       y !== undefined &&
       displayBounds.some((b) => x >= b.x - 20 && x < b.x + b.width && y >= b.y - 20 && y < b.y + b.height);
-    return { cardWidth, x: onScreen ? x : undefined, y: onScreen ? y : undefined };
+    return {
+      cardWidth,
+      x: onScreen ? x : undefined,
+      y: onScreen ? y : undefined,
+      locked: typeof raw.locked === 'boolean' ? raw.locked : true,
+    };
   } catch {
-    return { cardWidth: CARD_WIDTH_DEFAULT, x: undefined, y: undefined };
+    return { cardWidth: CARD_WIDTH_DEFAULT, x: undefined, y: undefined, locked: true };
   }
 }
 
@@ -206,11 +220,15 @@ export function saveWindowState(file, state) {
   try {
     writeFileSync(
       file,
-      JSON.stringify({ cardWidth: state.cardWidth, x: state.x, y: state.y }, null, 2),
+      JSON.stringify(
+        { cardWidth: state.cardWidth, x: state.x, y: state.y, locked: state.locked === true },
+        null,
+        2,
+      ),
       'utf8',
     );
   } catch {
-    // A failed write only costs the remembered position.
+    // A failed write only costs the remembered position and lock state.
   }
 }
 

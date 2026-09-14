@@ -148,16 +148,16 @@ body {
   color: var(--text-strong);
   overflow: hidden;
   /*
-   * The whole window is the drag handle, so the card can be moved by grabbing anywhere on
-   * it - including the transparent shadow margin.
+   * No drag region here on purpose.
    *
-   * `-webkit-app-region` is *not* inherited: this makes the body's whole box a drag region,
-   * and Chromium subtracts the boxes of elements that opt out with `no-drag`. Every
-   * interactive element must therefore opt out explicitly (see the rule in card.css), or
-   * its clicks are swallowed as window drags. That is what made the colour band
-   * unusable: the swatches were 4px tall and their `no-drag` box was barely larger.
+   * The first attempt made the whole window a title bar (`-webkit-app-region: drag` on body)
+   * and relied on `no-drag` carve-outs for the controls. That is the documented pattern, but
+   * on a *transparent* Windows window it did not hold: the colour band stayed unclickable even
+   * after its carve-out was padded out to 26px, while an identical `<button>` in the top bar
+   * worked. Rather than keep guessing at how the region is resolved, the scheme is inverted -
+   * nothing is draggable unless it says so, and the handles are listed in card.css. A control
+   * that is not inside a drag element cannot be swallowed by one.
    */
-  -webkit-app-region: drag;
   user-select: none;
   cursor: default;
   -webkit-font-smoothing: antialiased;

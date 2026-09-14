@@ -15,7 +15,7 @@
 
 import { readFileSync } from 'node:fs';
 
-import { makeCssReader, readStyle, shorthandSides, splitCommas, splitWhitespace } from './css-values.mjs';
+import { makeCssReader, readStyle, shorthandSides, splitCommas, splitWhitespace, stripComments } from './css-values.mjs';
 
 const tokensText = readStyle('ui/styles/tokens.css');
 const css = makeCssReader({ tokens: tokensText, rules: readStyle('ui/styles/card.css') });
@@ -71,9 +71,26 @@ console.log('--- 命中区域 ---');
 
 console.log('\n--- 窗口拖拽区域 ---');
 {
-  // `-webkit-app-region: drag` on the body is what makes the whole window a drag handle; the
-  // interactive elements must carve themselves out of it or their clicks become window drags.
-  check('body 声明了 drag（整个窗口可拖动）', /-webkit-app-region:\s*drag/.test(tokensText));
+  /*
+   * The scheme is deliberately inverted: nothing is draggable unless it opts in. Making the
+   * whole window a title bar and carving the controls out did not hold on a transparent
+   * Windows window - the colour band was swallowed even with a 26px carve-out, while an
+   * identical button in the top bar worked.
+   */
+  check('body 不再声明 drag', !/-webkit-app-region:\s*drag/.test(css.tokens.split('.stage')[0]));
+  check('拖拽手柄显式列出', /\.cover-wrap,[\s\S]{0,200}-webkit-app-region:\s*drag/.test(css.rules));
+
+  const dragSelectors = new Set();
+  for (const m of css.rules.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    if (!/-webkit-app-region:\s*drag/.test(m[2])) continue;
+    for (const selector of m[1].split(',')) dragSelectors.add(selector.trim());
+  }
+  // A control inside a drag handle would be swallowed again, so the two lists must not overlap.
+  const controls = ['.band', '.band-segment', '.ctrl', '.icon-btn', '.mini-action', '.foot'];
+  for (const selector of controls) {
+    check(`${selector} 不是拖拽手柄`, !dragSelectors.has(selector));
+  }
+  check('封面可用于拖动窗口', dragSelectors.has('.cover-wrap'));
 
   const noDragSelectors = new Set();
   for (const m of css.rules.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
@@ -81,10 +98,29 @@ console.log('\n--- 窗口拖拽区域 ---');
     for (const selector of m[1].split(',')) noDragSelectors.add(selector.trim());
   }
 
-  const required = ['button', '.band', '.band-segment', '.ctrl', '.icon-btn', '.mini-action'];
+  const required = ['button', '.band', '.band-segment', '.foot', '.ctrl', '.icon-btn', '.mini-action'];
   for (const selector of required) {
     check(`${selector} 声明 no-drag`, noDragSelectors.has(selector));
   }
+}
+
+/* ------------------------------------------------------------ stale assets */
+
+console.log('\n--- 静态资源不被缓存 ---');
+{
+  /*
+   * The UI server sent `{ cache: 'no-store' }`, which writes a header named `cache` - not a
+   * real HTTP header, so no cache directive went out at all. Chromium's HTTP cache lives in the
+   * Electron profile and survives restarts, so a fixed stylesheet could keep being served from
+   * cache and the fix would look like it had never been applied.
+   */
+  // Comments are stripped first: the fix is documented in prose right above it, and the prose
+  // quotes the broken header verbatim.
+  const server = stripComments(readStyle('packages/host/src/ui-server.ts'));
+  check('界面服务发送 cache-control', /'cache-control':\s*'no-store/.test(server));
+  // The lookahead matters: plain `cache:` also matches inside `cache-control:`.
+  check('没有拼错的 cache 头', !/\bcache(?!-)\s*:\s*'no-store'/.test(server));
+  check('index.html 与 config.json 都带该头', (server.match(/NO_CACHE/g) ?? []).length >= 3);
 }
 
 /* -------------------------------------------------------------- handlers */
@@ -92,11 +128,17 @@ console.log('\n--- 窗口拖拽区域 ---');
 console.log('\n--- 事件绑定 ---');
 {
   // The band is delegated on the container and falls back to the pointer's x position, so a
-  // click anywhere in the padded hit box selects a colour - including the padding, which is
-  // where a click that "does nothing" would otherwise land.
-  check('色带用容器事件委托', /bindBand\(\)/.test(cardJs) && /addEventListener\('click'/.test(cardJs));
+  // press anywhere in the padded hit box selects a colour - including the padding, which is
+  // where a press that "does nothing" would otherwise land.
+  //
+  // `pointerdown`, not `click`: a click needs press and release on the same element, and the
+  // band is rebuilt from inside this very handler.
+  check('色带用容器事件委托', /bindBand\(\)/.test(cardJs) && /addEventListener\('pointerdown'/.test(cardJs));
+  check('色带不再依赖 click', !/band\.addEventListener\('click'/.test(cardJs));
   check('色带按位置兜底取色', /closest\('\.band-segment'\)/.test(cardJs) && /getBoundingClientRect/.test(cardJs));
   check('色块带索引以便委托取值', /dataset\.index/.test(cardJs));
+  check('取色后打印结果到终端', /背景色 ->/.test(cardJs));
+  check('启动时做命中自检', /reportHitTargets/.test(cardJs) && /view\.reportHitTargets\(\)/.test(mainJs));
 
   for (const id of ['flip', 'close', 'lock', 'mini-expand']) {
     check(`#${id} 绑定了 click`, new RegExp(`on\\('${id}'`).test(mainJs));
@@ -105,7 +147,7 @@ console.log('\n--- 事件绑定 ---');
   check('播放控制绑定了 click', /\.ctrl\[data-action\]/.test(mainJs));
   check('键盘 L 切换锁定', /event\.key === 'l'/.test(mainJs));
 
-  // Clicking a swatch must actually repaint: setBackground has to be reachable from the click.
+  // Clicking a swatch must actually repaint: setBackground has to be reachable from the press.
   check('点击色块会换背景', /setBackground\(/.test(cardJs) && /--bg/.test(cardJs));
 }
 
@@ -182,11 +224,46 @@ console.log('\n--- 收起 / 展开 ---');
   // the window can disagree about which state is on screen.
   check('模式由窗口高度推导', /window\.innerHeight/.test(layoutJs) && /syncStageMode/.test(layoutJs));
   check('--mini-ratio 已定义', css.unit('--mini-ratio') > 0, String(css.unit('--mini-ratio')));
+  // Whole pixels, matching the shell's Math.round, so no face lands on a sub-pixel boundary.
+  check('舞台高度取整', /Math\.round\(width \* STAGE_ASPECT\)/.test(layoutJs) && /Math\.round\(width \* MINI_RATIO\)/.test(layoutJs));
 
-  // Lock is what stops the roll-up, so it has to be persisted and pushed to the shell.
-  check('锁定状态持久化', /LOCK_KEY/.test(mainJs) && /localStorage/.test(mainJs));
-  check('锁定状态推送给壳', /setLocked\?\.\(/.test(mainJs));
-  check('壳体提供桥接接口', readStyle('apps/overlay/preload.cjs').includes('overlayShell'));
+  /*
+   * The roll-up must not depend on the renderer at all: gating it on an IPC message made
+   * "the preload is broken" and "the card never rolls up" the same symptom, which is how this
+   * shipped broken. It is gated on the webContents lifecycle instead.
+   */
+  const shellJs = readStyle('apps/overlay/main.mjs');
+  const shellUtils = readStyle('apps/overlay/shell-utils.mjs');
+  check('收起不依赖渲染层握手', /webContents\.once\('dom-ready'/.test(shellJs));
+  check('渲染层不再发送 ready', !/overlay:ready/.test(shellJs) && !/ready: \(\)/.test(readStyle('apps/overlay/preload.cjs')));
+
+  // Lock: owned and persisted by the shell, offered both on the card and in the tray, and
+  // defaulting to ON so an overlay never rolls itself up by surprise on first run.
+  check('锁定状态由壳持有', /let locked = true/.test(shellJs) && /overlay:toggle-lock/.test(shellJs));
+  check('锁定状态写入存档', /locked,/.test(shellJs) && /locked: state\.locked === true/.test(shellUtils));
+  check('锁定默认开启', /typeof raw\.locked === 'boolean' \? raw\.locked : true/.test(shellUtils));
+  check('托盘也能锁定', /锁定（鼠标离开不收起）/.test(shellJs) && /type: 'checkbox'/.test(shellJs));
+  check('渲染层订阅壳的锁定状态', /watchState/.test(mainJs) && /watchState/.test(readStyle('apps/overlay/preload.cjs')));
+  check('渲染层不再自己存锁定', !/LOCK_KEY/.test(mainJs) && !/ncm-card:locked/.test(mainJs));
+  check('锁定状态推送给渲染层', /send\('overlay:state'/.test(shellJs));
+  // The three controls must hide together regardless of the lock, which is what the state
+  // attribute used to override.
+  check('三个按键在锁定时也照常隐藏', !/data-locked/.test(cardJs) && !/\[data-locked=/.test(css.rules));
+
+  /*
+   * Dropping the 3D transform once a flip finishes: a face left at rotateY(0deg) keeps its own
+   * composited layer, which Chromium re-rasterises when the transition ends - the faint jitter
+   * on the last frame of a flip.
+   */
+  check('翻面结束后清除 3D 变换', /data-settled/.test(cardJs) && /\[data-settled='true'\]/.test(css.rules));
+  const flipDuration = /--flip-duration:\s*(\d+)ms/.exec(css.tokens)?.[1];
+  const settleMs = /FLIP_SETTLE_MS = (\d+)/.exec(cardJs)?.[1];
+  check(
+    '结算延迟晚于翻转时长',
+    Number(settleMs) > Number(flipDuration),
+    `${settleMs}ms > ${flipDuration}ms`,
+  );
+
   // A stuck strip would be unrecoverable from the card itself, so there is a second way out.
   check('指针移到条上也能展开', /addEventListener\('mousemove'/.test(mainJs) && /view\.mode === 'mini'/.test(mainJs));
 }

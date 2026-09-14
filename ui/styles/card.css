@@ -11,16 +11,31 @@
  */
 
 /*
- * Every interactive element must opt out of the window's drag region.
+ * Window dragging.
  *
- * `html, body` declare `-webkit-app-region: drag` (tokens.css), which makes the whole window
- * a title bar. Chromium subtracts the boxes of `no-drag` elements from that region, so
- * anything clickable has to say so - otherwise its clicks start a window drag instead and
- * the control appears dead. The colour band was the visible symptom.
+ * Nothing is draggable by default (`html, body` declare no region at all - see tokens.css);
+ * these are the explicit grab handles, and everything clickable is deliberately not among
+ * them. Inverting the scheme like this is what finally made the colour band reliable: with the
+ * old "whole window is a title bar, controls carve themselves out" arrangement the band was
+ * swallowed on a transparent Windows window even after its hit box was enlarged, while an
+ * identical button in the top bar worked.
+ *
+ * `no-drag` is still declared for every control. It is redundant while nothing above them is
+ * draggable, but it keeps the intent explicit and means adding a drag handle in the wrong
+ * place cannot silently kill a control.
  */
+.cover-wrap,
+.title,
+.artist,
+.mini__cover,
+.mini__text {
+  -webkit-app-region: drag;
+}
+
 button,
 .band,
 .band-segment,
+.foot,
 .ctrl,
 .icon-btn,
 .mini-action {
@@ -89,6 +104,20 @@ button,
   opacity: 1;
   transform: rotateY(0deg);
   pointer-events: auto;
+}
+
+/*
+ * Once a flip has finished, drop the 3D transform entirely.
+ *
+ * A face left at `rotateY(0deg)` keeps its own composited layer, and Chromium re-rasterises it
+ * when the transition ends - so the card that has just flipped can differ from a plain front
+ * face by a sub-pixel shift, which reads as a faint jitter on the last frame. An untransformed
+ * element rasterises exactly like the static one. `transform: none` still animates, because
+ * the spec treats it as the identity matrix when interpolating.
+ */
+.card[data-settled='true'][data-face='front'] .face--front,
+.card[data-settled='true'][data-face='back'] .face--back {
+  transform: none;
 }
 
 /* ------------------------------------------------------------------- cover */
@@ -437,16 +466,6 @@ button,
   pointer-events: auto;
 }
 
-/*
- * While locked the card is not going to roll up, so its controls stay on screen - otherwise
- * the lock would be the one state you cannot see the controls in, and unlocking would mean
- * hovering to reveal a button you have to find first.
- */
-.stage[data-locked='true'] .icon-btn {
-  opacity: 0.75;
-  pointer-events: auto;
-}
-
 .icon-btn:hover,
 .icon-btn:focus-visible {
   opacity: 1;
@@ -487,11 +506,13 @@ button,
   display: none;
 }
 
-/* A locked button stays visible without hovering, so it must stay clickable without hovering
-   too - otherwise the only lit control on the card is the one that ignores clicks. */
+/*
+ * The locked button is tinted so its state is readable, but it still obeys the same reveal
+ * rules as the others: the three controls disappear together whenever the pointer leaves.
+ * A permanently-lit button in the corner was both visually wrong and a hit target that did
+ * not move with the rest.
+ */
 .icon-btn[aria-pressed='true'] {
-  opacity: 1;
-  pointer-events: auto;
   color: var(--text-strong);
   background: var(--panel-line);
 }

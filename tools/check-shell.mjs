@@ -218,17 +218,24 @@ console.log('\n--- 窗口位置持久化 ---');
   const file = stateFilePath(dir);
   const bounds = [{ x: 0, y: 0, width: 1920, height: 1080 }];
 
-  saveWindowState(file, { cardWidth: 400, x: 120, y: 240 });
+  saveWindowState(file, { cardWidth: 400, x: 120, y: 240, locked: true });
   const restored = loadWindowState(file, bounds);
-  check('保存后可读回', restored.cardWidth === 400 && restored.x === 120 && restored.y === 240, JSON.stringify(restored));
+  check(
+    '保存后可读回（含锁定状态）',
+    restored.cardWidth === 400 && restored.x === 120 && restored.y === 240 && restored.locked === true,
+    JSON.stringify(restored),
+  );
+
+  saveWindowState(file, { cardWidth: 400, x: 120, y: 240, locked: false });
+  check('锁定状态可以关闭并存回', loadWindowState(file, bounds).locked === false);
 
   // A position from an unplugged monitor must be dropped, not restored off screen.
-  saveWindowState(file, { cardWidth: 400, x: 9000, y: 9000 });
+  saveWindowState(file, { cardWidth: 400, x: 9000, y: 9000, locked: true });
   const offscreen = loadWindowState(file, bounds);
   check('屏幕外的位置被丢弃', offscreen.x === undefined && offscreen.y === undefined, JSON.stringify(offscreen));
 
   // Card width must be clamped into the allowed range.
-  saveWindowState(file, { cardWidth: 5000, x: 10, y: 10 });
+  saveWindowState(file, { cardWidth: 5000, x: 10, y: 10, locked: true });
   check('过大的卡宽被限制', loadWindowState(file, bounds).cardWidth === CARD_WIDTH_MAX);
 
   // A file written by the previous version stored the *window* width; it must be converted,
@@ -236,11 +243,21 @@ console.log('\n--- 窗口位置持久化 ---');
   writeFileSync(file, JSON.stringify({ width: DEFAULT_WIDTH, x: 5, y: 6 }), 'utf8');
   check('兼容旧的窗口宽度字段', loadWindowState(file, bounds).cardWidth === CARD_WIDTH_DEFAULT);
 
+  /*
+   * Locking defaults to ON. An overlay that rolls itself up the first time the pointer wanders
+   * off is a surprise on first run; not rolling up is merely inert.
+   */
+  check('旧存档没有锁定时默认锁定', loadWindowState(file, bounds).locked === true);
+
   // A missing or corrupt file must fall back to a default rather than throwing.
   const missing = loadWindowState(join(dir, 'nope.json'), bounds);
-  check('文件缺失时用默认值', missing.cardWidth === CARD_WIDTH_DEFAULT, JSON.stringify(missing));
+  check('文件缺失时用默认值', missing.cardWidth === CARD_WIDTH_DEFAULT && missing.locked === true, JSON.stringify(missing));
   writeFileSync(file, '{ not json', 'utf8');
   check('文件损坏时不抛异常', loadWindowState(file, bounds).cardWidth === CARD_WIDTH_DEFAULT);
+
+  // The lock must not be read from anything but an actual boolean.
+  writeFileSync(file, JSON.stringify({ cardWidth: 400, locked: 'yes' }), 'utf8');
+  check('非布尔的锁定值被忽略', loadWindowState(file, bounds).locked === true);
 }
 
 /* ---------------------------------------------------------------- icon PNG */

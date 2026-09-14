@@ -66,6 +66,36 @@ Consequences worth remembering:
   normal browser during development and in the Electron shell once packaged, and
   it needs no bundler.
 
+## 2026-09-15 — clipped descenders, three times
+
+Symptom: the tails of `p j y g` are cut off. It came back three times because each
+round fixed only one of two cooperating causes:
+
+1. **A tight line box.** A `line-height` below roughly 1.5 does not cover a 600-weight
+   font's glyph extent, and this stack falls through several families (MiSans, Noto Sans
+   SC, 微软雅黑) whose ascent/descent metrics differ.
+2. **`overflow: hidden` on or near the text.** It is needed for the two-line title clamp,
+   and it slices anything leaving the box. `-webkit-line-clamp` sizes the box as
+   `line-height x lines`, so clamp plus a tight line box is the worst case. The lyric
+   entries are the same shape and worse, because the active entry is scaled to 1.08.
+
+What actually works:
+
+* title and artist `line-height: 1.6`, lyric `1.45` plus `padding-bottom` on the text span
+  so a scaled-up active entry still has room;
+* prefer **padding over margin** for the compensation: padding does not collapse and cannot
+  be absorbed by a flex `auto` margin;
+* when a taller box shifts the column, cancel it on a **following** element's margin (a
+  negative bottom padding is not valid);
+* `tools/check-layout.mjs` now reads `line-height` from the stylesheet instead of assuming
+  it. It was hardcoded, so changing the CSS made the check quietly disagree with the real
+  layout — exactly the drift that let this keep coming back.
+
+If a descender is still clipped after all of that, the cause is elsewhere: check whether the
+element sits inside a `transform` (a scaled ancestor clips differently), or whether the
+font's own metrics are at fault. In that case name the specific glyph and where it appears.
+
+
 ## 2026-09-14 — phase 0 closed
 
 The debug channel works and the playback contract is measured; see

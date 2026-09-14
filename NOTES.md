@@ -535,6 +535,23 @@ with the edit tool.
 one-line change, not for a whole-file rewrite. Use the editor tools, or `node` with
 `writeFileSync(..., 'utf8')`.
 
+## 2026-09-15 (7) — a check that depended on the environment
+
+`npm run check` went red with seventeen `fetch failed` lines and nothing in the diff to explain
+them. The cause was that `check:ui` talks to a *running* host on port 8788, and no host was
+running. It had been passing for hours purely because a leftover host from an earlier session was
+still holding the port - the check had never been self-contained, and nobody had noticed because
+the machine happened to be in the right state.
+
+That is the worst property a check can have: it is believed. It now probes the UI port and, when
+nothing answers, starts its own host - with `stdio` pointed at a log file rather than a pipe, since
+the sandbox refuses piped stdio - waits for it, and stops only the host it started. Verified that
+it leaves no listener behind.
+
+`MEMORY.md` is new: the current rules, constraints, invariants and traps, as opposed to `NOTES.md`,
+which is the chronological record of how they were learned.
+
+
 
 
 

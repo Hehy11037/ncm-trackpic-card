@@ -49,7 +49,7 @@ export interface HostOptions {
    * Override the lyrics source. Defaults to the built-in LyricsService, which
    * prefers the client's own lyric document and falls back to the public API.
    */
-  lyrics?: Pick<LyricsService, 'start' | 'get' | 'refresh' | 'prune'> | LyricsService;
+  lyrics?: Pick<LyricsService, 'start' | 'get' | 'refresh' | 'prune' | 'stop'> | LyricsService;
   log?: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
 }
 
@@ -194,6 +194,8 @@ export function createHost(options: HostOptions = {}): Host {
       await session.start();
     },
     async stop() {
+      // Release the lyrics service's timers first, or the process would not exit.
+      lyrics.stop();
       await session.stop();
       await server.close();
       await ui?.close();

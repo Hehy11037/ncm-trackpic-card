@@ -10,18 +10,55 @@
  *  - Drop credit lines, which the client mixes into the raw lyric.
  */
 
-import type { ClientLyricSlice, LyricDoc, LyricLine, LyricSource } from '@ncm-trackpic-card/shared';
+import type {
+  ClientLyricEntry,
+  ClientLyricSlice,
+  LyricDoc,
+  LyricLine,
+  LyricSource,
+} from '@ncm-trackpic-card/shared';
 
 import { emptyPayload, type RawLyricPayload } from './fetch.ts';
 import {
   finalizeLines,
+  isCreditLine,
   parseClientLines,
   parseLrc,
   parseYrc,
   type ParsedLine,
 } from './parse.ts';
 
-/** Build a document from the client's own slice (preferred source). */
+/**
+ * True when a line set has content, but that content is nothing but production credits.
+ *
+ * This matters more than it looks. Measured on a real track change:
+ *
+ *   t+0s   song id 2650440016   lyricLines = 2, both credits ("作词: FAIZ"), version 1
+ *   t+2s   song id 2650440015   lyricLines = 79, first line "作词: KikKuU"
+ *
+ * The store's song id changes immediately but its *lyric slice* lags behind, so for a few
+ * hundred milliseconds the bridge reads the previous track's lines while reporting the new
+ * track's id - which put the previous song's lyrics on screen under the new song. A
+ * credit-only set is also what the client holds for a track whose lyrics never loaded.
+ *
+ * An **empty** set is deliberately not credit-only: that is a different state (the fetch
+ * completed and there is no lyric content), and the caller reports it as instrumental.
+ */
+export function hasOnlyCredits(entries: ClientLyricEntry[] | null | undefined): boolean {
+  if (!Array.isArray(entries) || entries.length === 0) return false;
+  let sawText = false;
+  for (const entry of entries) {
+    const text = typeof entry?.lyric === 'string' ? entry.lyric.trim() : '';
+    if (!text) continue;
+    sawText = true;
+    const seconds = typeof entry?.time === 'number' ? entry.time : 0;
+    if (!isCreditLine(text, seconds * 1000)) return false;
+  }
+  // Only blanks is not "credits"; it is simply empty, which the caller handles separately.
+  return sawText;
+}
+
+/** Build a document from the client's own slice (preferred when it is complete). */
 export function docFromClientSlice(slice: ClientLyricSlice): LyricDoc | null {
   if (slice.songId == null) return null;
 
@@ -31,9 +68,21 @@ export function docFromClientSlice(slice: ClientLyricSlice): LyricDoc | null {
   const offsetMs = typeof slice.offset === 'number' ? Math.round(slice.offset * 1000) : 0;
 
   const usable = main.filter((l) => l.text.trim().length > 0);
+
+  /*
+   * Credit-only and empty sets are checked BEFORE anything else.
+   *
+   * Order matters: a credit-only set produces `usable.length === 0` once credit lines are
+   * dropped, so an empty-check placed first would treat the previous track's credit lines as
+   * "this track has no lyrics" and return an authoritative empty document - losing the chance
+   * to fall back to the public endpoint for a track that does have lyrics. Returning null
+   * instead tells the caller "not from me", which keeps the public result.
+   */
+  if (hasOnlyCredits(slice.lyricLines)) return null;
+
   if (usable.length === 0) {
-    // The client is the authority on "this track has no lyrics": it knows about
-    // instrumental flags and account-gated tracks we cannot resolve ourselves.
+    // Genuinely empty: the client is the authority on instrumentals and account-gated tracks
+    // we cannot resolve ourselves.
     if (slice.isLyricFetchFailed || slice.isLoading) return null;
     return buildDoc(slice.songId, [], offsetMs, true, false, 'none');
   }

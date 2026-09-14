@@ -17,7 +17,16 @@ import { join } from 'node:path';
 import type { LyricDoc } from '@ncm-trackpic-card/shared';
 
 const NORMAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const NO_LYRIC_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * TTL for a result with no lines.
+ *
+ * Deliberately short. Caching a no-lyric result stops a track played twice from hitting the
+ * network twice, but it can also be a transient failure (the client had not loaded its lyrics
+ * yet, or the endpoint rejected the request), and a long TTL would then hide real lyrics - and
+ * a stale wrong document - for hours. A minute suppresses the request storm while recovering
+ * quickly.
+ */
+const NO_LYRIC_TTL_MS = 60 * 1000;
 
 export function cacheDir(): string {
   const base = process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');

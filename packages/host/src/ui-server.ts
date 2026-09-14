@@ -103,7 +103,7 @@ export class UiServer {
 
       const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
       if (pathname === '/config.json') {
-        respond(res, 200, MIME['.json']!, JSON.stringify(this.options.config, null, 2));
+        respond(res, 200, MIME['.json']!, JSON.stringify(this.options.config, null, 2), NO_CACHE);
         return;
       }
 
@@ -121,9 +121,7 @@ export class UiServer {
       }
 
       const body = await readFile(target);
-      respond(res, 200, MIME[extname(target).toLowerCase()] ?? 'application/octet-stream', body, {
-        cache: 'no-store',
-      });
+      respond(res, 200, MIME[extname(target).toLowerCase()] ?? 'application/octet-stream', body, NO_CACHE);
     } catch (err) {
       this.options.log?.('warn', `界面服务出错: ${err instanceof Error ? err.message : String(err)}`);
       respond(res, 500, 'text/plain; charset=utf-8', 'internal error');
@@ -148,6 +146,22 @@ function isLoopback(address: string): boolean {
     address.startsWith('127.')
   );
 }
+
+/**
+ * Nothing the UI loads may be cached.
+ *
+ * This was written as `{ cache: 'no-store' }`, which produced a header literally named `cache`
+ * - not a real HTTP header, so no cache directive was sent at all. Chromium's own HTTP cache
+ * lives in the Electron profile, which survives restarts, so a fixed stylesheet could keep
+ * being served from cache and the fix would look like it had never been applied. That is a
+ * particularly nasty failure mode for a project whose whole loop is "edit the UI, restart the
+ * shell, look at it".
+ */
+const NO_CACHE: Record<string, string> = {
+  'cache-control': 'no-store, no-cache, must-revalidate',
+  pragma: 'no-cache',
+  expires: '0',
+};
 
 function respond(
   res: ServerResponse,

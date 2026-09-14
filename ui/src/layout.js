@@ -66,13 +66,21 @@ export function applyLayoutUnit(stage = document.getElementById('stage')) {
   const root = document.documentElement;
 
   const width = stage?.clientWidth || MIN_STAGE_WIDTH;
-  const height = width * STAGE_ASPECT;
-  const miniHeight = width * MINI_RATIO;
+  /*
+   * Both heights are rounded to whole pixels, matching the shell's `Math.round(card * aspect)`.
+   *
+   * A fractional stage height puts every absolutely-positioned face on a sub-pixel boundary,
+   * which is exactly the kind of thing that shows up as a faint settle at the end of a flip.
+   * It also cannot disagree with the window: `fitWindow` rounds the same expression, so the
+   * card fills the window minus the shadow margin exactly.
+   */
+  const height = Math.round(width * STAGE_ASPECT);
+  const miniHeight = Math.round(width * MINI_RATIO);
   const unit = width / 100;
 
   root.style.setProperty('--u', `${unit.toFixed(5)}px`);
-  root.style.setProperty('--card-height', `${height.toFixed(2)}px`);
-  root.style.setProperty('--mini-height', `${miniHeight.toFixed(2)}px`);
+  root.style.setProperty('--card-height', `${height}px`);
+  root.style.setProperty('--mini-height', `${miniHeight}px`);
 
   return { unit, width, height, miniHeight };
 }

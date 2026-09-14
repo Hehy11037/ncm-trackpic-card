@@ -16,6 +16,12 @@ import { css, paletteFor } from './palette.js';
 
 const $ = (id) => document.getElementById(id);
 
+/**
+ * How long after a flip the 3D transform is dropped. Must be longer than `--flip-duration`
+ * (420ms); tools/check-interaction.mjs compares the two.
+ */
+const FLIP_SETTLE_MS = 470;
+
 /** #RRGGBB for a 0-255 channel triple. */
 function toHex({ r, g, b }) {
   const part = (value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
@@ -236,17 +242,22 @@ export class CardView {
   }
 
   /**
-   * Pick a colour from a click anywhere on the band.
+   * Pick a colour from a press anywhere on the band.
    *
    * Delegated on the container rather than bound per swatch, and the index falls back to the
-   * pointer's position. Two reasons, both of which bit in practice:
+   * pointer's position. Four reasons, all of which bit in practice:
    *
    *  - The swatches are rebuilt by renderBand() on every palette change, so per-swatch
    *    listeners are thrown away and re-created; a container listener is stable.
    *  - The band's clickable box is padded out beyond the visible strip (see `.band` in
-   *    card.css) so it is a comfortable target. Clicks in that padding land on the
-   *    container, not on a swatch, and would otherwise do nothing - the exact complaint
-   *    that the band "cannot be clicked".
+   *    card.css) so it is a comfortable target. Presses in that padding land on the
+   *    container, not on a swatch.
+   *  - `pointerdown`, not `click`: a click is only delivered if press and release land on the
+   *    same element, and the band is rebuilt from inside this very handler, which is exactly
+   *    the kind of thing that can eat a click. Selecting on press is also what a colour picker
+   *    should do.
+   *  - If the press never reaches the page at all, the hit-test self-check below says so - see
+   *    `reportHitTargets`.
    */
   bindBand() {
     const band = this.el.palette;
@@ -254,16 +265,91 @@ export class CardView {
 
     const choose = (event) => {
       const segment = event.target instanceof Element ? event.target.closest('.band-segment') : null;
+      let index;
       if (segment) {
-        this.setBackground(Number(segment.dataset.index));
-        return;
+        index = Number(segment.dataset.index);
+      } else {
+        // Pressed the padding rather than a swatch: map x onto the five equal columns.
+        const rect = band.getBoundingClientRect();
+        index = bandIndexFromX(event.clientX, rect.left, rect.width, this.palette.length);
       }
-      // Clicked the padding: map the x position onto the five equal columns.
-      const rect = band.getBoundingClientRect();
-      this.setBackground(bandIndexFromX(event.clientX, rect.left, rect.width, this.palette.length));
+      this.setBackground(index);
+      console.info(`[overlay] 背景色 -> ${toHex(this.palette[index] ?? this.palette[0])}（第 ${index + 1} 块）`);
     };
 
-    band.addEventListener('click', choose);
+    band.addEventListener('pointerdown', choose);
+  }
+
+  /**
+   * Report what is actually on top of every interactive control.
+   *
+   * There is no browser available to the tooling that maintains this, so "the band cannot be
+   * clicked" had to be diagnosed from the outside. `elementFromPoint` answers the one question
+   * reasoning cannot: is the control the topmost element at its own coordinates, or is
+   * something covering it? The shell forwards this to its terminal.
+   *
+   * Controls that are deliberately not hit-testable yet are reported as `inert` rather than
+   * `BLOCKED`: the top-bar buttons are `pointer-events: none` until the card is hovered, and
+   * the mini bar is `display: none` until the card is rolled up. Only a control that CSS says
+   * is clickable *and* is covered by something else is a real fault.
+   */
+  reportHitTargets() {
+    const describe = (element) => {
+      if (!element) return 'nothing';
+      if (element === document.documentElement) return 'html';
+      if (element === document.body) return 'body';
+      const id = element.id ? `#${element.id}` : '';
+      const cls =
+        typeof element.className === 'string' && element.className.trim()
+          ? `.${element.className.trim().split(/\s+/).join('.')}`
+          : '';
+      return `${element.tagName.toLowerCase()}${id}${cls}`;
+    };
+
+    const targets = [
+      ...this.el.palette.children,
+      ...document.querySelectorAll('.ctrl'),
+      ...document.querySelectorAll('.icon-btn'),
+      ...document.querySelectorAll('.mini-action'),
+    ];
+
+    const rows = [];
+    for (const element of targets) {
+      const rect = element.getBoundingClientRect();
+      const box = `${Math.round(rect.width)}x${Math.round(rect.height)} @ ${Math.round(rect.left)},${Math.round(rect.top)}`;
+      const label = describe(element);
+
+      if (rect.width < 1 || rect.height < 1) {
+        rows.push({ label, box, top: '-', state: 'not-rendered' });
+        continue;
+      }
+      if (getComputedStyle(element).pointerEvents === 'none') {
+        rows.push({ label, box, top: '-', state: 'inert' });
+        continue;
+      }
+
+      const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      const reachable = top === element || element.contains(top) || top?.contains(element);
+      rows.push({ label, box, top: describe(top), state: reachable ? 'ok' : 'BLOCKED' });
+    }
+
+    const clickable = rows.filter((row) => row.state === 'ok' || row.state === 'BLOCKED');
+    const blocked = clickable.filter((row) => row.state === 'BLOCKED');
+    console.info(
+      `[overlay] 命中自检: ${clickable.length - blocked.length}/${clickable.length} 个可点击控件在最上层` +
+        `（色带 ${Math.round(this.el.palette.getBoundingClientRect().height)}px 高，共 ${this.el.palette.children.length} 块）`,
+    );
+    for (const row of rows) {
+      console.info(`  ${row.state.padEnd(12)} ${row.label.padEnd(30)} ${row.box.padEnd(22)} 顶层=${row.top}`);
+    }
+    if (blocked.length) {
+      console.warn(
+        `[overlay] ${blocked.length} 个控件被遮挡，按压不会到达它们: ${blocked
+          .map((row) => `${row.label} <- ${row.top}`)
+          .join('; ')}`,
+      );
+    }
+    return rows;
   }
 
   setBackground(choice) {
@@ -317,7 +403,6 @@ export class CardView {
     if (!button) return;
     button.setAttribute('aria-pressed', String(!!locked));
     button.title = locked ? '已锁定：不会自动收起（L）' : '锁定：不自动收起（L）';
-    this.el.stage?.setAttribute('data-locked', String(!!locked));
   }
 
   /* ------------------------------------------------------------------- face */
@@ -328,6 +413,28 @@ export class CardView {
 
   setFace(face) {
     this.el.card.dataset.face = face;
+    this.#scheduleSettle();
+  }
+
+  /**
+   * Drop the 3D transform once a flip has finished.
+   *
+   * A face left at `rotateY(0deg)` keeps its own composited layer, and Chromium re-rasterises
+   * that layer when the transition ends - so the "settled" card could differ from the static
+   * one by a sub-pixel shift, which is the faint jitter reported after the last frame of a
+   * flip. Once nothing is animating, `transform` is not needed at all, and an untransformed
+   * element rasterises exactly like the plain front face.
+   *
+   * `transform: none` still animates: the spec treats `none` as the identity matrix when
+   * interpolating, so the next flip transitions out of it normally.
+   */
+  #scheduleSettle() {
+    this.el.card.removeAttribute('data-settled');
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null;
+      this.el.card.dataset.settled = 'true';
+    }, FLIP_SETTLE_MS);
   }
 
   flip() {

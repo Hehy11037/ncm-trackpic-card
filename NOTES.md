@@ -241,3 +241,81 @@ puts the card in the wrong parent and nothing lines up afterwards.
 its `writeFileSync(..., 'utf8')` has no BOM. A BOM is legal in a JS module but
 breaks byte-level checks and is one more silent difference from a hand-written file.
 
+## 2026-09-15 (2) — "the fix didn't take" and the band, again
+
+The user came back with three things, and the first lesson is not about any of them.
+
+### A fix can be applied and never loaded
+
+`ui-server.ts` passed `{ cache: 'no-store' }` into the extra-headers object, which
+writes a header literally named **`cache`**. That is not a real HTTP header, so no
+cache directive went out at all. Chromium's HTTP cache lives in the Electron profile
+(`userData`), which survives restarts - so a changed stylesheet could keep being
+served from cache and the change would look like it had never been made.
+
+Two habits came out of this, both now permanent:
+
+* The UI server sends a real `cache-control: no-store, no-cache, must-revalidate`
+  plus `pragma`/`expires`, for every file *and* for `config.json`.
+* The shell prints the mtime of the UI files it is about to serve, at startup. With
+  no build step, "which code is actually running?" is a real question, and it should
+  be answerable from the terminal rather than guessed at.
+
+### Invert the drag region instead of carving out of it
+
+The band was *still* unclickable after its hit box was padded to 26px, while an
+identical `<button>` in the top bar worked. The remaining suspect was
+`-webkit-app-region`: `html, body` declared `drag`, making the whole window a title
+bar, and controls relied on `no-drag` carve-outs. On a **transparent Windows
+window** that did not hold for the band.
+
+Rather than keep guessing at how the region is resolved, the scheme is inverted:
+`body` declares no region at all, and the *grab handles* opt in
+(`.cover-wrap`, `.title`, `.artist`, the mini bar's cover and text). A control that
+is not inside a drag element cannot be swallowed by one, whatever the resolution
+rules turn out to be. The cost is that the transparent shadow margin and the gaps
+between blocks no longer drag the window; the cover is a ~340px square, so there is
+plenty left.
+
+The band also moved from `click` to `pointerdown`: a click needs press and release
+on the same element, and the band is rebuilt from inside its own handler.
+
+### One symptom, two bugs: never gate a feature on a handshake
+
+The roll-up was gated on an `overlay:ready` IPC message from the preload, so *any*
+preload problem produced exactly one symptom: "the card never rolls up". The
+handshake is gone - the gate is `webContents.once('dom-ready')`, which is entirely
+about the page having a document and a size. The roll-up needs nothing from the
+renderer, and now nothing from the renderer can break it.
+
+The lock state moved to the shell for the same reason, and now has two UIs: the card
+button and a tray checkbox. It is persisted in `window-state.json` and defaults to
+**on** - an overlay that rolls itself up the first time the pointer wanders off is a
+surprise on first run, while not rolling up is merely inert. Because the tray owns a
+copy of the control, the overlay can never end up in a state its user cannot change,
+even if the preload never loads.
+
+### Diagnosing "it cannot be clicked" from outside
+
+There is no browser here, so the only way to settle a hit-testing question is to ask
+the page. `CardView.reportHitTargets()` runs once at startup and logs, for every
+control, its box and what `elementFromPoint` says is on top of it - plus, in the
+shell's terminal, a `BLOCKED` line naming what is covering it. Controls that CSS
+says are not hit-testable yet (the top-bar buttons before hover, the mini bar while
+rolled up) are reported as `inert` instead, so only a real obstruction is flagged.
+Every successful colour pick also logs its index and hex.
+
+### The faint jitter after a flip
+
+Plausibly self-inflicted. `--card-height` used to come from `stage.clientHeight`,
+which is an integer; it became `width * STAGE_ASPECT`, a fraction, putting every
+absolutely-positioned face on a sub-pixel boundary. Both stage heights are rounded
+now, matching `Math.round(card * aspect)` in `fitWindow`.
+
+There is a second, independent cause: a face left at `rotateY(0deg)` keeps its own
+composited layer, and Chromium re-rasterises it when the transition ends, which can
+differ from the static card by a sub-pixel. So `data-settled` drops the transform
+entirely once the flip is over. `transform: none` still animates - the spec treats it
+as the identity matrix when interpolating - so the next flip works normally.
+
+

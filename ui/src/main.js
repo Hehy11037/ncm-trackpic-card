@@ -15,8 +15,6 @@ import { HostLink } from './socket.js';
 const DEFAULT_HOST_PORT = 8787;
 /** If the client stops reporting for this long, stop extrapolating. */
 const STALE_FREEZE_MS = 2500;
-/** localStorage key for "do not auto-collapse". */
-const LOCK_KEY = 'ncm-card:locked';
 
 /**
  * The Electron shell's bridge, or null in a plain browser.
@@ -49,37 +47,32 @@ let lastLyricsDoc = null;
 let lastFrameAt = performance.now();
 let hidden = false;
 let staleSince = 0;
-/** "Do not auto-collapse"; persisted here and pushed to the shell on boot and on every toggle. */
-let locked = loadLocked();
+/** "Do not auto-collapse". Owned by the shell; this is only the copy the button renders. */
+let locked = true;
 
 /* ------------------------------------------------------------------- lock */
 
-function loadLocked() {
-  try {
-    return localStorage.getItem(LOCK_KEY) === '1';
-  } catch {
-    return false;
-  }
+/**
+ * Reflect the shell's lock state. The shell owns the value, persists it, and offers the same
+ * toggle in its tray menu, so the button here is a view rather than a second source of truth.
+ *
+ * In a plain browser there is no shell and therefore no roll-up, so the button has nothing to
+ * control; it still renders, showing whatever the shell last said (locked, by default).
+ */
+function applyLocked(next) {
+  locked = next === true;
+  view.setLocked(locked);
 }
 
-/**
- * "Do not auto-collapse", owned by the renderer and pushed to the shell.
- *
- * The shell does the pointer watching - it is the only side that can ask the OS where the
- * cursor is - so it has to be told. The renderer owns the setting because that is where it
- * is persisted and where the button lives.
- */
-function setLocked(next) {
-  locked = !!next;
-  try {
-    localStorage.setItem(LOCK_KEY, locked ? '1' : '0');
-  } catch {
-    /* storage may be unavailable; the choice simply does not persist */
+/** Toggle via the shell. The shell answers with the new state, which is what updates the view. */
+function toggleLock() {
+  const bridge = shell();
+  if (!bridge?.toggleLock) {
+    // No bridge: flip locally so the button still responds, even though nothing will roll up.
+    applyLocked(!locked);
+    return;
   }
-  view.setLocked(locked);
-  shell()?.setLocked?.(locked);
-  // Locking while rolled up must bring the card back, or the lock looks broken.
-  if (locked) shell()?.setCollapsed?.(false);
+  bridge.toggleLock();
 }
 
 /* ------------------------------------------------------------------ messages */
@@ -166,7 +159,7 @@ function bindInput() {
     if (bridge?.close) bridge.close();
     else window.close();
   });
-  on('lock', () => setLocked(!locked));
+  on('lock', () => toggleLock());
   on('mini-expand', () => shell()?.setCollapsed?.(false));
 
   for (const button of document.querySelectorAll('.ctrl[data-action]')) {
@@ -198,7 +191,7 @@ function bindInput() {
     } else if (event.key === 'f' || event.key === 'F') {
       view.flip();
     } else if (event.key === 'l' || event.key === 'L') {
-      setLocked(!locked);
+      toggleLock();
     } else if (event.key === 't' || event.key === 'T') {
       // Toggle lyric translations. Off is often preferred: a translation on every entry
       // makes them uneven heights and crowds the page.
@@ -296,20 +289,19 @@ async function boot() {
   requestAnimationFrame(frame);
 
   /*
-   * Tell the shell the persisted lock state before it starts watching the pointer, and only
-   * then tell it we are ready. Until `ready` arrives the shell suppresses auto-collapse, so
-   * the card cannot roll up before it has been drawn once.
+   * Take the lock state from the shell and keep following it, so the card's button and the
+   * tray menu cannot drift apart. The subscription asks for the current state as soon as it is
+   * installed, so no separate "ready" handshake is needed.
    */
   view.setLocked(locked);
-  shell()?.setLocked?.(locked);
-  shell()?.ready?.();
+  shell()?.watchState?.((state) => applyLocked(state?.locked));
 
   globalThis.__overlay = {
     view,
     clock,
     lyrics,
     link,
-    setLocked,
+    toggleLock,
     get locked() {
       return locked;
     },
@@ -326,9 +318,13 @@ async function boot() {
   const bootError = document.getElementById('boot-error');
   if (bootError) bootError.hidden = true;
   console.info(`[overlay] 已启动，宿主 ws://127.0.0.1:${config.port}`);
-  // Reported because a failed preload degrades quietly: the card still draws, but nothing
-  // rolls up and the close button does nothing. The shell forwards this to its terminal.
-  console.info(`[overlay] 桌面壳桥接: ${shell() ? '可用' : '不可用（浏览器预览模式）'}`);
+  // Reported because a failed preload degrades quietly: the close button falls back to
+  // window.close(), but the lock toggle has nowhere to go. The shell forwards this to its
+  // terminal. The roll-up itself does not depend on the bridge at all.
+  console.info(`[overlay] 桌面壳桥接: ${shell() ? '可用' : '不可用（浏览器预览模式或 preload 未加载）'}`);
+  // One-shot layout self-check, reported to the shell's terminal. Delayed so the first
+  // layout, the cover and the palette are all in place.
+  setTimeout(() => view.reportHitTargets(), 500);
 }
 
 void boot().catch((error) => {

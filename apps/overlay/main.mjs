@@ -18,7 +18,7 @@
 
 import { app, BrowserWindow, Menu, Tray, ipcMain, screen, shell } from 'electron';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,7 +29,6 @@ import {
   DEFAULT_WIDTH,
   MAX_WIDTH,
   MIN_WIDTH,
-  SHADOW_PAD,
   cardWidthForWindow,
   clamp,
   createHoverState,
@@ -73,14 +72,23 @@ const ICON_COLOR = { r: 0x98, g: 0xb6, b: 0xbe };
 
 let mainWindow = null;
 let tray = null;
+let trayMenu = null;
 let hostProcess = null;
 let quitting = false;
 
 /** Card width in CSS pixels; the window is this plus the shadow margin on each side. */
 let cardWidth = cardWidthForWindow(DEFAULT_WIDTH);
 let collapsed = false;
-let locked = false;
-/** The renderer has drawn once; until then the window must not roll up underneath it. */
+/** "Do not auto-collapse". Owned here, persisted here, mirrored to the card button and the tray. */
+let locked = true;
+/**
+ * The renderer has drawn once.
+ *
+ * Set from the webContents lifecycle, deliberately NOT from an IPC message: the roll-up
+ * decision is entirely the shell's and must keep working if the preload bridge fails to load.
+ * Gating it on a message from the renderer made "the bridge is broken" and "the card never
+ * rolls up" the same symptom, which is how this shipped broken once already.
+ */
 let rendererReady = false;
 let suppressUntil = 0;
 let hoverTimer = null;
@@ -167,6 +175,25 @@ function stopHost() {
 
 /* ------------------------------------------------------------------- geometry */
 
+/**
+ * Say which UI files are being served, and when they were last written.
+ *
+ * There is no build step, so the running UI is whatever is on disk - which makes "did my fix
+ * actually get loaded?" a real question, and one that a stale HTTP cache can answer wrongly.
+ * Printing the mtime makes it checkable from the terminal instead of guessed at.
+ */
+function reportUiAssets() {
+  const files = ['index.html', 'styles/tokens.css', 'styles/card.css', 'src/main.js', 'src/card.js', 'src/layout.js'];
+  const stamps = files.map((file) => {
+    try {
+      return `${file} ${statSync(join(UI_ROOT, file)).mtime.toISOString().slice(11, 19)}`;
+    } catch {
+      return `${file} 缺失`;
+    }
+  });
+  console.info(`[shell] 界面资源(${UI_ROOT}): ${stamps.join('  ')}`);
+}
+
 function workAreaForWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return screen.getPrimaryDisplay().workArea;
   return screen.getDisplayMatching(mainWindow.getBounds()).workArea;
@@ -195,6 +222,7 @@ function setCollapsed(next) {
   const value = next === true;
   if (collapsed === value) return;
   collapsed = value;
+  console.info(`[shell] ${value ? '收起' : '展开'}窗口（锁定=${locked ? '开' : '关'}）`);
   applyGeometry();
 }
 
@@ -212,7 +240,18 @@ function persistWindowState() {
     cardWidth,
     x: bounds.x,
     y: bounds.y,
+    locked,
   });
+}
+
+/** Keep the card button and the tray checkbox showing the same thing. */
+function setLocked(next) {
+  locked = next === true;
+  if (locked && collapsed) setCollapsed(false);
+  mainWindow?.webContents.send('overlay:state', { locked });
+  refreshTrayMenu();
+  persistWindowState();
+  console.info(`[shell] 锁定: ${locked ? '开（不再自动收起）' : '关（鼠标离开会收起）'}`);
 }
 
 /** `move` fires continuously while dragging, so the write is coalesced. */
@@ -239,27 +278,35 @@ function startHoverWatch() {
   hoverState = createHoverState({ collapseDelayMs: 600, expandDelayMs: 90 });
 
   hoverTimer = setInterval(() => {
-    if (quitting || !mainWindow || mainWindow.isDestroyed()) return;
-    if (!mainWindow.isVisible() || mainWindow.isMinimized()) {
-      hoverState.reset();
-      return;
-    }
-    if (!rendererReady || Date.now() < suppressUntil) {
-      // Re-adopt the pointer's position on every suppressed tick, so the delay starts from
-      // when the window settled rather than from a stale sample.
-      hoverState.reset();
-      return;
-    }
+    try {
+      if (quitting || !mainWindow || mainWindow.isDestroyed()) return;
+      if (!mainWindow.isVisible() || mainWindow.isMinimized()) {
+        hoverState.reset();
+        return;
+      }
+      if (!rendererReady || Date.now() < suppressUntil) {
+        // Re-adopt the pointer's position on every suppressed tick, so the delay starts from
+        // when the window settled rather than from a stale sample.
+        hoverState.reset();
+        return;
+      }
 
-    const bounds = mainWindow.getBounds();
-    const point = screen.getCursorScreenPoint();
-    const inside =
-      point.x >= bounds.x &&
-      point.x < bounds.x + bounds.width &&
-      point.y >= bounds.y &&
-      point.y < bounds.y + bounds.height;
+      const bounds = mainWindow.getBounds();
+      const point = screen.getCursorScreenPoint();
+      const inside =
+        point.x >= bounds.x &&
+        point.x < bounds.x + bounds.width &&
+        point.y >= bounds.y &&
+        point.y < bounds.y + bounds.height;
 
-    if (hoverState.update(Date.now(), inside, locked)) setCollapsed(hoverState.collapsed);
+      if (hoverState.update(Date.now(), inside, locked)) setCollapsed(hoverState.collapsed);
+    } catch (err) {
+      // An exception here would otherwise surface as an uncaught error in the middle of the
+      // main process, which looks nothing like "the pointer query failed".
+      console.error('[shell] 指针监听出错，已停止自动收起', err);
+      clearInterval(hoverTimer);
+      hoverTimer = null;
+    }
   }, HOVER_POLL_MS);
 }
 
@@ -273,9 +320,10 @@ function createWindow() {
   );
   const fit = fitWindow(state.cardWidth, workArea);
   cardWidth = fit.cardWidth;
+  locked = state.locked;
   collapsed = false;
   // A fresh window has not drawn yet, and the pointer is wherever the user launched from - so
-  // neither the roll-up nor the renderer's report can be trusted until they happen.
+  // neither the roll-up nor the first sample can be trusted until the page is up.
   rendererReady = false;
   suppressUntil = Date.now() + SUPPRESS_MS;
   hoverState?.reset();
@@ -324,6 +372,23 @@ function createWindow() {
   });
 
   mainWindow.loadURL(UI_URL);
+
+  /*
+   * `dom-ready` rather than an IPC handshake from the preload: the roll-up must not depend on
+   * the bridge. By this point the page has a document and a size, so shrinking the window
+   * cannot catch it mid-load.
+   */
+  mainWindow.webContents.once('dom-ready', () => {
+    rendererReady = true;
+    // The renderer may have missed the state if it subscribed before we were ready; it asks for
+    // it too, and a duplicate is harmless.
+    mainWindow?.webContents.send('overlay:state', { locked });
+  });
+
+  mainWindow.on('show', () => {
+    suppressUntil = Date.now() + SUPPRESS_MS;
+    hoverState?.reset();
+  });
 
   mainWindow.on('move', scheduleStateSave);
   mainWindow.on('resize', scheduleStateSave);
@@ -380,18 +445,34 @@ function toggleWindow() {
 
 /* ---------------------------------------------------------------------- tray */
 
-function createTray() {
-  tray = new Tray(makeIconPng(ICON_COLOR, 16));
-  tray.setToolTip('Now Playing — 网易云同步卡片');
-
-  const menu = Menu.buildFromTemplate([
+function trayTemplate() {
+  return [
     { label: '显示 / 隐藏', click: () => toggleWindow() },
     {
       label: '居中显示',
       click: () => {
+        setCollapsed(false);
         mainWindow?.center();
         showWindow();
       },
+    },
+    { type: 'separator' },
+    {
+      /*
+       * The lock also lives here, and not only on the card, because it is the one control that
+       * decides whether the window disappears when the pointer leaves. If the card's own
+       * button is unreachable - rolled up, or the preload bridge failed to load - this still
+       * works, so the overlay can never get stuck in a state its user cannot change.
+       */
+      label: '锁定（鼠标离开不收起）',
+      type: 'checkbox',
+      checked: locked,
+      click: (item) => setLocked(item.checked),
+    },
+    {
+      label: '立即收起',
+      enabled: !locked,
+      click: () => setCollapsed(true),
     },
     { type: 'separator' },
     { label: '尺寸', enabled: false },
@@ -410,25 +491,39 @@ function createTray() {
         app.quit();
       },
     },
-  ]);
-  tray.setContextMenu(menu);
+  ];
+}
+
+/** Rebuilt rather than mutated: the checkbox and the enabled state both depend on `locked`. */
+function refreshTrayMenu() {
+  if (!tray) return;
+  // Held in a module-level binding as well: the menu is replaced from inside its own click
+  // handler, and a menu that is only referenced by the tray can be collected while it is open.
+  trayMenu = Menu.buildFromTemplate(trayTemplate());
+  tray.setContextMenu(trayMenu);
+}
+
+function createTray() {
+  tray = new Tray(makeIconPng(ICON_COLOR, 16));
+  tray.setToolTip('Now Playing — 网易云同步卡片');
+  refreshTrayMenu();
   tray.on('click', () => toggleWindow());
 }
 
 /* ------------------------------------------------------------------------- ipc */
 
 function bindIpc() {
-  ipcMain.on('overlay:ready', () => {
-    rendererReady = true;
-    console.info(`[shell] 界面已就绪（卡片宽 ${cardWidth}px，阴影留白 ${SHADOW_PAD}px）`);
-  });
+  ipcMain.on('overlay:toggle-lock', () => setLocked(!locked));
 
-  ipcMain.on('overlay:set-locked', (_event, value) => {
-    locked = value === true;
-    if (locked && collapsed) setCollapsed(false);
+  ipcMain.on('overlay:request-state', (event) => {
+    // Answer only the window that asked, so a stale sender cannot be trusted with it.
+    if (mainWindow && event.sender === mainWindow.webContents) {
+      event.sender.send('overlay:state', { locked });
+    }
   });
 
   ipcMain.on('overlay:set-collapsed', (_event, value) => {
+    if (value === true && locked) return;
     suppressUntil = 0;
     setCollapsed(value === true);
   });
@@ -455,6 +550,7 @@ app.whenReady().then(async () => {
   }
 
   bindIpc();
+  reportUiAssets();
   createWindow();
   createTray();
   startHoverWatch();

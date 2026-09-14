@@ -17,7 +17,7 @@ import {
   type HostMessage,
   type LyricDoc,
   type PlaybackSnapshot,
-} from '@music-overlay/shared';
+} from '@ncm-trackpic-card/shared';
 
 import { DEFAULT_CDP_PORT } from './cdp.ts';
 import { ClientSession } from './session.ts';

@@ -1,5 +1,5 @@
 {
-  "name": "@music-overlay/host",
+  "name": "@ncm-trackpic-card/host",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@music-overlay/shared": "*",
+    "@ncm-trackpic-card/shared": "*",
     "ws": "^8.21.3"
   }
 }

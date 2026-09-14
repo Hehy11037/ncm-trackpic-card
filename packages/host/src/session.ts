@@ -23,8 +23,8 @@ import type {
   PlaybackStatus,
   QueueInfo,
   Song,
-} from '@music-overlay/shared';
-import { rawPlayingStateToStatus, toSongId } from '@music-overlay/shared';
+} from '@ncm-trackpic-card/shared';
+import { rawPlayingStateToStatus, toSongId } from '@ncm-trackpic-card/shared';
 
 import {
   BRIDGE_PREFIX,

@@ -117,22 +117,32 @@
   margin: calc(var(--u) * 4.6) 0 0;
   font-size: var(--fs-title);
   font-weight: 600;
-  /* 1.45 rather than the reference's 1.06: with a tighter box the descenders of y/p/g
-     fall outside the line box and `overflow: hidden` on the clamped title clipped them. */
-  line-height: 1.45;
+  /*
+   * 1.6, not the reference's 1.06.
+   *
+   * With `-webkit-line-clamp` the box height is `line-height * lines` and anything outside it
+   * is clipped by `overflow: hidden`, so a tight line box slices descenders (the "g" in
+   * "Through Midnight"). 1.6 gives every glyph's extent room while keeping the box close to
+   * the reference's proportions; the residual box growth is cancelled by the padding below.
+   */
+  line-height: 1.6;
   letter-spacing: var(--tracking-title);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
+  /* Negative bottom padding is invalid, so the adjustment lives on .progress instead. */
 }
 
 .artist {
-  margin: calc(var(--u) * 2) 0 0;
+  /* Padding rather than margin: padding does not collapse and cannot be eaten by the flex
+     container's auto margins, so the resulting position is predictable. */
+  margin: 0;
+  padding-top: calc(var(--u) * 0.7);
   font-size: var(--fs-artist);
   font-weight: 400;
-  line-height: 1.5;
+  line-height: 1.6;
   letter-spacing: var(--tracking-artist);
   color: var(--text-muted);
   white-space: nowrap;
@@ -143,10 +153,9 @@
 /* ---------------------------------------------------------------- progress */
 
 .progress {
-  /* Compensated for the taller title/artist line boxes: their extra height is subtracted
-     here so the progress bar lands at the reference's 121.2u. Verified by
-     tools/check-layout.mjs. */
-  margin-top: calc(var(--u) * 3.54);
+  /* Compensated for the taller title/artist line boxes (see .title line-height): the extra
+     height is subtracted here so the progress bar still lands at the reference's 121.2u. */
+  margin-top: calc(var(--u) * 1.89);
 }
 
 .progress-track {

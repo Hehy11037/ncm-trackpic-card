@@ -201,8 +201,13 @@ const padLeft = shorthand('.face', 'padding', 1);
 const contentWidth = 100 - padLeft * 2;
 
 const coverSize = contentWidth * (shorthand('.cover-wrap', 'width', 0) / 100);
-const titleHeight = unit('--fs-title') * 1.06;
-const artistHeight = unit('--fs-artist') * 1.1;
+/*
+ * Line boxes are read from the stylesheet, not assumed. They were hardcoded here before, so
+ * changing them in CSS silently made this check disagree with the real layout - exactly the
+ * kind of drift that let clipped text keep coming back.
+ */
+const titleHeight = unit('--fs-title') * value('.title', 'line-height');
+const artistHeight = unit('--fs-artist') * value('.artist', 'line-height');
 
 const titleTop = padTop + coverSize + shorthand('.title', 'margin', 0);
 const artistTop = titleTop + titleHeight + shorthand('.artist', 'margin', 0);

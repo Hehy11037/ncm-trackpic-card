@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { docFromClientSlice, docFromRawPayload, hasOnlyCredits } from './build.ts';
+import { docFromClientSlice, docFromRawPayload, isCreditOnlySet, lyricsMentionTrack } from './build.ts';
 import { payloadFromApi } from './fetch.ts';
 import {
   finalizeLines,
@@ -71,15 +71,32 @@ describe('parseClientLines', () => {
     assert.equal(lines[0]?.text, '');
   });
 
-  it('sorts and keeps the richer entry for duplicate timestamps', () => {
+  it('keeps different lines that share a timestamp, and drops true duplicates', () => {
     const lines = parseClientLines([
-      { time: 5, lyric: 'short' },
-      { time: 5, lyric: 'a much longer version' },
+      // The client emits both credits at time -0.001; deduplicating on the timestamp alone used
+      // to drop "作曲", which is why a lyric-less track showed only half its credits.
+      { time: -0.001, lyric: '作词: FAIZ' },
+      { time: -0.001, lyric: '作曲: FAIZ' },
+      // Same text at the same time is a genuine duplicate (an LRC line with several stamps).
+      { time: 5, lyric: 'repeated' },
+      { time: 5, lyric: 'repeated' },
       { time: 1, lyric: 'first' },
     ]);
     assert.deepEqual(
       lines.map((l) => l.text),
-      ['first', 'a much longer version'],
+      ['作词: FAIZ', '作曲: FAIZ', 'first', 'repeated'],
+    );
+  });
+
+  it('keeps untimed lines in their original order, ahead of the timed ones', () => {
+    const lines = parseClientLines([
+      { time: 10, lyric: 'later line' },
+      { time: -0.001, lyric: '作词: X' },
+      { time: -0.001, lyric: '作曲: Y' },
+    ]);
+    assert.deepEqual(
+      lines.map((l) => l.text),
+      ['作词: X', '作曲: Y', 'later line'],
     );
   });
 });
@@ -212,20 +229,22 @@ describe('docFromClientSlice', () => {
     at: Date.now(),
   };
 
-  it('builds a client-sourced document and strips credits', () => {
+  it('builds a client-sourced document and keeps the credit line', () => {
     const doc = docFromClientSlice(base);
     assert.ok(doc);
     assert.equal(doc.source, 'client');
-    assert.equal(doc.lines.length, 1);
-    assert.equal(doc.lines[0]?.startMs, 12788);
-    assert.equal(doc.lines[0]?.translation, ' 我能听见寂静');
+    // Both entries are kept: the credit line is what NetEase itself displays, and dropping it
+    // would make a lyric-less track look like an empty one.
+    assert.equal(doc.lines.length, 2);
+    assert.equal(doc.lines[1]?.startMs, 12788);
+    assert.equal(doc.lines[1]?.translation, ' 我能听见寂静');
     assert.equal(doc.instrumental, false);
   });
 
   it('applies the client offset, which is stored in seconds', () => {
     const doc = docFromClientSlice({ ...base, offset: -0.5 });
     assert.equal(doc?.offsetMs, -500);
-    assert.equal(doc?.lines[0]?.startMs, 12288);
+    assert.equal(doc?.lines[1]?.startMs, 12288);
   });
 
   it('reports instrumental when the client has no lines and is not loading', () => {
@@ -241,12 +260,12 @@ describe('docFromClientSlice', () => {
   });
 });
 
-describe('hasOnlyCredits', () => {
-  // Fixtures from a real case: song id 2650440016 ("芥") holds exactly these two entries
-  // while the previous track's 79 lines were still on screen under its id.
-  it('detects a credit-only set', () => {
+describe('isCreditOnlySet', () => {
+  // Fixtures from a real case: song id 2650440016 ("芥") holds exactly these two entries, and
+  // the track genuinely has no singable lyrics - NetEase shows only the credits for it.
+  it('detects the credits-only shape NetEase shows for a lyric-less track', () => {
     assert.equal(
-      hasOnlyCredits([
+      isCreditOnlySet([
         { time: -0.001, lyric: '作词: FAIZ' },
         { time: -0.001, lyric: '作曲: FAIZ' },
       ]),
@@ -254,35 +273,61 @@ describe('hasOnlyCredits', () => {
     );
   });
 
-  it('does NOT treat an empty set as credit-only (that is a different state)', () => {
-    // Empty means the fetch completed with no lyric content, which the caller reports as
-    // instrumental. Only a set that has content but nothing but credits is untrustworthy.
-    assert.equal(hasOnlyCredits([]), false);
-    assert.equal(hasOnlyCredits(null), false);
-    assert.equal(hasOnlyCredits(undefined), false);
+  it('is false for an empty set (a different state entirely)', () => {
+    assert.equal(isCreditOnlySet([]), false);
+    assert.equal(isCreditOnlySet(null), false);
+    assert.equal(isCreditOnlySet(undefined), false);
   });
 
-  it('does not treat a blank-only set as credit-only', () => {
-    assert.equal(hasOnlyCredits([{ time: 0, lyric: '' }, { time: 1, lyric: '   ' }]), false);
-  });
-
-  it('returns false as soon as one real lyric line is present', () => {
+  it('is false as soon as one timed line is present', () => {
     assert.equal(
-      hasOnlyCredits([
+      isCreditOnlySet([
         { time: 0, lyric: '作词: FAIZ' },
         { time: 12.3, lyric: ' and i can hear the silence' },
       ]),
       false,
     );
   });
+});
 
-  it('does not mistake a lyric that mentions a credit word later on', () => {
-    // Past the credit window, a line starting with 作词: is treated as a real lyric.
-    assert.equal(hasOnlyCredits([{ time: 60, lyric: '作词: 我乱写的' }]), false);
+describe('lyricsMentionTrack', () => {
+  /*
+   * This is the check that separates this track's lyrics from the previous track's, which the
+   * client's store briefly reports under the new song id. Both sides are real fixtures:
+   * "Through Midnight" is credited "作词: KikKuU", while the stale set under "芥"'s id was
+   * "Through Midnight"'s own lyrics.
+   */
+  const staleFromPreviousTrack = [
+    { time: 0, lyric: '作词: KikKuU' },
+    { time: 7.098, lyric: 'Through Midnight feat. 巡音ルカ' },
+  ];
+
+  it('rejects the previous track\'s lyrics for the new track', () => {
+    assert.equal(lyricsMentionTrack(staleFromPreviousTrack, '芥', 'FAIZ / 重音テト'), false);
+  });
+
+  it('accepts the set that names this track', () => {
+    const creditsForThisTrack = [
+      { time: -0.001, lyric: '作词: FAIZ' },
+      { time: -0.001, lyric: '作曲: FAIZ' },
+    ];
+    assert.equal(lyricsMentionTrack(creditsForThisTrack, '芥', 'FAIZ / 重音テト'), true);
+  });
+
+  it('matches on the track name too', () => {
+    assert.equal(lyricsMentionTrack([{ time: 0, lyric: 'Through Midnight' }], 'Through Midnight', 'X'), true);
+  });
+
+  it('matches either artist when several are listed', () => {
+    assert.equal(lyricsMentionTrack([{ time: 0, lyric: 'feat. 巡音ルカ' }], 'y', 'KikKuU / 巡音ルカ'), true);
+  });
+
+  it('is false when there is nothing to match against', () => {
+    assert.equal(lyricsMentionTrack(staleFromPreviousTrack, '', ''), false);
   });
 });
 
-describe('docFromClientSlice rejects untrustworthy data', () => {
+describe('docFromClientSlice keeps credits and reports the no-lyric state', () => {
   const base = {
     songId: 2650440016,
     currentUsedLyric: 'lrc',
@@ -296,10 +341,7 @@ describe('docFromClientSlice rejects untrustworthy data', () => {
     at: Date.now(),
   };
 
-  it('returns null for a credit-only set, so the caller keeps waiting or falls back', () => {
-    // This is the fix for "switching to a song showed the previous song's lyrics": the
-    // client reports the new song id while the store still holds the old track's data, and a
-    // credit-only set is also what an unloaded track looks like.
+  it('keeps credit lines, because that is what NetEase displays', () => {
     const doc = docFromClientSlice({
       ...base,
       lyricLines: [
@@ -307,20 +349,20 @@ describe('docFromClientSlice rejects untrustworthy data', () => {
         { time: -0.001, lyric: '作曲: FAIZ' },
       ],
     });
-    assert.equal(doc, null);
+    assert.ok(doc);
+    assert.equal(doc.lines.length, 2);
+    assert.equal(doc.lines[0]?.text, '作词: FAIZ');
   });
 
-  it('still returns a document when real lyric lines are present', () => {
-    const doc = docFromClientSlice({
-      ...base,
-      lyricLines: [
-        { time: 0, lyric: '作词: FAIZ' },
-        { time: 5, lyric: 'a real line' },
-      ],
-    });
+  it('reports no lyrics when the client has nothing and is not loading', () => {
+    const doc = docFromClientSlice({ ...base, lyricLines: [], tlyricLines: [] });
     assert.ok(doc);
-    assert.equal(doc.source, 'client');
-    assert.equal(doc.lines.length, 1);
+    assert.equal(doc.instrumental, true);
+    assert.equal(doc.lines.length, 0);
+  });
+
+  it('returns null while the client is still loading (so the host can wait)', () => {
+    assert.equal(docFromClientSlice({ ...base, lyricLines: [], isLoading: true }), null);
   });
 });
 

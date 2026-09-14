@@ -176,12 +176,15 @@ async function boot() {
     onMessage: handleMessage,
     onStatus: (state) => {
       connected = state === 'connected';
-      if (!connected) view.setConnection({ state: 'disconnected', detail: '正在连接宿主…' });
+      if (connected) return;
+      // A silent disconnection previously looked identical to "nothing playing", so
+      // the card states which one it is.
+      view.setConnection({ state: 'disconnected', detail: `未连接宿主 (${link.url})` });
+      view.setIdle(`未连接宿主 ${config.port}`);
     },
   });
 
   bindInput();
-  view.setFace(hidden ? 'front' : 'front');
   link.connect();
   requestAnimationFrame(frame);
 
@@ -194,6 +197,17 @@ async function boot() {
       return lastSnapshot;
     },
   };
+
+  // Tell the page-level watchdog that rendering succeeded, which hides the banner.
+  globalThis.__booted = true;
+  const bootError = document.getElementById('boot-error');
+  if (bootError) bootError.hidden = true;
+  console.info(`[overlay] 已启动，宿主 ws://127.0.0.1:${config.port}`);
 }
 
-void boot();
+void boot().catch((error) => {
+  // Surface startup failures in the page, not just the console.
+  const message = error instanceof Error ? `${error.message}` : String(error);
+  if (typeof globalThis.__bootFail === 'function') globalThis.__bootFail(message);
+  console.error('[overlay] 启动失败', error);
+});

@@ -9,25 +9,31 @@
   </head>
   <body>
     <!--
-      Fixed 9:16 stage, scaled to fit the viewport and centred. The stage carries the
-      proportions; everything inside is written in `--u` (1% of the stage width), so
-      the composition is identical in a browser window and in the desktop shell.
+      Fixed 9:16 stage, scaled to fit the viewport and centred. Everything inside is
+      written in `--u` (1% of the stage width), so the composition is identical in a
+      browser window and in the desktop shell.
 
-      Structure, mirroring the reference layout:
-        cover (inset, not full width)
-        title / artist
-        [flex spacer]
-        progress bar + times
-        transport controls
-        [flex spacer]
-        colour band + hex codes   <- also the background picker
-        credit line
+      Positions are measured from the reference image, not estimated:
+        node tools/measure-reference.mjs <reference.png>   reads the reference pixels
+        node tools/check-layout.mjs                        verifies this stylesheet
 
-      The two flex spacers are what make the whitespace even: the top one is slightly
-      larger than the bottom one, so the cover sits a touch below the top edge and the
-      densest part of the playbar ends up in the lower half.
+      Layout, top to bottom: cover (85.93u square), title, artist, progress bar with
+      times, transport controls, colour band with hex codes, credit.
+
+      The colour band doubles as the background picker: clicking a segment paints the
+      card with that colour, clicking the active one returns to the default surface.
     -->
     <div class="stage" id="stage">
+      <!--
+        Shown only if the module graph fails to run. Without it a startup error looks
+        exactly like "nothing is playing", which is the most confusing failure mode
+        this page has had. main.js clears it as soon as it renders.
+      -->
+      <div class="boot-error" id="boot-error" hidden>
+        <strong>界面脚本没能启动</strong>
+        <span id="boot-error-detail">按 F12 查看 Console 的报错</span>
+      </div>
+
       <main id="card" class="card" data-face="front" data-bg="glass" aria-live="polite">
         <section class="face face--front" id="face-front">
           <div class="cover-wrap">
@@ -35,12 +41,8 @@
             <div class="cover-fallback" id="cover-fallback" aria-hidden="true"></div>
           </div>
 
-          <div class="meta">
-            <h1 class="title" id="title">未检测到播放</h1>
-            <p class="artist" id="artist">等待网易云音乐</p>
-          </div>
-
-          <div class="spacer spacer--top" aria-hidden="true"></div>
+          <h1 class="title" id="title">未检测到播放</h1>
+          <p class="artist" id="artist">等待网易云音乐</p>
 
           <div class="progress">
             <div class="progress-track">
@@ -65,14 +67,7 @@
             </button>
           </div>
 
-          <div class="spacer spacer--bottom" aria-hidden="true"></div>
-
           <div class="foot">
-            <!--
-              Five palette swatches as one continuous colour band, with a sixth
-              "glass" segment appended. Clicking a segment paints the card; clicking
-              the active one returns to the frosted glass.
-            -->
             <div class="band" id="palette" role="group" aria-label="背景色"></div>
             <div class="band-labels" id="palette-labels" aria-hidden="true"></div>
             <span class="credit" id="credit">NCM · TRACKPIC CARD</span>
@@ -94,3 +89,32 @@
         <div class="status" id="status"><span class="dot"></span><span id="status-text">连接中…</span></div>
       </main>
     </div>
+
+    <script>
+      // Boot watchdog: the app sets __booted once it has rendered. If it never does,
+      // the page says so rather than looking idle.
+      window.__booted = false;
+      window.__bootFail = (message) => {
+        const box = document.getElementById('boot-error');
+        const detail = document.getElementById('boot-error-detail');
+        if (!box) return;
+        box.hidden = false;
+        if (detail && message) detail.textContent = message;
+      };
+      window.addEventListener('error', (event) => {
+        if (!window.__booted) window.__bootFail(String(event.message || event.error || '未知错误'));
+      });
+      window.addEventListener('unhandledrejection', (event) => {
+        if (!window.__booted) {
+          window.__bootFail(`未处理的 Promise 错误: ${String(event.reason || 'unknown')}`);
+        }
+      });
+      setTimeout(() => {
+        if (!window.__booted) {
+          window.__bootFail('3 秒内没有启动完成，可能是模块加载失败或脚本抛错（按 F12 看 Console）');
+        }
+      }, 3000);
+    </script>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

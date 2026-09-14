@@ -1,19 +1,22 @@
 /**
- * Scrolling lyrics with a karaoke sweep.
+ * Scrolling lyrics.
+ *
+ * Deliberately simple: no karaoke sweep. The active line is highlighted and the
+ * stack scrolls to keep it in view; that is the whole effect. Line-level timing is
+ * what the client actually provides (its yrcInfo is empty on every track measured),
+ * so a per-word sweep would mostly be faked from line times.
  *
  * Rendering strategy:
  *  - Lines are built once per document and never re-created while scrolling.
  *  - The stack moves with a single `transform: translate3d`, so scrolling is one
  *    composited property rather than a layout change.
- *  - The active line's sweep is driven by a `--p` custom property (0..1) that the
- *    render loop writes each frame. With word timings the sweep follows the words;
- *    without them it sweeps the line, which is the best LRC can do.
- *  - Only lines near the viewport are kept visible; the rest are hidden so a
- *    1000-line document does not cost anything per frame.
+ *  - Only lines near the viewport stay visible; a 1000-line document costs nothing
+ *    per frame.
  */
 
 const LINE_HEIGHT_GUESS = 34;
-const ACTIVE_OFFSET_RATIO = 0.42;
+/** Where the active line sits in the box, 0 = top, 1 = bottom. */
+const ACTIVE_OFFSET_RATIO = 0.46;
 
 export class LyricsView {
   /** @param {HTMLElement} container */
@@ -26,44 +29,37 @@ export class LyricsView {
 
     /** @type {HTMLElement[]} */
     this.nodes = [];
-    /** @type {{startMs:number,endMs:number,words:any[]}[]} */
+    /** @type {{startMs:number,endMs:number}[]} */
     this.lines = [];
     this.activeIndex = -1;
     this.scrollTarget = 0;
     this.scrollCurrent = 0;
     this.showTranslation = true;
-    this.hasWordTiming = false;
     this.songId = null;
   }
 
-  /** Replace the document. Cheap for the common case of the same song re-sent. */
+  /** Replace the document. Cheap when the same song is re-sent unchanged. */
   setDocument(doc) {
     const sameSong = this.songId === doc.songId;
-    const sameShape = sameSong && this.lines.length === doc.lines.length;
     this.songId = doc.songId;
-    this.hasWordTiming = doc.hasWordTiming;
 
-    if (sameShape && this.#sameTimings(doc)) return;
+    if (sameSong && this.nodes.length === doc.lines.length && this.#sameTimings(doc)) return;
 
     this.lines = doc.lines;
     this.activeIndex = -1;
-    this.stack.replaceChildren();
     this.nodes = [];
+    this.stack.replaceChildren();
 
     if (this.empty) {
-      if (!doc.lines.length) {
-        this.empty.textContent = doc.instrumental ? '纯音乐，请欣赏' : '暂无歌词';
-        this.empty.style.display = '';
-      } else {
-        this.empty.style.display = 'none';
-      }
+      const empty = !doc.lines.length;
+      this.empty.style.display = empty ? '' : 'none';
+      if (empty) this.empty.textContent = doc.instrumental ? '纯音乐，请欣赏' : '暂无歌词';
     }
 
     const fragment = document.createDocumentFragment();
-    doc.lines.forEach((line, index) => {
+    doc.lines.forEach((line) => {
       const node = document.createElement('div');
       node.className = 'lyric-line';
-      node.dataset.index = String(index);
 
       const text = document.createElement('span');
       text.className = 'text';
@@ -84,14 +80,14 @@ export class LyricsView {
   }
 
   #sameTimings(doc) {
-    if (!this.lines.length) return false;
+    if (!this.lines.length || !doc.lines.length) return this.lines.length === doc.lines.length;
     return (
       this.lines[0]?.startMs === doc.lines[0]?.startMs &&
       this.lines[this.lines.length - 1]?.startMs === doc.lines[doc.lines.length - 1]?.startMs
     );
   }
 
-  /** Index of the line containing `positionMs`. */
+  /** Index of the line containing `positionMs`, or -1 before the first line. */
   indexAt(positionMs) {
     const lines = this.lines;
     if (!lines.length) return -1;
@@ -114,24 +110,11 @@ export class LyricsView {
    * Per-frame update.
    * @param {number} positionMs current playback position
    * @param {number} dtMs elapsed since the previous frame
-   * @param {boolean} animate whether to ease the scroll (false while hidden)
+   * @param {boolean} animate whether to ease the scroll (false when hidden)
    */
   tick(positionMs, dtMs, animate = true) {
     const index = this.indexAt(positionMs);
-    if (index !== this.activeIndex) {
-      this.#setActive(index);
-    }
-
-    // Karaoke progress for the active line.
-    if (index >= 0) {
-      const line = this.lines[index];
-      const node = this.nodes[index];
-      if (node) {
-        const p = sweepProgress(line, positionMs);
-        node.style.setProperty('--p', p.toFixed(4));
-      }
-    }
-
+    if (index !== this.activeIndex) this.#setActive(index);
     this.#scrollTo(index, dtMs, animate);
   }
 
@@ -147,13 +130,10 @@ export class LyricsView {
       if (!node) continue;
       node.classList.toggle('is-past', i < index);
       node.classList.toggle('is-active', i === index);
-      // Keep far-away lines out of the compositor.
       const distance = index < 0 ? 0 : Math.abs(i - index);
-      node.style.visibility = distance > 12 ? 'hidden' : '';
+      node.style.visibility = distance > 14 ? 'hidden' : '';
     }
-    if (index >= 0 && this.nodes[index]) {
-      this.nodes[index].classList.add('is-active');
-    }
+    this.nodes[index]?.classList.add('is-active');
   }
 
   #scrollTo(index, dtMs, animate) {
@@ -167,7 +147,6 @@ export class LyricsView {
     if (!animate) {
       this.scrollCurrent = target;
     } else if (this.scrollCurrent !== target) {
-      // Critically-damped-ish easing that settles in ~250ms.
       const k = 1 - Math.exp(-dtMs / 70);
       this.scrollCurrent += (target - this.scrollCurrent) * k;
       if (Math.abs(target - this.scrollCurrent) < 0.4) this.scrollCurrent = target;
@@ -180,52 +159,7 @@ export class LyricsView {
     this.showTranslation = visible;
     for (const node of this.nodes) {
       const translation = node.querySelector('.translation');
-      if (!translation) continue;
-      translation.style.display = visible ? '' : 'none';
+      if (translation) translation.style.display = visible ? '' : 'none';
     }
   }
-}
-
-/**
- * Sweep progress within a line, 0..1.
- *
- * With word timings we interpolate inside the word that contains the position,
- * which is what makes per-character karaoke look right. Without them we sweep the
- * whole line by its duration.
- */
-function sweepProgress(line, positionMs) {
-  const start = line.startMs;
-  const end = Math.max(line.endMs ?? start + 1, start + 1);
-
-  if (Array.isArray(line.words) && line.words.length) {
-    const words = line.words;
-    const last = words[words.length - 1];
-    const total = Math.max((last.startMs + last.durationMs) - start, 1);
-    if (positionMs <= start) return 0;
-    if (positionMs >= last.startMs + last.durationMs) return 1;
-
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
-      const wordStart = word.startMs;
-      const wordEnd = wordStart + word.durationMs;
-      if (positionMs < wordStart) {
-        // Between words: hold at the previous boundary.
-        const previous = words[i - 1];
-        const previousEnd = previous ? previous.startMs + previous.durationMs : start;
-        return clamp01((previousEnd - start) / total);
-      }
-      if (positionMs <= wordEnd) {
-        const within = word.durationMs > 0 ? (positionMs - wordStart) / word.durationMs : 1;
-        return clamp01((wordStart - start + within * word.durationMs) / total);
-      }
-    }
-    return 1;
-  }
-
-  return clamp01((positionMs - start) / (end - start));
-}
-
-function clamp01(value) {
-  if (!Number.isFinite(value)) return 0;
-  return value < 0 ? 0 : value > 1 ? 1 : value;
 }

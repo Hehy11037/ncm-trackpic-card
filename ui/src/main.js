@@ -20,8 +20,8 @@ const view = new CardView();
 const clock = new PlayClock();
 const lyrics = new LyricsView(document.getElementById('lyrics'));
 
-// Size the composition to the window before the first paint.
-applyLayoutUnit();
+// Size the composition to the stage before the first paint.
+applyLayoutUnit(document.getElementById('stage'));
 
 let link = null;
 let connected = false;

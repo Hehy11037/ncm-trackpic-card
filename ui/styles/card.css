@@ -1,30 +1,33 @@
 /*
  * The 9:16 card.
  *
- * Composition, top to bottom (proportions follow the reference design):
- *   cover (square, full width of the content column)
- *   title            - type scale step 13, weight 600
- *   artist           - step 11, 0.16em tracking, muted
- *   progress + times - thin bar, times at 0.06em tracking, faint tier
- *   controls         - three circular buttons, the middle one filled
- *   footer           - five palette swatches (also the background picker) + credit
+ * All measurements are in `--u` (1 unit = 1% of the card width), converted from the
+ * reference design's 1080px-wide canvas: a 420px cover becomes 38.9 units, 40px
+ * padding becomes 3.7 units, and so on. Because everything shares one unit, changing
+ * the on-screen size never changes the proportions.
  *
- * The card fills its window; all spacing is in `--u` so the composition scales.
+ * Composition, top to bottom:
+ *   square cover (inset from the card edges)
+ *   title (13px tier, weight 600)
+ *   artist (11px tier, 0.16em tracking, muted)
+ *   progress bar + times (10px tier, tabular)
+ *   transport controls (three circles, the middle one filled)
+ *   palette swatches (also the background picker) + credit line
  */
 
 .card {
   position: relative;
   width: 100%;
   height: 100%;
-  border-radius: var(--card-radius);
+  border-radius: var(--radius-card);
   overflow: hidden;
   background: var(--bg);
-  transition: background 520ms var(--ease), box-shadow 520ms var(--ease);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.35) inset, 0 20px 60px rgba(15, 18, 22, 0.3);
+  transition: background 520ms var(--ease);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.32) inset, 0 20px 60px rgba(15, 18, 22, 0.3);
   perspective: 1400px;
 }
 
-/* Frosted glass: the default, shown when no palette colour is picked. */
+/* Frosted glass: the default, used when no palette colour is selected. */
 .card[data-bg='glass'] {
   background: var(--panel);
   backdrop-filter: blur(26px) saturate(160%);
@@ -32,9 +35,9 @@
 }
 
 /*
- * A faint wash derived from the cover. It sits under the content on every background
- * so the card still feels tied to the artwork, and it doubles as the scrim that keeps
- * text readable on mid-tone palette colours.
+ * A wash derived from the cover palette. It sits under the content on every
+ * background so the card stays tied to the artwork, and it doubles as the scrim that
+ * keeps text readable on mid-tone palette colours (see layout.js schemeFor()).
  */
 .card::before {
   content: '';
@@ -42,22 +45,16 @@
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(
-      180deg,
-      var(--scrim) 0%,
-      transparent 34%,
-      transparent 66%,
-      var(--scrim) 100%
-    ),
-    radial-gradient(120% 60% at 20% 0%, var(--accent-top) 0%, transparent 62%),
-    radial-gradient(110% 55% at 90% 100%, var(--accent-bottom) 0%, transparent 60%);
-  opacity: 0.5;
+    linear-gradient(180deg, var(--scrim) 0%, transparent 30%, transparent 70%, var(--scrim) 100%),
+    radial-gradient(120% 55% at 15% 0%, var(--accent-top) 0%, transparent 60%),
+    radial-gradient(110% 50% at 90% 100%, var(--accent-bottom) 0%, transparent 58%);
+  opacity: 0.45;
   mix-blend-mode: soft-light;
   transition: opacity 520ms var(--ease);
 }
 
 .card[data-bg='glass']::before {
-  opacity: 0.62;
+  opacity: 0.6;
   mix-blend-mode: normal;
 }
 
@@ -68,7 +65,7 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  padding: calc(var(--u) * 5) calc(var(--u) * 5) calc(var(--u) * 4);
+  padding: calc(var(--u) * 3.7) calc(var(--u) * 3.7) calc(var(--u) * 2.8);
   backface-visibility: hidden;
   transition: opacity var(--flip-duration) var(--ease), transform var(--flip-duration) var(--ease);
 }
@@ -82,7 +79,7 @@
   opacity: 0;
   transform: rotateY(180deg);
   pointer-events: none;
-  padding: calc(var(--u) * 5) calc(var(--u) * 2.4);
+  padding: calc(var(--u) * 4) calc(var(--u) * 2);
 }
 
 .card[data-face='back'] .face--front {
@@ -103,11 +100,11 @@
   position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: var(--cover-radius);
+  border-radius: var(--radius-cover);
   overflow: hidden;
   flex: 0 0 auto;
   background: var(--accent-bottom);
-  box-shadow: 0 10px 30px rgba(15, 18, 22, 0.26);
+  box-shadow: 0 8px 24px rgba(15, 18, 22, 0.24);
 }
 
 .cover {
@@ -138,7 +135,7 @@
 /* -------------------------------------------------------------- title/artist */
 
 .meta {
-  margin-top: calc(var(--u) * 7);
+  margin-top: calc(var(--u) * 5.6);
   min-width: 0;
 }
 
@@ -146,7 +143,7 @@
   margin: 0;
   font-size: var(--fs-title);
   font-weight: 600;
-  line-height: 1.22;
+  line-height: 1.24;
   letter-spacing: var(--tracking-title);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -155,7 +152,7 @@
 }
 
 .artist {
-  margin: calc(var(--u) * 2.4) 0 0;
+  margin: calc(var(--u) * 1.8) 0 0;
   font-size: var(--fs-artist);
   font-weight: 500;
   letter-spacing: var(--tracking-artist);
@@ -169,11 +166,11 @@
 
 .progress {
   margin-top: auto;
-  padding-top: calc(var(--u) * 5);
+  padding-top: calc(var(--u) * 4);
 }
 
 .progress-track {
-  height: calc(var(--u) * 0.9);
+  height: calc(var(--u) * 0.55);
   border-radius: 999px;
   background: var(--panel-line);
   overflow: hidden;
@@ -190,7 +187,7 @@
 .progress-times {
   display: flex;
   justify-content: space-between;
-  margin-top: calc(var(--u) * 2);
+  margin-top: calc(var(--u) * 1.4);
   font-size: var(--fs-time);
   font-weight: 500;
   letter-spacing: var(--tracking-time);
@@ -204,23 +201,23 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--u) * 8);
-  margin-top: calc(var(--u) * 4.4);
+  gap: calc(var(--u) * 7);
+  margin-top: calc(var(--u) * 3.2);
 }
 
 .ctrl {
   display: grid;
   place-items: center;
-  width: calc(var(--u) * 6.4);
-  height: calc(var(--u) * 6.4);
+  width: calc(var(--u) * 5.2);
+  height: calc(var(--u) * 5.2);
   border-radius: 50%;
   color: var(--text-muted);
   transition: color 160ms, background 160ms, transform 160ms;
 }
 
 .ctrl svg {
-  width: 58%;
-  height: 58%;
+  width: 62%;
+  height: 62%;
   fill: currentColor;
 }
 
@@ -234,16 +231,10 @@
 }
 
 .ctrl--primary {
-  width: calc(var(--u) * 8.6);
-  height: calc(var(--u) * 8.6);
+  width: calc(var(--u) * 7);
+  height: calc(var(--u) * 7);
   background: var(--text-strong);
-  color: var(--bg-strong-on-solid, #fff);
-}
-
-/* On a solid palette background the primary button inverts to the text colour, so
-   the icon must contrast with it rather than with the background. */
-:root[data-scheme='dark'] .ctrl--primary {
-  color: #14181c;
+  color: var(--icon-on-primary);
 }
 
 .card .icon-pause {
@@ -264,43 +255,38 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: calc(var(--u) * 3);
-  margin-top: calc(var(--u) * 4.4);
+  gap: calc(var(--u) * 2);
+  margin-top: calc(var(--u) * 3.4);
 }
 
 /*
- * The palette strip is the background picker: five swatches derived from the cover.
- * Tapping one paints the card; tapping the active one goes back to frosted glass.
+ * The palette row is the background picker: five swatches derived from the cover.
+ * Tapping one paints the card; tapping the active one returns to frosted glass.
  */
 .palette {
   display: flex;
   align-items: center;
-  gap: calc(var(--u) * 1.4);
+  gap: calc(var(--u) * 1.3);
 }
 
 .swatch {
-  width: calc(var(--u) * 4.2);
-  height: calc(var(--u) * 4.2);
+  width: calc(var(--u) * 3.1);
+  height: calc(var(--u) * 3.1);
   border-radius: 50%;
   cursor: pointer;
-  position: relative;
-  transition: transform 220ms var(--ease), box-shadow 220ms var(--ease);
+  transition: transform 200ms var(--ease), box-shadow 200ms var(--ease);
   -webkit-app-region: no-drag;
   box-shadow: 0 0 0 0 transparent;
 }
 
 .swatch:hover {
-  transform: scale(1.16);
+  transform: scale(1.18);
 }
 
-/* The active background gets a ring so the choice is visible at a glance. */
+/* The active background gets a ring, so the current choice is obvious. */
 .swatch[aria-pressed='true'] {
-  transform: scale(1.1);
-  box-shadow: 0 0 0 2px var(--text-strong);
-}
-
-.swatch[data-glass='true'] {
-  background: linear-gradient(150deg, var(--accent-top), var(--accent-bottom));
+  transform: scale(1.12);
+  box-shadow: 0 0 0 max(1px, calc(var(--u) * 0.22)) var(--text-strong);
 }
 
 .credit {
@@ -316,12 +302,12 @@
 
 .flip {
   position: absolute;
-  top: calc(var(--u) * 2);
-  right: calc(var(--u) * 2);
+  top: calc(var(--u) * 1.6);
+  right: calc(var(--u) * 1.6);
   display: grid;
   place-items: center;
-  width: calc(var(--u) * 5.2);
-  height: calc(var(--u) * 5.2);
+  width: calc(var(--u) * 4.2);
+  height: calc(var(--u) * 4.2);
   border-radius: 50%;
   color: var(--text-faint);
   opacity: 0;
@@ -329,8 +315,8 @@
 }
 
 .flip svg {
-  width: 55%;
-  height: 55%;
+  width: 58%;
+  height: 58%;
   fill: currentColor;
 }
 
@@ -350,16 +336,16 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(50% - var(--u) * 2);
+  top: calc(50% - var(--u) * 1.6);
   display: none;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--u) * 1.4);
+  gap: calc(var(--u) * 1.2);
+  padding: 0 calc(var(--u) * 5);
   font-size: var(--fs-status);
   letter-spacing: 0.08em;
   color: var(--text-muted);
   text-align: center;
-  padding: 0 calc(var(--u) * 6);
 }
 
 .card[data-connected='false'] .status {
@@ -367,8 +353,8 @@
 }
 
 .status .dot {
-  width: calc(var(--u) * 1.1);
-  height: calc(var(--u) * 1.1);
+  width: calc(var(--u) * 0.9);
+  height: calc(var(--u) * 0.9);
   border-radius: 50%;
   background: #d9a441;
   flex: 0 0 auto;
@@ -381,8 +367,9 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
+  /* Fade both edges so lines enter and leave the box softly. */
+  mask-image: linear-gradient(180deg, transparent 0%, #000 18%, #000 82%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 18%, #000 82%, transparent 100%);
 }
 
 .lyrics-stack {
@@ -393,49 +380,38 @@
   will-change: transform;
 }
 
+/*
+ * No karaoke sweep by design: line-level timing is all the client provides, so a
+ * per-word fill would be invented. The active line is simply emphasised.
+ */
 .lyric-line {
   margin: 0;
-  padding: calc(var(--u) * 1.6) calc(var(--u) * 3);
+  padding: calc(var(--u) * 1.5) calc(var(--u) * 2.6);
   font-size: var(--fs-lyric);
   font-weight: 500;
-  line-height: 1.32;
+  line-height: 1.36;
   letter-spacing: 0.01em;
   color: var(--text-muted);
-  opacity: 0.42;
-  transform-origin: left center;
-  transition: color 300ms, opacity 300ms, transform 300ms;
+  opacity: 0.4;
+  transition: color 300ms, opacity 300ms;
 }
 
 .lyric-line .translation {
   display: block;
+  margin-top: calc(var(--u) * 0.7);
   font-size: var(--fs-lyric-sub);
   font-weight: 400;
-  margin-top: calc(var(--u) * 0.8);
   color: var(--text-faint);
-  opacity: 0.9;
 }
 
 .lyric-line.is-past {
-  opacity: 0.24;
+  opacity: 0.22;
 }
 
 .lyric-line.is-active {
   opacity: 1;
-  transform: scale(1.03);
-}
-
-/* Karaoke sweep: a gradient clipped to the glyphs, revealed by --p. */
-.lyric-line.is-active .text {
-  background-image: linear-gradient(
-    90deg,
-    var(--text-strong) 0%,
-    var(--text-strong) calc(var(--p, 0) * 100%),
-    var(--text-muted) calc(var(--p, 0) * 100%),
-    var(--text-muted) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text-strong);
+  font-weight: 600;
 }
 
 .lyrics-empty {

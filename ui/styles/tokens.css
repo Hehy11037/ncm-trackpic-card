@@ -1,54 +1,64 @@
 /*
  * Design tokens.
  *
- * The numeric scale is taken from the reference design (TrackPic, 9:16 wallpaper):
- * type sizes 9/10/11/12/13px, letter-spacing 0.05em-0.28em, weights 400-600,
- * radii 6/8/20/24px, and a three-step text hierarchy expressed as opacity.
+ * The numeric scale comes from the reference design (TrackPic, a 9:16 wallpaper
+ * maker): type sizes 9/10/11/12/13 px, letter-spacing 0.05em-0.28em, weights
+ * 400-600, radii 6/8/20/24 px, and a text hierarchy expressed as three opacity
+ * steps.
  *
- * `--u` is the layout unit. The overlay is a smaller surface than a phone wallpaper,
- * so everything is expressed as multiples of `--u` and `--u` is set from the window
- * height by src/layout.js. That keeps the composition proportional at any size.
+ * `--u` is one layout unit = **1% of the stage width** (the stage is 100 units wide
+ * and 9:16 tall). Every size below is an absolute measurement from the reference
+ * divided by the reference width in px (1080), so the composition is identical
+ * whatever the on-screen scale. src/layout.js sets `--u`.
  */
 
 :root {
-  /* Layout unit; overridden at runtime. */
-  --u: 5.4px;
-  --card-radius: calc(var(--u) * 4.4);
-  --cover-radius: calc(var(--u) * 3.1);
+  /* Layout unit; set at runtime. The fallback suits a 360px-wide stage. */
+  --u: 3.6px;
+  --stage-width: 360px;
+  --stage-height: 640px;
 
-  /* Reference type scale, in layout units. */
-  --fs-title: calc(var(--u) * 9.8);
-  --fs-artist: calc(var(--u) * 5.2);
-  --fs-time: calc(var(--u) * 4.4);
-  --fs-credit: calc(var(--u) * 3.9);
-  --fs-lyric: calc(var(--u) * 6.6);
-  --fs-lyric-sub: calc(var(--u) * 5);
-  --fs-status: calc(var(--u) * 4.4);
+  --radius-card: calc(var(--u) * 5.2);
+  --radius-cover: calc(var(--u) * 3.5);
+
+  /*
+   * Reference type sizes, converted honestly: the reference design is drawn on a
+   * 1080px-wide canvas using 9/10/11/12/13px type, so a size of N px becomes N/10.8
+   * units here (1 unit = 1% of the card width). Everything scales together, which is
+   * what keeps the proportions identical to the reference at any screen size.
+   */
+  --fs-title: calc(var(--u) * 1.2); /* 13px */
+  --fs-artist: calc(var(--u) * 1.02); /* 11px */
+  --fs-time: calc(var(--u) * 0.93); /* 10px */
+  --fs-credit: calc(var(--u) * 0.83); /* 9px */
+  --fs-lyric: calc(var(--u) * 1.2); /* 13px */
+  --fs-lyric-sub: calc(var(--u) * 0.93); /* 10px */
+  --fs-status: calc(var(--u) * 0.93);
 
   --tracking-title: 0.02em;
   --tracking-artist: 0.16em;
   --tracking-credit: 0.28em;
   --tracking-time: 0.06em;
 
-  /* Font stack from the reference (their webfont is licensed, so we fall back to
-     the rounded CJK families that ship with the OS and with this machine). */
+  /* Font stack from the reference. Its webfont is licensed, so we fall back to the
+     rounded CJK families available on this machine. */
   --font-ui: 'fot-tsukuardgothic-std', 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN',
     'MiSans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
 
-  /* Cover-derived accent colours, overwritten per track. */
+  /* Cover-derived accents, overwritten per track. Defaults are the reference palette. */
   --accent-dominant: #98b6be;
   --accent-top: #98b6be;
   --accent-bottom: #4a6370;
   --accent-soft: rgba(152, 182, 190, 0.22);
 
-  /* Background. `--panel` is the frosted-glass option; `--bg` is a flat palette
-     colour when the user picks one. */
+  /* Background: `--bg` is a flat palette colour, `--panel` is the glass option. */
   --bg: transparent;
-  --panel: rgba(255, 255, 255, 0.34);
+  --panel: rgba(255, 255, 255, 0.32);
   --panel-line: rgba(44, 50, 54, 0.12);
   --scrim: transparent;
+  --icon-on-primary: #ffffff;
 
-  /* Text hierarchy: three steps by opacity, as in the reference. */
+  /* Three-step text hierarchy, as in the reference. */
   --text-strong: #2c3236;
   --text-muted: rgba(44, 50, 54, 0.62);
   --text-faint: rgba(44, 50, 54, 0.4);
@@ -57,13 +67,14 @@
   --flip-duration: 420ms;
 }
 
-/* Light text on dark palettes. `data-scheme` is set from the chosen background. */
+/* Light text on dark backgrounds. `data-scheme` is set from the chosen background. */
 :root[data-scheme='dark'] {
-  --panel: rgba(20, 24, 28, 0.34);
+  --panel: rgba(20, 24, 28, 0.32);
   --panel-line: rgba(237, 241, 243, 0.18);
   --text-strong: #edf1f3;
   --text-muted: rgba(237, 241, 243, 0.65);
   --text-faint: rgba(237, 241, 243, 0.42);
+  --icon-on-primary: #14181c;
 }
 
 * {
@@ -82,6 +93,21 @@ body {
   user-select: none;
   cursor: default;
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * The stage carries the proportions: the largest 9:16 rectangle that fits the
+ * viewport, centred. In the desktop shell the window is already 9:16 so it fills
+ * exactly; in a browser it fills what it can and stays centred, which is what makes
+ * the preview show the real proportions instead of a stretched layout.
+ */
+.stage {
+  width: min(94vw, calc(94vh * 9 / 16));
+  height: min(calc(94vw * 16 / 9), 94vh);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 button {

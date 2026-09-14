@@ -1,17 +1,12 @@
 /**
- * Layout unit + background/contrast decisions.
+ * Layout: a fixed 9:16 stage, scaled to fit the viewport.
  *
- * Two responsibilities that both belong to the "how does it look" layer:
- *
- *  1. `applyLayoutUnit()` keeps the composition proportional. The reference design
- *     draws on a fixed 9:16 canvas and multiplies every offset by a scale factor;
- *     we do the same thing with a CSS custom property, set from the window height.
- *
- *  2. `schemeFor()` decides whether text goes light or dark. This matters most when
- *     the user paints the card with one of the five palette colours, because a
- *     mid-tone swatch can be unreadable with either choice - so the scrim strength
- *     is raised for those, rather than flipping text to a colour that does not
- *     actually contrast.
+ * This is the part that was wrong before. Scaling only from the window height meant
+ * that a tall browser viewport blew every type size up - the reference design is a
+ * *fixed* 9:16 canvas whose content is multiplied by one scale factor, not a fluid
+ * layout. So the stage has a fixed design size, and `--u` is derived from the scale
+ * needed to fit it into the viewport. The composition is then identical at any size,
+ * in a browser or in the desktop shell, and never grows past a sane maximum.
  */
 
 import { contrastRatio, luminance } from './palette.js';
@@ -28,15 +23,38 @@ export const REFERENCE_PALETTE = [
 const LIGHT_TEXT = { r: 0xed, g: 0xf1, b: 0xf3 };
 const DARK_TEXT = { r: 0x2c, g: 0x32, b: 0x36 };
 
-/** How tall the reference card is, in layout units. Sets the density. */
-const CARD_HEIGHT_UNITS = 111;
+/**
+ * Design size of the stage, in layout units. The stage is 100 units wide and 9:16
+ * tall, and `--u` is **1% of the stage's rendered width**, so every measurement
+ * scales with the card and the proportions never change.
+ */
+export const STAGE_WIDTH_UNITS = 100;
 
-/** Compute `--u` from the window so the card keeps its proportions at any size. */
-export function applyLayoutUnit() {
-  const height = Math.max(240, window.innerHeight || 600);
-  const unit = height / CARD_HEIGHT_UNITS;
-  document.documentElement.style.setProperty('--u', `${unit.toFixed(3)}px`);
-  return unit;
+/**
+ * Set `--u` from the stage's actual rendered size.
+ *
+ * The stage size itself is CSS (`min(94vw, 94vh * 9/16)`), so this only converts
+ * "current width in px" into the unit the rest of the stylesheet is written in. It
+ * runs on load and on resize, and it is measured from the element rather than from
+ * the viewport so the two can never disagree.
+ *
+ * @param {HTMLElement} [stage] defaults to #stage
+ * @returns {{ unit: number, width: number, height: number }}
+ */
+export function applyLayoutUnit(stage = document.getElementById('stage')) {
+  const root = document.documentElement;
+
+  // Fall back to the viewport if the element is missing, so a markup mistake
+  // degrades to "wrong scale" rather than "everything is zero".
+  const width = stage?.clientWidth || window.innerWidth * 0.94;
+  const height = stage?.clientHeight || (width * 16) / 9;
+  const unit = width / STAGE_WIDTH_UNITS || 3.6;
+
+  root.style.setProperty('--u', `${unit.toFixed(5)}px`);
+  root.style.setProperty('--stage-width', `${width}px`);
+  root.style.setProperty('--stage-height', `${height}px`);
+
+  return { unit, width, height };
 }
 
 /**
@@ -47,7 +65,6 @@ export function applyLayoutUnit() {
  */
 export function schemeFor(background) {
   if (!background) {
-    // Glass: the panel is light by default, so dark text. The scrim stays off.
     return { scheme: 'light', scrim: 'transparent', contrast: 0 };
   }
 
@@ -58,13 +75,13 @@ export function schemeFor(background) {
   const scheme = lightRatio >= darkRatio ? 'dark' : 'light';
   const contrast = Math.max(lightRatio, darkRatio);
 
-  // Below this the text would fail even with the better choice, so darken (or
-  // lighten) the top and bottom edges with a scrim, which is where the text sits.
+  // Even the better text colour can fail on a mid-tone swatch. Those are exactly the
+  // colours the user can pick, so strengthen the edge scrim instead of pretending.
   let scrim = 'transparent';
   if (contrast < 4.5) {
-    scrim = scheme === 'dark' ? 'rgba(10, 14, 18, 0.42)' : 'rgba(255, 255, 255, 0.5)';
+    scrim = scheme === 'dark' ? 'rgba(10, 14, 18, 0.42)' : 'rgba(255, 255, 255, 0.52)';
   } else if (contrast < 7) {
-    scrim = scheme === 'dark' ? 'rgba(10, 14, 18, 0.22)' : 'rgba(255, 255, 255, 0.28)';
+    scrim = scheme === 'dark' ? 'rgba(10, 14, 18, 0.24)' : 'rgba(255, 255, 255, 0.3)';
   }
 
   return { scheme, scrim, contrast };
@@ -76,8 +93,7 @@ const STORAGE_KEY = 'ncm-card:background';
 export function loadBackgroundChoice() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return 'glass';
-    if (raw === 'glass') return 'glass';
+    if (!raw || raw === 'glass') return 'glass';
     const index = Number(raw);
     return Number.isInteger(index) && index >= 0 && index < 16 ? index : 'glass';
   } catch {
@@ -89,6 +105,6 @@ export function saveBackgroundChoice(choice) {
   try {
     localStorage.setItem(STORAGE_KEY, String(choice));
   } catch {
-    /* private mode or storage disabled; the choice just does not persist */
+    /* storage may be unavailable; the choice simply does not persist */
   }
 }

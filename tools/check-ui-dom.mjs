@@ -78,4 +78,31 @@ for (const match of html.matchAll(/(?:href|src)="\.\/([^"]+)"/g)) {
 }
 
 console.log(`\n${failures ? `❌ ${failures} 项问题` : '✅ DOM 引用检查通过'}`);
+
+console.log(`
+--- 在浏览器里自检（可选）---
+打开 http://127.0.0.1:8788/ 后按 F12，在 Console 粘贴：
+
+(() => {
+  const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect();
+    return { w: Math.round(b.width), h: Math.round(b.height), top: Math.round(b.top), left: Math.round(b.left) }; };
+  const cs = getComputedStyle(document.documentElement);
+  const px = (name) => cs.getPropertyValue(name).trim();
+  return {
+    视口: { w: innerWidth, h: innerHeight },
+    单位: px('--u'),
+    舞台: r(document.getElementById('stage')),
+    封面: r(document.querySelector('.cover-wrap')),
+    标题字号: getComputedStyle(document.getElementById('title')).fontSize,
+    艺术家字号: getComputedStyle(document.getElementById('artist')).fontSize,
+    色板数量: document.getElementById('palette')?.children.length ?? null,
+    色板位置: r(document.getElementById('palette')),
+    色板色值: [...(document.getElementById('palette')?.children ?? [])].map((s) => s.style.background),
+    当前背景: document.getElementById('card').dataset.bg,
+    对比度: document.documentElement.dataset.bgContrast,
+  };
+})()
+`);
+
 process.exit(failures ? 1 : 0);
+

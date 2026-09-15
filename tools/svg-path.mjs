@@ -390,6 +390,46 @@ export function rasterizeAlpha(subpaths, size, { scale = null } = {}) {
   return coverage;
 }
 
+/**
+ * Compose a strip: icons placed at absolute positions along one line.
+ *
+ * `renderSheet` lays icons out in a grid, which cannot answer a question about *layout* - "is the
+ * play button on the card's centre line, and do the five fit?" So this places each icon by its
+ * centre in the row's own coordinate system, which is what `tools/transport-layout.mjs` computes
+ * from the stylesheet. The result is a picture of the arrangement, at whatever scale is legible,
+ * without a browser.
+ *
+ * @param {{ subpaths: number[][][], fill: boolean, strokeWidth: number, centre: number, size: number }[]} items
+ *   `centre` and `size` are in the row's units, and `unitPx` says how many pixels one is.
+ */
+export function composeStrip(items, { widthPx, unitPx, rowHeightPx, padding = 6, background = 255 }) {
+  const height = rowHeightPx + padding * 2;
+  const rgba = Buffer.alloc(widthPx * height * 4, background);
+  for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+
+  for (const item of items) {
+    const size = Math.max(4, Math.round(item.size * unitPx));
+    const alpha = rasterizeAlpha(styledSubpaths(item.subpaths, { fill: item.fill, strokeWidth: item.strokeWidth }), size);
+    const originX = Math.round(item.centre * unitPx - size / 2);
+    const originY = padding + Math.round((rowHeightPx - size) / 2);
+    for (let y = 0; y < size; y++) {
+      const targetY = originY + y;
+      if (targetY < 0 || targetY >= height) continue;
+      for (let x = 0; x < size; x++) {
+        const targetX = originX + x;
+        if (targetX < 0 || targetX >= widthPx) continue;
+        const a = alpha[y * size + x];
+        if (a <= 0) continue;
+        const at = (targetY * widthPx + targetX) * 4;
+        for (let channel = 0; channel < 3; channel++) {
+          rgba[at + channel] = Math.round(rgba[at + channel] * (1 - a) + 20 * a);
+        }
+      }
+    }
+  }
+  return { rgba, width: widthPx, height };
+}
+
 /** Render a set of icons (each `{ paths: [{ subpaths, fill, strokeWidth }] }`) onto a white sheet. */
 export function renderSheet(icons, { size = 96, gap = 12, columns = 4 } = {}) {
   const cell = size + gap;

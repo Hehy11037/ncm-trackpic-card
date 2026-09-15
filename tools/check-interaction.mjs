@@ -25,6 +25,7 @@ import {
   styledSubpaths,
   visibleAt,
 } from './svg-path.mjs';
+import { transportRowLayout } from './transport-layout.mjs';
 
 const tokensText = readStyle('ui/styles/tokens.css');
 const cardText = readStyle('ui/styles/card.css');
@@ -324,7 +325,63 @@ console.log('\n--- 传输控制条的排布 ---');
   check('按钮有四种状态', new RegExp(`data-mode="playOrder"`).test(html));
 }
 
-console.log('\n--- 拖动进度条与音量条 ---');
+console.log('\n--- 控制条几何（从样式表算出来） ---');
+{
+  /*
+   * Where the five controls actually land.
+   *
+   * The row is flexbox: `space-between`, two equal-width side slots, and a centre group whose three
+   * buttons are held together by a gap. That is enough to compute every position exactly, and it is
+   * the only way this layout can be measured before the owner looks at it - there is no browser in
+   * the tooling shell. `npm run icons` draws the same numbers as a picture.
+   *
+   * The claim being checked is the one the arrangement exists for: **the play button is on the
+   * card's centre line**, which used to be arranged with absolute positioning (and a transform
+   * repeated in every hover and active rule) and is now a consequence of the two sides being equal.
+   */
+  const layout = transportRowLayout(css);
+  const at = (name) => layout.controls[name].centre;
+  const pretty = Object.entries(layout.controls)
+    .map(([name, box]) => `${name} ${box.centre.toFixed(2)}u`)
+    .join(', ');
+
+  check('播放键在卡片中线', Math.abs(at('playPause') - 50) < 0.05, `${at('playPause').toFixed(2)}u`);
+  check(
+    '上一首/下一首关于中线对称',
+    Math.abs(50 - at('previous') - (at('next') - 50)) < 0.05,
+    `${at('previous').toFixed(2)} / ${at('next').toFixed(2)}`,
+  );
+  check(
+    '模式与音量对称贴边',
+    Math.abs(at('mode') - (100 - at('volume'))) < 0.05,
+    `${at('mode').toFixed(2)} / ${at('volume').toFixed(2)}`,
+  );
+  // Equality of the two side slots is what makes the middle centred; the padding being symmetric is
+  // what makes the middle the card's middle.
+  check('两侧槽位等宽', layout.sidesEqual, `${layout.side}u / ${layout.rightSide}u`);
+  check(
+    '左右内边距相等',
+    Math.abs(layout.padding.left - layout.padding.right) < 0.01,
+    `${layout.padding.left.toFixed(2)} / ${layout.padding.right.toFixed(2)}`,
+  );
+  check(
+    '五个控件都在卡片内',
+    Object.values(layout.controls).every((box) => box.centre - box.size / 2 >= -0.01 && box.centre + box.size / 2 <= 100.01),
+    pretty,
+  );
+  check('三组之间留得下空隙', layout.between > 1, `${layout.between.toFixed(2)}u`);
+  check('上一首/播放/下一首不贴在一起', layout.gap >= 1, `${layout.gap}u`);
+  // The row has to fit: two slots, the centre group, and the two gaps.
+  check('一行放得下', layout.between * 2 + layout.centre + layout.side * 2 <= layout.rowWidth + 0.01);
+  check('音量条不伸出卡片', layout.popover.left > 0, `左边缘 ${layout.popover.left.toFixed(2)}u`);
+  check(
+    '音量条不压到播放键',
+    layout.popover.left > at('playPause') + layout.play / 2,
+    `播放键右缘 ${(at('playPause') + layout.play / 2).toFixed(2)}u`,
+  );
+}
+
+
 {
   /*
    * Both bars are the same gesture, so both must be installed through the same helper - and the

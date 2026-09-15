@@ -384,6 +384,13 @@
   stroke: none;
 }
 
+/*
+ * The waves and the mute cross stay stroked, which is the whole reason the svg sets `fill: none`.
+ * The cross is two line segments rather than two filled bars: filled bars that cross each other
+ * wind in opposite directions, and the nonzero rule then leaves a hole at the intersection - the
+ * glyph rendered as four diamonds, which only `tools/render-icons.mjs` could see.
+ */
+
 /* The cross only means something when it is muted, and the waves only when it is not. */
 .ctrl--volume .cross,
 .ctrl--volume[data-level='mute'] .wave,

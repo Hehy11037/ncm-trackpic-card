@@ -30,6 +30,7 @@
     "check:encoding": "node tools/check-encoding.mjs",
     "check": "npm run check:encoding && npm run check:ui && npm run check:layout && npm run check:bridge && npm run check:interaction && npm run check:shell",
     "shot": "electron tools/shot.mjs",
+    "icons": "node tools/render-icons.mjs",
     "typecheck": "tsc --noEmit --pretty"
   },
   "devDependencies": {

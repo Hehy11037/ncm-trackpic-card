@@ -317,6 +317,15 @@ Each of these cost real time. The reason matters more than the rule.
     diamonds. `npm run icons` rasterises them into `.scratch/icons/*.png` so they can actually be
     seen, and `check-interaction.mjs` asserts that every path parses, stays inside its viewBox,
     paints something, and is filled or stroked the way the stylesheet says.
+29. **A state change during an interaction may not touch an in-flow property.** The scrubbing state
+    thickened the progress track with `height: calc(var(--u) * 2.1)`, and the track is an ordinary
+    block in the column - so pressing the bar pushed the times, the transport row, the colour band
+    and the credit down 0.62u, and released them on pointer-up. The control moved out from under the
+    pointer using it. `box-shadow`, `opacity` and `transform` are the ways to emphasise something
+    without occupying space; the check forbids the rest generically rather than naming `height`.
+30. **Anything with `role="slider"` has to update `aria-valuenow`.** The progress bar was born with
+    `aria-valuenow="0"` and nothing ever wrote to it, so it announced a position of 0 for the life of
+    the window - worse than having no role, because the role is a promise.
 
 ## 7. Current state
 
@@ -351,6 +360,14 @@ Each of these cost real time. The reason matters more than the rule.
   the first time (`npm run icons`): one was replaced with the conventional shuffle glyph and one was
   redrawn as two strokes, because as filled bars it rendered as four diamonds (§6.28). The mode order
   and the Chinese names come from the client's own button, not from a guess.
+* The transport row's geometry is *computed* from the stylesheet rather than eyeballed
+  (`tools/transport-layout.mjs`): the play button lands at 50.00u, previous/next at 37.23/62.77, mode
+  and volume at 9.34/90.66, and the volume panel (23.05u) fits inside the card's 7.04u inset and
+  clear of the play button. `check-interaction.mjs` asserts those numbers; `npm run icons` draws them.
+  Two mistakes came out of writing it, both hidden by the play button's position: the inset lives on
+  `section.face` rather than `.card`, and a three-value `padding` shorthand is top / left-and-right /
+  bottom (reading it by index made left 8 and right 7.04, which is what would have moved the play
+  button off centre).
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

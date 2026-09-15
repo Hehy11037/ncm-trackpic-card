@@ -127,9 +127,10 @@ Break one of these and a check fails. That is the point - none of them are visua
    pointer can reach it and the card could never be expanded again.
 7. **The roll-up depends on nothing the renderer can break.** It is gated on
    `webContents.once('dom-ready')`, not on an IPC handshake.
-8. **The lock state is owned by the shell**, persisted in `window-state.json`, exposed both on the
-   card and in the tray. Default: **locked**. An overlay that rolls itself up on first run is a
-   surprise; not rolling up is merely inert.
+8. **The lock state is owned by the shell**, persisted in `window-state.json`, controlled from the
+   card's lock button and `L`. Default: **locked**. An overlay that rolls itself up on first run is
+   a surprise; not rolling up is merely inert. The tray does *not* offer it - the tray menu is three
+   sizes and 退出, by request.
 9. **Every interactive element is at least ~24px in both dimensions**, and the colour band's
    clickable box is padded beyond its visible strip with a cancelling negative margin.
 10. **A failed public lyric fetch is never treated as "this track has no lyrics"** and is never
@@ -265,13 +266,8 @@ Each of these cost real time. The reason matters more than the rule.
   `will-change: transform, opacity` on `.face`; the growth fix was capturing the window size at the
   press instead of reading it back every frame; the smoothness fix was driving the drag from
   `pointermove` rather than polling a timer.
-* Awaiting the user's report on this round:
-  * whether the roll-up tween (now stepped by the renderer's frames) is smooth;
-  * whether the occasional "moved the mouse away and it never collapsed" is gone, and if not what
-    the terminal says - the shell now prints either `指针离开 …ms 仍未收起` with every guard's
-    state, or `拖动 …ms 没有动静，已放弃该手势`;
-  * whether the lyrics read better in one colour;
-  * whether `ロンググッドバイ`'s cover now yields its deep blue.
+* The tray menu is now just 小 / 中 / 大 and 退出, by the owner's request. Show/hide and recovery
+  from a rolled-up card are the tray icon's left-click; the lock is on the card and on `L`.
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

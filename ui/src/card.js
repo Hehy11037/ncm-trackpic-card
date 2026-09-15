@@ -260,7 +260,25 @@ export class CardView {
     const percent = `${(clamped * 100).toFixed(2)}%`;
     this.el.fill.style.width = percent;
     this.el.progressThumb.style.left = percent;
+    this.setProgressValue(clamped);
     if (positionMs != null) this.el.timeNow.textContent = formatTime(positionMs);
+  }
+
+  /**
+   * Keep the bar's `aria-valuenow` in step with what it shows.
+   *
+   * The element is a `role="slider"`, and until this existed the attribute sat at the `0` it was
+   * born with: the bar looked like a slider to assistive technology and reported a position that
+   * never changed. Updated only when the whole percent changes, because it is written from the
+   * frame loop.
+   */
+  setProgressValue(fraction) {
+    const track = this.el.progressTrack;
+    if (!track) return;
+    const percent = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+    if (this.lastProgressPercent === percent) return;
+    this.lastProgressPercent = percent;
+    track.setAttribute('aria-valuenow', String(percent));
   }
 
   /**
@@ -523,6 +541,7 @@ export class CardView {
       if (this.scrubFraction == null) {
         this.el.fill.style.width = percent;
         this.el.progressThumb.style.left = percent;
+        this.setProgressValue(fraction);
       }
     }
     if (this.scrubFraction != null) return;

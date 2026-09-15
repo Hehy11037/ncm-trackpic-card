@@ -469,6 +469,17 @@ console.log('\n--- 控制条几何（从样式表算出来） ---');
   check('拖动时滑块常显', /data-scrubbing='true'\] \.progress-thumb/.test(cardText));
   check('进度条有滑块元素', /id="progress-thumb"/.test(html));
   check('拖动时时间变亮', /data-scrubbing='true'\] \.progress-times/.test(cardText));
+  /*
+   * The two bars announce themselves as `role="slider"`, and a slider whose `aria-valuenow` never
+   * moves is worse than no role at all: it tells assistive technology the position is 0 forever.
+   */
+  check('进度条声明为 slider', /id="progress-track"[\s\S]{0,200}role="slider"/.test(html));
+  check(
+    '进度条的 aria 值会更新',
+    /setProgressValue\(/.test(readStyle('ui/src/card.js')) &&
+      /aria-valuenow/.test(readStyle('ui/src/card.js')),
+  );
+  check('音量条也更新 aria 值', /setAttribute\('aria-valuenow'/.test(readStyle('ui/src/card.js')));
 
   // While the pointer is down the preview *is* the position; the clock may not overwrite it.
   check('拖动时时钟不夺回进度条', /scrubFraction != null/.test(readStyle('ui/src/card.js')));

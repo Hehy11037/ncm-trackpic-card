@@ -77,7 +77,7 @@ These are properties of the machine this was built on. They will bite immediatel
 | --- | --- |
 | `cdp.ts` | DevTools-protocol client against the client's debug port. |
 | `discovery.ts` | Finds the dva store and audio pipeline by *shape*, never by hardcoded module id. Cached on disk under `OVERLAY_CACHE_DIR`. |
-| `session.ts` | Owns the connection; emits snapshots and playheads; accepts control commands. Routes transport through `media-key.ts` (primary) and the bridge (the rest), and decides `confirmed`. |
+| `session.ts` | Owns the connection; emits snapshots and playheads; accepts control commands. Routes transport through `media-key.ts` (primary) and the bridge (the rest), and decides `confirmed` against each command's own observable field. |
 | `media-key.ts` | Spawns `tools/media-key.ps1` to inject a media key (`stdio: 'ignore'`, never throws). |
 | `bridge-script.ts` | Generates the injected script. Pure string assembly — no template holes. Carries `BRIDGE_ID`, an FNV-1a hash of its own body, so a stale injection replaces itself. |
 | `lyrics.ts` | Source selection: verified client lyrics first, public endpoint second. |
@@ -95,6 +95,7 @@ These are properties of the machine this was built on. They will bite immediatel
 | `src/card.js` | Front face: cover, text, progress, palette band, window controls. |
 | `src/lyrics.js` | Back face: centred, depth-scaled entries. |
 | `src/palette.js` | Median-cut palette extraction from the cover. |
+| `src/scrub.js` | The drag gesture shared by the progress bar and the volume bar. |
 | `src/drag.js` | Pointer gesture that moves the window. |
 | `src/socket.js`, `src/clock.js` | Host link; playback clock. |
 
@@ -285,10 +286,33 @@ Each of these cost real time. The reason matters more than the rule.
     writes the target width immediately and interpolates the height, so a drag that began mid-tween
     captured `432x740` - a pair no window ever had, since 432 wide implies 744 tall. Apply
     `resizeAnim.target`, then read. The check compares the *order* of those two statements.
+24. **The three controls with no media key each go through the client, and each does so the way the
+    client itself does** (all measured; `docs/contracts.md` §6):
+    * mode - `dispatch({type:'playing/onUpdate', payload:{playingMode, lastPlayingMode: <previous>}})`,
+      with the four values `playOrder` / `playCycle` / `playOneCycle` / `playRandom`;
+    * volume - `AudioPlayer.setVolume(0..1)` (module `4`), *not* the `playing/setVolume` action, which
+      is real, runs, writes the store field, and changes nothing;
+    * position - `AudioPlayer.seek({playId, seekId, value})` with **whole seconds** and a fresh
+      `seekId`, answered by `{code, position}`.
+    The wrapper's methods are on a prototype, so only asking the object itself finds them.
+25. **`muteVolume` does not mean muted.** The client remembers the volume there, sets the volume to
+    0, and does not clear it on unmute - so it is `> 0` before, during and after a mute. Muted is
+    `playingVolume === 0`. Reading it the other way draws a silenced speaker over full-volume audio.
+26. **An optimistic value is held until the client agrees.** Drawing every snapshot verbatim made the
+    play/pause button flip, flip back and flip again - the command was immediate, the drawing was
+    not, because the client keeps publishing its old state until it acts on the media key. Same for
+    the volume bar. Held until: the client's value matches, the host reports a failure, or it times
+    out. This is why `CardView.setStatus` exists separately from `setSnapshot`: a revert has to redraw
+    one attribute, not rebuild a snapshot.
+27. **A drag target gets its hit area from a `::before` overlay, not from padding.** Padding moves
+    everything measured after it (the colour band gets away with it only because nothing is measured
+    below the band); a 1.48u progress bar is ~6px tall and a 6px target is not a target. And any new
+    draggable element must join `CONTROL_SELECTOR` in `ui/src/drag.js`, or pressing it moves the
+    window as well.
 
 ## 7. Current state
 
-* `npm run check` (8 steps) green, `npm test` (95) green, `tsc --noEmit` clean.
+* `npm run check` (8 steps) green, `npm test` (126) green, `tsc --noEmit` clean.
 * **Confirmed by the user**: the colour band works, the lock works, the flip jitter is gone, the
   drag no longer changes the window's size, and dragging is smooth. The jitter fix was
   `will-change: transform, opacity` on `.face`; the growth fix was capturing the window size at the
@@ -298,24 +322,23 @@ Each of these cost real time. The reason matters more than the rule.
   tall), so the drag now lands the tween before reading the bounds (§4.23).
 * The tray menu is now just 小 / 中 / 大 and 退出, by the owner's request. Show/hide and recovery
   from a rolled-up card are the tray icon's left-click; the lock is on the card and on `L`.
-* **Play/pause: the command reaches the client; the client's reaction is still unconfirmed.** Two
-  separate failures were found in the same button. First the bridge's switch had no `playPause` case
-  at all. Then, after that was fixed, every press still logged `unsupported command: playPause`,
-  because the client was running a *previous injection* kept alive by a hand-written `version: 2`
-  guard - so the earlier conclusion ("the client ignores the audio-module call") was drawn from code
-  that had never run. The guard is now a content hash (§4.21).
-* The transport route is **media key primary** (`tools/media-key.ps1`, the client's own global
-  hotkey, so it cannot break when the client's internals are rebuilt); the bridge stays for the
-  commands with no media-key equivalent. A media key is pressed exactly once and never retried
-  (§4.22). `next` / `previous` are **not solved**: the bridge dispatch returns `ok: true` and nothing
-  happens - an earlier version of `docs/contracts.md` §6 called them solved on the strength of that
-  receipt alone, which is exactly the mistake the confirmation rule exists to prevent.
-* The host reports `成功` / `未确认` / `失败` with the `via` route and the `playingState` transition,
-  and asks the page for `diagnoseTransport` when a key had no observable effect. Whether the media
-  key is *delivered* is the open question - it goes quiet if the client's global-hotkey option is
-  off - and only the user can test that. See `docs/contracts.md` §6.
+* **All six transport controls work and are confirmed by the client**: play/pause and next/previous
+  through a media key, and mode / volume / seek through the audio wrapper. The owner confirmed
+  play/pause and skipping on 2026-09-15; the other three were verified end to end through
+  `tools/host-smoke.mjs --control`.
+* The three new controls sit in one row: play mode on the left, previous/play/next in the middle,
+  volume on the right, with the two side slots the same width so the play button stays on the card's
+  centre line (which is where the reference has it - previously by absolute positioning, with the
+  transform repeated in every hover/active rule). The volume bar is revealed on hover and pops *up*
+  and *right-aligned*: below the row is the colour band, and centred on the button it would hang off
+  the card over the shadow margin.
+* The progress bar is draggable, with a preview that the playback clock does not overwrite while the
+  pointer is down, and the command sent once on release. Arrow keys work when it has focus, and it
+  swallows them (§4.27) because the arrows are also the card's skip keys.
 * Do **not** trust "the command ran": `ok` means it reached the page, `confirmed` means the client
-  was observed in the state that was asked for. Only the second one is a working control.
+  was observed in the state that was asked for. Only the second one is a working control. The three
+  new controls are each confirmed against their own field (volume against `playingVolume`, mode
+  against `playingMode`, position against the playhead or the client's own seek reply).
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

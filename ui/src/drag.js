@@ -31,8 +31,16 @@
  * the next one carries the whole correction.
  */
 
-/** A press inside any of these selects or activates; it must never start a drag. */
-const CONTROL_SELECTOR = 'button, a, input, select, textarea, .band, .band-segment';
+/**
+ * A press inside any of these selects, activates or drags something of its own; it must never
+ * start a window drag.
+ *
+ * `.progress-track` and `.volume-bar` are here because they are draggable in their own right. They
+ * are plain `div`s - not `button`s - so without this a press on the progress bar would move the
+ * window *and* scrub at the same time, which is the kind of conflict that reads as "the seek is
+ * broken and the card jumped across the screen".
+ */
+const CONTROL_SELECTOR = 'button, a, input, select, textarea, .band, .band-segment, .progress-track, .volume-bar';
 
 /**
  * Install the gesture.

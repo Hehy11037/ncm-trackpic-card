@@ -93,13 +93,21 @@ for (const needle of required) {
   );
   const handled = [...executeBody.matchAll(/case\s*'([a-zA-Z]+)'\s*:/g)].map((m) => m[1]);
 
-  /** Command types the overlay sends: literals in the scripts, and the buttons' data-action. */
-  const sent = [
-    ...[...readFileSync('ui/src/main.js', 'utf8').matchAll(/control\(\{\s*type:\s*'([a-zA-Z]+)'/g)].map(
-      (m) => m[1],
-    ),
-    ...[...readFileSync('ui/index.html', 'utf8').matchAll(/data-action="([a-zA-Z]+)"/g)].map((m) => m[1]),
-  ];
+  /**
+   * Command types the overlay actually sends.
+   *
+   * Read from the `control({type: ...})` calls, not from the buttons: a button's `data-action` is
+   * its *name*, not the command it sends. The mode button cycles between four modes and the mute
+   * button toggles, so neither names a command in its markup - treating `data-action` as a command
+   * type made them look like unhandled commands, which is a false alarm in the one check that is
+   * supposed to be about dead controls.
+   */
+  const mainSource = readFileSync('ui/src/main.js', 'utf8');
+  const htmlSource = readFileSync('ui/index.html', 'utf8');
+  const sent = [...mainSource.matchAll(/control\(\{\s*type:\s*'([a-zA-Z]+)'/g)].map((m) => m[1]);
+
+  /** Every button in the markup must be handled in the script, whatever it ends up sending. */
+  const actions = [...htmlSource.matchAll(/data-action="([a-zA-Z]+)"/g)].map((m) => m[1]);
 
   console.log(`\n指令契约: 声明 ${declared.length} 种，桥接处理 ${handled.length} 种，界面发送 ${new Set(sent).size} 种`);
 
@@ -112,6 +120,11 @@ for (const needle of required) {
     const ok = declared.includes(type) && handled.includes(type);
     if (!ok) process.exitCode = 1;
     console.log(`  ${ok ? 'ok  ' : 'FAIL'} 界面发送的 ${type} 有实现`);
+  }
+  for (const action of new Set(actions)) {
+    const ok = new RegExp(`action === '${action}'`).test(mainSource);
+    if (!ok) process.exitCode = 1;
+    console.log(`  ${ok ? 'ok  ' : 'FAIL'} 按钮动作 ${action} 有处理`);
   }
 }
 

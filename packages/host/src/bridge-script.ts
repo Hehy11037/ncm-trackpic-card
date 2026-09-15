@@ -86,6 +86,29 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
     return { ok: false, reason: 'audio pipeline module ' + AUDIO_MODULE_ID + ' unusable' };
   }
 
+  /*
+   * The native player wrapper, found by shape rather than by module id.
+   *
+   * Volume and position are not dva actions: the client's own volume slider and progress bar call
+   * this object directly and dispatch nothing (measured by wrapping 'store.dispatch' and dragging
+   * both - zero actions, and the volume/position still changed). Its methods live on a prototype,
+   * so it cannot be found by enumerating module exports; what identifies it is the pair of methods
+   * the client calls on it.
+   */
+  const findAudioPlayer = () => {
+    for (const id of Object.keys(require.c || {})) {
+      let mod;
+      try { mod = require(id); } catch (_) { continue; }
+      if (!mod || typeof mod !== 'object') continue;
+      const candidate = mod.AudioPlayer;
+      if (candidate && typeof candidate.setVolume === 'function' && typeof candidate.seek === 'function') {
+        return candidate;
+      }
+    }
+    return null;
+  };
+  const player = findAudioPlayer();
+
   const send = (kind, payload) => {
     try {
       console.debug(PREFIX + JSON.stringify({ kind, payload, t: Date.now() }));
@@ -101,6 +124,16 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
   };
 
   const arr = (v) => (Array.isArray(v) ? v : []);
+
+  /*
+   * Milliseconds to the whole seconds the native player's seek takes.
+   *
+   * The client's own progress bar sent 'value: 109' for 109 seconds. Rounding rather than flooring
+   * matters at the end of a track: flooring a 0.6s remainder lands short of the point the user
+   * released the pointer at. The shared 'msToSeekSeconds' states the same rule for the UI's
+   * display, and a check evaluates this very line to prove the two still agree.
+   */
+  const seekSeconds = (ms) => Math.max(0, Math.round(ms / 1000));
 
   /** Build the lyric payload for a song (or null when it cannot be read). */
   const buildLyricPayload = (songId) => {
@@ -287,6 +320,16 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
 
   const subs = [];
   let progressCount = 0;
+  /*
+   * The current playback id, kept from the progress stream.
+   *
+   * 'audioplayer.seek' is addressed by it: the client's own progress bar sent
+   * '{playId: "2102424489_UOH3CY", seekId: "2102424489|seek|46YB26", value: 109}', and the seek is
+   * matched to its reply by 'seekId'. Without a playId there is nothing to seek within, so seek
+   * reports that rather than sending a call that cannot work.
+   */
+  let lastPlayId = null;
+  let lastPositionMs = 0;
 
   try {
     const progress = audio.audioPlayerPlayProgress$;
@@ -296,6 +339,8 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
         const playId = typeof value[0] === 'string' ? value[0] : null;
         const seconds = typeof value[1] === 'number' ? value[1] : null;
         if (seconds == null) return;
+        if (playId) lastPlayId = playId;
+        lastPositionMs = Math.round(seconds * 1000);
         progressCount++;
         send('progress', {
           playId,
@@ -377,20 +422,95 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
       case 'setVolume': {
         const v = typeof command.volume === 'number' ? Math.max(0, Math.min(1, command.volume)) : null;
         if (v == null) throw new Error('setVolume requires a numeric volume');
-        audio.setVolume ? audio.setVolume(v, null) : dispatch({ type: 'playing/setVolume', payload: { volume: v } });
-        return 'pipeline:setVolume';
+        /*
+         * The wrapper, not a dva action.
+         *
+         * 'playing/setVolume' exists and *looks* right - it is a real action, it runs, and
+         * 'playing.playingVolume' even changes - but the native volume does not move: measured by
+         * dispatching it and reading 'AudioPlayer.getApplicationVolume()' back, which stayed at
+         * 0.5 while the store went to 0.35. The client's own slider dispatches nothing at all, and
+         * this call is what it does instead. The store follows on its own, through the client's
+         * native-to-store volume subscription.
+         */
+        if (!player || typeof player.setVolume !== 'function') {
+          throw new Error('找不到客户端的 AudioPlayer.setVolume');
+        }
+        const mute = store.getState().playing || {};
+        // Setting a real volume also clears a mute, or the card would look unmuted and stay silent.
+        if (v > 0 && typeof player.setMiniPlayerMute === 'function' && num(mute.playingVolume) === 0) {
+          try { player.setMiniPlayerMute(false); } catch (_) {}
+        }
+        return Promise.resolve(player.setVolume(v)).then(() => 'pipeline:AudioPlayer.setVolume(' + v + ')');
       }
       case 'toggleMute': {
-        const st = store.getState();
-        const playing = st.playing || {};
-        const host = st.host || {};
-        const nextMuted = !(playing.muteVolume > 0 || host.muteVolume > 0);
-        dispatch({ type: 'host/onUpdate', payload: { muteVolume: nextMuted ? 1 : 0, volumeDelta: 0 } });
-        return 'dispatch:host/onUpdate(muteVolume)';
+        /*
+         * The client's own toggle: mute means volume 0 with the previous volume remembered, unmute
+         * means put that remembered volume back. Both halves go through 'setVolume', so the state
+         * the card shows and the sound the user hears cannot disagree.
+         */
+        if (!player || typeof player.setVolume !== 'function') {
+          throw new Error('找不到客户端的 AudioPlayer.setVolume');
+        }
+        const playing = store.getState().playing || {};
+        const volume = num(playing.playingVolume) || 0;
+        const remembered = num(playing.muteVolume) || 0;
+        const muted = volume === 0;
+        const next = muted ? (remembered > 0 ? remembered : 0.1) : 0;
+        return Promise.resolve(player.setVolume(next)).then(
+          () => 'pipeline:AudioPlayer.setVolume(' + next + ')' + (muted ? ' 取消静音' : ' 静音'),
+        );
       }
       case 'setMode': {
-        dispatch({ type: 'playing/switchPlayingMode', payload: { playingMode: command.mode, triggerScene: 'unknown', HeartBeatFlage: false } });
-        return 'dispatch:playing/switchPlayingMode';
+        const mode = typeof command.mode === 'string' ? command.mode : null;
+        if (!mode) throw new Error('setMode requires a mode');
+        const playing = store.getState().playing || {};
+        const previous = str(playing.playingMode);
+        /*
+         * Exactly what the client's own mode button ends up doing.
+         *
+         * Tapping 'store.dispatch' while clicking that button recorded no 'playing/*' action at all,
+         * so the action could not be read off; it was found by trying it. This is the last thing the
+         * client's own effect does - 'put({type:'onUpdate', payload:{playingMode, lastPlayingMode}})'
+         * - and the mode icon in the client's own footer follows it, which is the receipt.
+         * 'lastPlayingMode' is the mode we came *from*: dispatch 'playCycle' while in 'playRandom'
+         * and the client shows 'playingMode: playCycle, lastPlayingMode: playRandom'.
+         */
+        dispatch({ type: 'playing/onUpdate', payload: { playingMode: mode, lastPlayingMode: previous } });
+        return 'dispatch:playing/onUpdate(' + (previous || '?') + ' -> ' + mode + ')';
+      }
+      case 'seek': {
+        const ms = num(command.positionMs);
+        if (ms == null) throw new Error('seek requires positionMs');
+        if (!player || typeof player.seek !== 'function') {
+          throw new Error('找不到客户端的 AudioPlayer.seek');
+        }
+        if (!lastPlayId) {
+          throw new Error('还没有拿到 playId（进度流尚未推送），无法跳转');
+        }
+        /*
+         * Whole seconds, and a fresh 'seekId' per call.
+         *
+         * The shape is the client's own, recorded from its progress bar:
+         * '{playId, seekId: "<songId>|seek|<random>", value: <seconds>}', answered with
+         * '{playId, seekId, code, position}'. The reply is a receipt worth reporting: 'code === 0'
+         * with the position the player moved to.
+         */
+        const songId = String(lastPlayId).split('_')[0];
+        const seekId = songId + '|seek|' + Math.random().toString(36).slice(2, 8).toUpperCase();
+        const seconds = seekSeconds(ms);
+        return Promise.resolve(player.seek({ playId: lastPlayId, seekId, value: seconds })).then((reply) => {
+          const code = reply && typeof reply.code === 'number' ? reply.code : null;
+          const position = reply && typeof reply.position === 'number' ? reply.position : null;
+          if (code !== null && code !== 0) {
+            throw new Error('客户端拒绝了跳转（code ' + code + '）');
+          }
+          return {
+            via: 'pipeline',
+            message: 'AudioPlayer.seek(' + seekId + ') -> ' + seconds + 's' +
+              (position != null ? '，客户端报告 ' + position + 's' : ''),
+            positionMs: position != null ? Math.round(position * 1000) : null,
+          };
+        });
       }
       case 'diagnoseTransport': {
         /*
@@ -453,20 +573,47 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
     }
   };
 
+  /*
+   * Commands are settled asynchronously.
+   *
+   * 'seek' and 'setVolume' go through the client's audio wrapper, whose methods return promises
+   * resolved by the native player's reply. Reporting 'ok' before that reply arrives would be
+   * exactly the "the command ran, so it worked" mistake the confirmation rule exists to prevent -
+   * and worse here, because a seek reports *where* the player ended up.
+   */
+  const settle = (item, outcome) => {
+    let result;
+    if (outcome && outcome.ok === false) {
+      result = { id: item.id, ok: false, via: outcome.via || 'none', message: outcome.message };
+    } else if (outcome && typeof outcome === 'object' && 'via' in outcome) {
+      result = { id: item.id, ok: true, via: outcome.via, message: outcome.message, positionMs: outcome.positionMs };
+    } else {
+      result = { id: item.id, ok: true, via: outcome };
+    }
+    if (window.__moCmdResults.length < 100) window.__moCmdResults.push(result);
+    send('commandResult', result);
+  };
+
   const timer = setInterval(() => {
     const queue = window.__moCmdQ;
     if (!Array.isArray(queue) || !queue.length) return;
     const pending = queue.splice(0, queue.length);
     for (const item of pending) {
-      let result;
+      let outcome;
       try {
-        const via = execute(item.command);
-        result = { id: item.id, ok: true, via };
+        outcome = execute(item.command);
       } catch (err) {
-        result = { id: item.id, ok: false, via: 'none', message: String((err && err.message) || err) };
+        settle(item, { ok: false, via: 'none', message: String((err && err.message) || err) });
+        continue;
       }
-      if (window.__moCmdResults.length < 100) window.__moCmdResults.push(result);
-      send('commandResult', result);
+      if (outcome && typeof outcome.then === 'function') {
+        outcome.then(
+          (value) => settle(item, value),
+          (err) => settle(item, { ok: false, via: 'pipeline', message: String((err && err.message) || err) }),
+        );
+      } else {
+        settle(item, outcome);
+      }
     }
   }, POLL_MS);
 

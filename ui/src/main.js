@@ -6,12 +6,13 @@
  * card cannot end up with competing timelines.
  */
 
-import { CardView } from './card.js';
+import { CardView, MODE_CYCLE } from './card.js';
 import { PlayClock, isSampleStale } from './clock.js';
 import { installDragToMove } from './drag.js';
 import { relayout } from './layout.js';
 import { LyricsView } from './lyrics.js';
 import { installResizeClock } from './resize-clock.js';
+import { installScrub } from './scrub.js';
 import { HostLink } from './socket.js';
 
 const DEFAULT_HOST_PORT = 8787;
@@ -81,6 +82,34 @@ function toggleLock() {
 
 /* ---------------------------------------------------------------- transport */
 
+/** How long an optimistic play/pause flip is held before a snapshot may overwrite it. */
+const PLAY_PAUSE_OPTIMISM_MS = 1200;
+
+/**
+ * The status to draw: the client's, unless an unconfirmed optimistic flip is still live.
+ *
+ * The flip is optimistic because a control that waits for a round trip feels broken. The problem
+ * was the *order* the two facts arrived in: the media key takes the client a moment to act on, and
+ * the client keeps publishing snapshots in the meantime, so the button flipped, flipped back, and
+ * flipped again - which reads as "slow" even though the command was immediate.
+ *
+ * So the optimistic value wins until one of three things happens: the client confirms it (and the
+ * two agree), the host reports a failure (and `handleControlResult` clears it), or it times out.
+ */
+function displayedStatus(clientStatus) {
+  const pending = pendingPlayPause;
+  if (!pending) return clientStatus;
+  if (clientStatus === pending.expect) {
+    pendingPlayPause = null;
+    return clientStatus;
+  }
+  if (performance.now() - pending.at > PLAY_PAUSE_OPTIMISM_MS) {
+    pendingPlayPause = null;
+    return clientStatus;
+  }
+  return pending.expect;
+}
+
 /**
  * Play/pause, with the button's feedback tied to what the client actually did.
  *
@@ -90,16 +119,19 @@ function toggleLock() {
  * The result was a control that appeared to work for a moment and then undid itself, with the
  * reason visible only in the host's log.
  *
- * The flip is still optimistic, because a control that waits for a round trip feels broken. But it
- * is *reverted* when the host reports that the client did not follow, and the reason is said out
- * loud rather than swallowed.
+ * The flip is optimistic *and held* (see `displayedStatus`), and it is reverted when the host
+ * reports that the client did not follow - with the reason said out loud rather than swallowed.
  */
 function sendPlayPause() {
-  // Read from the snapshot, not from the clock: the snapshot is the client's last known state, and
-  // the clock may already hold an optimistic flip from a previous click.
-  const wasPlaying = (lastSnapshot?.playback?.status ?? 'paused') === 'playing';
-  clock.onPlayback({ ...(lastSnapshot?.playback ?? {}), status: wasPlaying ? 'paused' : 'playing' }, clock.durationMs);
-  pendingPlayPause = { wasPlaying, at: performance.now() };
+  // Read from the client's last state, adjusted by any flip already in flight: two quick presses
+  // must flip twice, not send the same toggle twice while the card shows one.
+  const wasPlaying = (displayedStatus(lastSnapshot?.playback?.status ?? 'paused')) === 'playing';
+  pendingPlayPause = { wasPlaying, expect: wasPlaying ? 'paused' : 'playing', at: performance.now() };
+  clock.onPlayback(
+    { ...(lastSnapshot?.playback ?? {}), status: pendingPlayPause.expect },
+    clock.durationMs,
+  );
+  view.setStatus(pendingPlayPause.expect);
   link.control({ type: 'playPause' });
 }
 
@@ -107,23 +139,142 @@ function sendPlayPause() {
  * The host's verdict on a command.
  *
  * `confirmed === false` means the client was told to change state and was then observed not to.
- * `ok === false` means the command never even ran. Both undo the optimistic flip.
+ * `ok === false` means the command never even ran. Both undo whatever the card drew optimistically.
  */
 function handleControlResult(result) {
   if (!result) return;
-  if (result.command?.type !== 'playPause') return;
+  const type = result.command?.type;
   const failed = result.ok !== true || result.confirmed === false;
-  if (!failed) {
+
+  if (type === 'playPause') {
+    if (!failed) {
+      pendingPlayPause = null;
+      return;
+    }
+    const pending = pendingPlayPause;
     pendingPlayPause = null;
+    // Put the card back to the last state the client was actually seen in.
+    clock.onPlayback(lastSnapshot?.playback ?? {}, clock.durationMs);
+    view.setStatus(lastSnapshot?.playback?.status ?? 'unknown');
+    if (pending) console.warn(`[overlay] 客户端未从「${pending.wasPlaying ? '播放' : '暂停'}」改变`);
     return;
   }
-  const pending = pendingPlayPause;
-  pendingPlayPause = null;
-  // Put the card back to the last state the client was actually seen in.
-  clock.onPlayback(lastSnapshot?.playback ?? {}, clock.durationMs);
-  const why = result.message ?? result.via ?? '未知原因';
-  console.warn(`[overlay] 播放/暂停没有生效：${why}`);
-  if (pending) console.warn(`[overlay] 客户端未从「${pending.wasPlaying ? '播放' : '暂停'}」改变`);
+
+  if (type === 'seek') {
+    // Whether it worked or not, stop previewing: from here the playhead is the truth.
+    releaseScrub();
+    if (failed) console.warn(`[overlay] 跳转未确认: ${result.message ?? result.via}`);
+    return;
+  }
+
+  if (type === 'setVolume') {
+    // An unconfirmed volume is put back to the client's own value rather than left wrong.
+    if (failed) {
+      volumePreview = null;
+      view.setVolume(lastSnapshot?.playback?.volume ?? null);
+      console.warn(`[overlay] 音量未确认: ${result.message ?? result.via}`);
+    }
+    return;
+  }
+
+  if (type === 'setMode' && failed) {
+    view.setMode(lastSnapshot?.playback?.mode ?? null);
+    console.warn(`[overlay] 播放模式未确认: ${result.message ?? result.via}`);
+  }
+}
+
+/* -------------------------------------------------------------- seek / scrub */
+
+/** The scrub preview in flight: `{ ms, at }`, or null when the bar follows the clock. */
+let scrub = null;
+
+/** Stop previewing and hand the bar back to the playback clock. */
+function releaseScrub() {
+  scrub = null;
+  view.setScrub(null);
+}
+
+/**
+ * Seeking, by dragging the progress bar.
+ *
+ * Nothing is drawn from the client while the pointer is down: the preview *is* the position, and a
+ * bar that snapped back to the playhead on every frame would be unusable. The command goes out on
+ * release - a drag across the bar would otherwise be dozens of seeks, each of which the client
+ * would act on.
+ */
+function installSeekBar() {
+  const track = document.getElementById('progress-track');
+  if (!track) return;
+  installScrub(track, {
+    axis: 'x',
+    onPreview(fraction) {
+      const duration = clock.durationMs;
+      const ms = Math.round(fraction * (duration > 0 ? duration : 0));
+      scrub = { ms, at: performance.now() };
+      view.setScrub(fraction, ms);
+    },
+    onCancel: releaseScrub,
+    onCommit(fraction) {
+      const duration = clock.durationMs;
+      if (!(duration > 0)) {
+        releaseScrub();
+        return;
+      }
+      const ms = Math.round(fraction * duration);
+      scrub = { ms, at: performance.now() };
+      view.setScrub(fraction, ms);
+      link.control({ type: 'seek', positionMs: ms });
+    },
+  });
+}
+
+/* ------------------------------------------------------------------- volume */
+
+/** The volume being dragged, held on screen until the client's own value catches up. */
+let volumePreview = null;
+/** When that volume was chosen, so a preview that is never confirmed cannot stick. */
+let volumeAt = 0;
+
+/**
+ * The volume bar, revealed on hover.
+ *
+ * The bar is a preview while dragging and the client's value otherwise, and the commit happens
+ * once, on release: `setVolume` reaches the native player, and the client reports the new value
+ * back through its own subscription a moment later.
+ */
+function installVolumeBar() {
+  const bar = document.getElementById('volume-bar');
+  if (!bar) return;
+  installScrub(bar, {
+    axis: 'x',
+    onPreview(fraction, phase) {
+      volumePreview = fraction;
+      view.setVolumePreview(fraction);
+      if (phase === 'start') document.getElementById('volume-pop')?.setAttribute('data-open', 'true');
+    },
+    onCancel() {
+      volumePreview = null;
+      view.setVolume(lastSnapshot?.playback?.volume ?? null);
+      document.getElementById('volume-pop')?.removeAttribute('data-open');
+    },
+    onCommit(fraction) {
+      const volume = Math.max(0, Math.min(1, fraction));
+      volumePreview = volume;
+      volumeAt = performance.now();
+      document.getElementById('volume-pop')?.removeAttribute('data-open');
+      link.control({ type: 'setVolume', volume });
+    },
+  });
+}
+
+/** Click the mode button: advance to the client's next mode. */
+function cycleMode() {
+  const current = lastSnapshot?.playback?.mode ?? MODE_CYCLE[0];
+  const at = MODE_CYCLE.indexOf(current);
+  const next = MODE_CYCLE[(at + 1) % MODE_CYCLE.length];
+  // Drawn immediately, then corrected by the snapshot - or reverted if the host says it failed.
+  view.setMode(next);
+  link.control({ type: 'setMode', mode: next });
 }
 
 /* ------------------------------------------------------------------ messages */
@@ -137,8 +288,47 @@ function handleMessage(message) {
     case 'snapshot': {
       lastSnapshot = message.snapshot;
       const songId = message.snapshot.song?.id ?? null;
-      const trackChanged = view.setSnapshot(message.snapshot);
-      clock.onPlayback(message.snapshot.playback ?? {}, message.snapshot.song?.durationMs ?? 0);
+      /*
+       * The client's snapshot, with any unconfirmed optimistic play/pause flip applied on top.
+       *
+       * The order these arrive in is the whole "the button feels slow" bug: the media key takes
+       * the client a moment, and it keeps publishing snapshots until it acts, so a card that drew
+       * every snapshot verbatim flickered back to the old state before flipping again.
+       */
+      const playback = message.snapshot.playback ?? {};
+      const status = displayedStatus(playback.status ?? 'unknown');
+      const effective =
+        status === playback.status ? message.snapshot : { ...message.snapshot, playback: { ...playback, status } };
+      const trackChanged = view.setSnapshot(effective);
+      clock.onPlayback(effective.playback ?? {}, message.snapshot.song?.durationMs ?? 0);
+
+      /*
+       * A seek that has arrived at its target is done: drop the preview so the bar follows the
+       * client again. Checked here rather than only on snapshots because the playhead arrives ~30
+       * times a second and a snapshot only when something changes - waiting for one would leave the
+       * bar frozen at the dragged position for as long as the track stayed otherwise unchanged.
+       */
+      if (scrub) {
+        const playheadMs = message.snapshot.playhead?.positionMs ?? null;
+        if (playheadMs != null && Math.abs(playheadMs - scrub.ms) < 1500) releaseScrub();
+      }
+      /*
+       * Hold a volume the user just chose until the client's own value catches up.
+       *
+       * `setVolume` reaches the native player, which reports back through the client's own
+       * subscription a moment later - and until it does, snapshots still carry the *old* volume. A
+       * bar that redrew from them would jump back under the pointer, which is the same class of
+       * flicker the play/pause button had.
+       */
+      if (volumePreview != null) {
+        if (typeof playback.volume === 'number' && Math.abs(playback.volume - volumePreview) < 0.02) {
+          volumePreview = null;
+        } else if (performance.now() - volumeAt > PLAY_PAUSE_OPTIMISM_MS) {
+          volumePreview = null;
+        } else {
+          view.setVolumePreview(volumePreview);
+        }
+      }
 
       // Keep the lyrics header (title/artist) in step with the current track.
       lyrics.setSongInfo(
@@ -163,6 +353,15 @@ function handleMessage(message) {
 
     case 'playhead':
       clock.onPlayhead(message.playhead, message.songId ?? lastSnapshot?.song?.id ?? null);
+      /*
+       * The seek landed. The preview is held until the client's own playhead reaches it, so the bar
+       * never jumps back to where the track *was* while the seek is still in flight.
+       */
+      if (scrub && message.playhead) {
+        if (Math.abs(message.playhead.positionMs - scrub.ms) < 1500) releaseScrub();
+        // A preview that is never confirmed (host gone, client refused) must not stick forever.
+        else if (performance.now() - scrub.at > PLAY_PAUSE_OPTIMISM_MS * 2) releaseScrub();
+      }
       staleSince = 0;
       break;
 
@@ -225,8 +424,13 @@ function bindInput() {
         return;
       }
       if (action === 'next' || action === 'previous') link.control({ type: action });
+      if (action === 'mode') cycleMode();
+      if (action === 'mute') link.control({ type: 'toggleMute' });
     });
   }
+
+  installSeekBar();
+  installVolumeBar();
 
   document.addEventListener('keydown', (event) => {
     if (event.code === 'Space') {

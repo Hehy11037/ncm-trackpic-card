@@ -21,7 +21,7 @@
     "host": "node tools/host-run.mjs",
     "overlay": "electron apps/overlay",
     "smoke": "node tools/host-smoke.mjs",
-    "test": "node packages/host/src/lyric/parse.test.ts && node packages/host/src/lyrics.test.ts && node ui/test/clock.test.mjs && node ui/test/lyrics.test.mjs && node ui/test/card.test.mjs && node ui/test/drag.test.mjs && node ui/test/layout.test.mjs && node ui/test/palette.test.mjs",
+    "test": "node packages/host/src/lyric/parse.test.ts && node packages/host/src/lyrics.test.ts && node packages/host/src/transport.test.ts && node ui/test/clock.test.mjs && node ui/test/lyrics.test.mjs && node ui/test/card.test.mjs && node ui/test/drag.test.mjs && node ui/test/scrub.test.mjs && node ui/test/layout.test.mjs && node ui/test/palette.test.mjs",
     "check:layout": "node tools/check-layout.mjs && node tools/check-lyric-centring.mjs",
     "check:bridge": "node tools/check-bridge-script.mjs",
     "check:ui": "node tools/check-ui.mjs && node tools/check-ui-dom.mjs",

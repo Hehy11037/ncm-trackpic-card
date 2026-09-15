@@ -14,6 +14,23 @@ import { formatTime } from './clock.js';
 import { loadBackgroundChoice, REFERENCE_PALETTE, relayout, saveBackgroundChoice, schemeFor } from './layout.js';
 import { css, paletteFor } from './palette.js';
 
+/** Chinese labels for the client's four user-facing play modes. */
+export const MODE_LABELS = {
+  playOrder: '顺序播放',
+  playCycle: '列表循环',
+  playOneCycle: '单曲循环',
+  playRandom: '随机播放',
+};
+
+/**
+ * The order the mode button cycles in, and the order the client's own button uses.
+ *
+ * Local constant rather than an import: `ui/` deliberately knows nothing about the host's
+ * modules, and this list is the *client's* behaviour, which is what the card is mirroring.
+ * `ui/test/mode.test.mjs` pins it to the same four values as the shared contract.
+ */
+export const MODE_CYCLE = ['playOrder', 'playCycle', 'playOneCycle', 'playRandom'];
+
 const $ = (id) => document.getElementById(id);
 
 /** #RRGGBB for a 0-255 channel triple. */
@@ -49,6 +66,9 @@ export class CardView {
       title: $('title'),
       artist: $('artist'),
       fill: $('progress-fill'),
+      progress: $('progress'),
+      progressTrack: $('progress-track'),
+      progressThumb: $('progress-thumb'),
       timeNow: $('time-now'),
       timeTotal: $('time-total'),
       palette: $('palette'),
@@ -60,6 +80,14 @@ export class CardView {
       miniArtist: $('mini-artist'),
       miniFill: $('mini-fill'),
       lock: $('lock'),
+      mode: $('mode'),
+      volume: $('volume'),
+      volumeWrap: $('volume-wrap'),
+      volumePop: $('volume-pop'),
+      volumeBar: $('volume-bar'),
+      volumeFill: $('volume-fill'),
+      volumeThumb: $('volume-thumb'),
+      volumeValue: $('volume-value'),
     };
 
     this.onBackgroundChange = options.onBackgroundChange ?? (() => {});
@@ -78,6 +106,8 @@ export class CardView {
 
     this.lastFraction = -1;
     this.lastSecond = -1;
+    /** Non-null while a scrub preview is being drawn instead of the clock. */
+    this.scrubFraction = null;
     /** Set by setIdle() so the reason for an empty card is visible. */
     this.idleReason = null;
 
@@ -125,11 +155,112 @@ export class CardView {
     this.el.miniTitle.textContent = title;
     this.el.miniArtist.textContent = artist;
 
-    this.el.card.dataset.status = snapshot.playback?.status ?? 'unknown';
-    this.el.timeTotal.textContent = formatTime(song?.durationMs ?? 0);
+    this.setStatus(snapshot.playback?.status ?? 'unknown');    this.el.timeTotal.textContent = formatTime(song?.durationMs ?? 0);
+    this.setMode(snapshot.playback?.mode ?? null);
+    this.setVolume(snapshot.playback?.volume ?? null, snapshot.playback?.muted ?? null);
 
     if (trackChanged) this.applyCover(song?.coverUrl ?? null);
     return trackChanged;
+  }
+
+  /**
+   * Reflect the transport status on the card.
+   *
+   * Separate from `setSnapshot` because the play button is also driven by the optimistic flip: the
+   * card has to be able to draw "playing" *before* the client says so, and put it back if the host
+   * reports the command did not land - without touching anything else in the snapshot.
+   */
+  setStatus(status) {
+    const next = status ?? 'unknown';
+    if (this.el.card.dataset.status !== next) this.el.card.dataset.status = next;
+  }
+
+  /**
+   * Reflect the client's play mode on the mode button.
+   *
+   * The button only knows the four modes the card offers; anything else (`playAi`, `playFm`) is
+   * shown as the nearest of them so the button is never blank, but the card will not *set* those.
+   */
+  setMode(mode) {
+    const button = this.el.mode;
+    if (!button) return;
+    const known = MODE_CYCLE.includes(mode) ? mode : MODE_CYCLE[0];
+    if (button.dataset.mode === known) return;
+    button.dataset.mode = known;
+    button.title = `${MODE_LABELS[known]}（点击切换）`;
+  }
+
+  /**
+   * Draw a volume the *user* is choosing, bypassing the drag guard below.
+   *
+   * `setVolume` deliberately ignores snapshot updates while a drag is live, or the client's own
+   * value would yank the bar out from under the pointer. The preview is the exception: it is the
+   * thing the drag is producing.
+   */
+  setVolumePreview(volume) {
+    const level = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 0));
+    const percent = Math.round(level * 100);
+    if (this.el.volumeFill) this.el.volumeFill.style.width = `${percent}%`;
+    if (this.el.volumeThumb) this.el.volumeThumb.style.left = `${percent}%`;
+    if (this.el.volumeValue) this.el.volumeValue.textContent = String(percent);
+    if (this.el.volume) {
+      this.el.volume.dataset.level = level <= 0.001 ? 'mute' : level < 0.5 ? 'low' : 'high';
+    }
+    if (this.el.volumeBar) this.el.volumeBar.setAttribute('aria-valuenow', String(percent));
+  }
+
+  /**
+   * Reflect volume and mute on the speaker button and its bar.
+   *
+   * `muted` comes from the client, but the level shown is derived from the volume itself: the
+   * client's `muteVolume` is the *remembered* volume while muted, so trusting it alone would draw
+   * a full speaker next to a silenced player.
+   */
+  setVolume(volume, muted) {
+    const button = this.el.volume;
+    if (!button) return;
+    const level = volume == null ? 0 : Math.max(0, Math.min(1, volume));
+    const silent = muted === true || level <= 0.001;
+    const state = silent ? 'mute' : level < 0.5 ? 'low' : 'high';
+    if (button.dataset.level !== state) button.dataset.level = state;
+
+    const percent = Math.round(level * 100);
+    const bar = this.el.volumeBar;
+    if (bar && bar.dataset.scrubbing !== 'true') {
+      this.el.volumeFill.style.width = `${percent}%`;
+      this.el.volumeThumb.style.left = `${percent}%`;
+    }
+    if (this.el.volumeValue && this.el.volumeValue.textContent !== String(percent)) {
+      this.el.volumeValue.textContent = String(percent);
+    }
+    if (bar) bar.setAttribute('aria-valuenow', String(percent));
+    if (button) button.title = silent ? '已静音（点击恢复）' : `音量 ${percent}%（点击静音）`;
+  }
+
+  /**
+   * Draw a scrub preview, or return to following the clock.
+   *
+   * `null` hands the bar back to the playback clock. While a fraction is given, the tick loop
+   * leaves the bar alone: a preview that the next frame overwrites is the same as no preview, and
+   * the user is dragging precisely because they want to see where they are going.
+   */
+  setScrub(fraction, positionMs = null) {
+    const progress = this.el.progress;
+    if (!progress) return;
+    if (fraction == null) {
+      progress.removeAttribute('data-scrubbing');
+      this.scrubFraction = null;
+      this.lastFraction = -1;
+      this.lastSecond = -1;
+      return;
+    }
+    const clamped = Math.max(0, Math.min(1, fraction));
+    this.scrubFraction = clamped;
+    progress.dataset.scrubbing = 'true';
+    const percent = `${(clamped * 100).toFixed(2)}%`;
+    this.el.fill.style.width = percent;
+    this.el.progressThumb.style.left = percent;
+    if (positionMs != null) this.el.timeNow.textContent = formatTime(positionMs);
   }
 
   /**
@@ -378,12 +509,23 @@ export class CardView {
   /* ------------------------------------------------------------------ tick */
 
   tick(positionMs, fraction) {
+    /*
+     * While a scrub preview is on screen the expanded bar belongs to the pointer, not the clock.
+     *
+     * The rolled-up bar is still updated: it is a different surface (and not even visible while the
+     * card is expanded), and leaving it stale would mean the strip shows a position from before the
+     * seek the moment the card rolls up.
+     */
     if (fraction !== this.lastFraction) {
       this.lastFraction = fraction;
       const percent = `${(fraction * 100).toFixed(2)}%`;
-      this.el.fill.style.width = percent;
       this.el.miniFill.style.width = percent;
+      if (this.scrubFraction == null) {
+        this.el.fill.style.width = percent;
+        this.el.progressThumb.style.left = percent;
+      }
     }
+    if (this.scrubFraction != null) return;
     const second = Math.floor(positionMs / 1000);
     if (second !== this.lastSecond) {
       this.lastSecond = second;

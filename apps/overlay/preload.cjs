@@ -27,11 +27,15 @@ contextBridge.exposeInMainWorld('overlayShell', {
 
   /*
    * Moving the window, as a plain pointer gesture rather than a `-webkit-app-region` drag region.
-   * See ui/src/drag.js for why. Only the start and the end cross the bridge: the shell watches the
-   * OS cursor itself and keeps the pressed point at the same offset inside the window, so the
-   * cursor can never outrun the window and escape it.
+   * See ui/src/drag.js for why.
+   *
+   * Coordinates are absolute screen positions taken from `pointermove`, which is delivered in step
+   * with the compositor. They come from the renderer rather than from polling the cursor in the
+   * shell, because a timer fires *near* a frame rather than on it and the resulting irregularity
+   * reads as stutter.
    */
-  dragStart: () => ipcRenderer.send('overlay:drag-start'),
+  dragStart: (x, y) => ipcRenderer.send('overlay:drag-start', x, y),
+  dragMove: (x, y) => ipcRenderer.send('overlay:drag-move', x, y),
   dragEnd: () => ipcRenderer.send('overlay:drag-end'),
 
   /**

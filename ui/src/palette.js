@@ -61,8 +61,18 @@ async function extract(url) {
     pixels.push([data[i], data[i + 1], data[i + 2]]);
   }
   if (!pixels.length) throw new Error('empty cover');
+  return paletteFromPixels(pixels, PALETTE_SIZE);
+}
 
-  const buckets = medianCut(pixels, PALETTE_SIZE * 3);
+/**
+ * The palette for a set of RGB samples. Pure, so it can be tested without a canvas.
+ *
+ * @param {number[][]} pixels RGB triples
+ * @param {number} count how many swatches to end up with
+ * @returns {Palette}
+ */
+export function paletteFromPixels(pixels, count = PALETTE_SIZE) {
+  const buckets = medianCut(pixels, count * 3);
   const filtered = buckets
     .map((bucket) => ({ color: bucket.mean, population: bucket.pixels.length }))
     .filter((entry) => isUsable(entry.color));
@@ -75,9 +85,9 @@ async function extract(url) {
    *
    * A cover with a genuinely black or white area still produced a mid-tone palette, because
    * median cut averages those areas away and the usability filter rejected anything at the
-   * luminance extremes. The result was a strip that never came close to the artwork's
-   * darkest or lightest colour. So the raw pixel population is checked directly: if a
-   * meaningful share of the cover is near-black or near-white, that tone is appended.
+   * luminance extremes. The result was a strip that never came close to the artwork's darkest or
+   * lightest colour. So the raw pixel population is checked directly: if a meaningful share of
+   * the cover is near-black or near-white, that tone is appended.
    */
   const extremes = detectExtremes(pixels);
 
@@ -90,7 +100,7 @@ async function extract(url) {
    * (the earlier approach) produced adjacent swatches of similar depth and low contrast.
    */
   const candidates = [...usable.map((entry) => entry.color), ...extremes];
-  const colors = selectByLuminance(candidates, PALETTE_SIZE);
+  const colors = selectByLuminance(candidates, count);
   const dominant = usable[0]?.color ?? { r: 128, g: 128, b: 128 };
 
   // Two anchor colours for the background wash: the most and least luminous of the
@@ -194,15 +204,48 @@ function averageColor(pixels) {
   return { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n) };
 }
 
-/** Reject extremes and greys; they make a palette look muddy. */
+/**
+ * Perceived brightness on the 0-255 scale: the same weights as the WCAG formula, without the
+ * gamma linearisation.
+ *
+ * This is the measure for *choosing* colours - "is this near-black?", "which band does it fall
+ * in?". WCAG's relative luminance is the measure for *contrast* - "can text be read on this?" -
+ * and the two are not interchangeable. WCAG weights blue at 0.0722 and then linearises, so a rich
+ * dark blue lands at a relative luminance of 0.034 while the same colour is 48 here.
+ *
+ * Mixing them up is exactly what broke a dark-blue cover: the "too dark to use" guard was written
+ * against WCAG luminance with a 0.06 cut, which is around 71/255 for a grey and *below* a dark
+ * blue - so the guard threw away the swatches the artwork was made of, and the darkest band had to
+ * be filled with whatever grey was left over.
+ */
+export function luma255({ r, g, b }) {
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Below this it is black rather than a colour. Doubles as the near-black extreme threshold. */
+const DARK_LUMA = 40;
+/** Above this it is white rather than a colour. */
+const LIGHT_LUMA = 255 - DARK_LUMA;
+/** Below this saturation a colour carries no hue worth showing. */
+const MIN_SATURATION = 0.12;
+/** The luma window in which a *grey* is still a usable neutral accent. */
+const GREY_RANGE = [60, 220];
+
+/**
+ * Reject what makes a palette muddy: black, white, and colourless mush.
+ *
+ * The judgement is about hue, not brightness. A dark colour with real saturation - dark blue, dark
+ * red, deep green - is a legitimate swatch, and often the one the cover is actually made of. Only
+ * a colour that is both extreme *and* colourless should be dropped, which is what the grey window
+ * below expresses.
+ */
 function isUsable({ r, g, b }) {
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const luma = luminance({ r, g, b });
-  if (luma < 0.06 || luma > 0.95) return false;
-  const saturation = max === 0 ? 0 : (max - min) / max;
-  // Keep strongly coloured swatches, plus mid greys (they read as neutral accents).
-  return saturation > 0.12 || (luma > 0.2 && luma < 0.8);
+  const luma = luma255({ r, g, b });
+  if (luma < DARK_LUMA || luma > LIGHT_LUMA) return false;
+  const sat = saturation({ r, g, b });
+  if (sat > MIN_SATURATION) return true;
+  // A grey: usable in the middle, but not right at either end, where it is just black or white.
+  return luma > GREY_RANGE[0] && luma < GREY_RANGE[1];
 }
 
 /**
@@ -252,8 +295,10 @@ function selectByLuminance(candidates, count = 5) {
 /**
  * Find the cover's near-black and near-white tones, if they are genuinely present.
  *
- * Median cut averages these away, so a cover with a solid black or white region still
- * yielded a mid-tone palette. Counting the raw pixels directly restores those extremes.
+ * Median cut averages these away, so a cover with a solid black or white region still yielded a
+ * mid-tone palette. Counting the raw pixels directly restores those extremes. The threshold is the
+ * same `DARK_LUMA` the usability filter uses, and that is deliberate: when the two disagreed, a
+ * band of mid-dark colours fell into the gap between them and was dropped by both.
  *
  * @param {number[][]} pixels RGB triples sampled from the cover
  * @returns {{r:number,g:number,b:number}[]} up to two additional colours
@@ -265,13 +310,13 @@ function detectExtremes(pixels) {
   let lightSum = [0, 0, 0];
 
   for (const [r, g, b] of pixels) {
-    const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b; // 0..255
-    if (luma <= 32) {
+    const luma = luma255({ r, g, b });
+    if (luma <= DARK_LUMA) {
       dark++;
       darkSum[0] += r;
       darkSum[1] += g;
       darkSum[2] += b;
-    } else if (luma >= 223) {
+    } else if (luma >= LIGHT_LUMA) {
       light++;
       lightSum[0] += r;
       lightSum[1] += g;
@@ -295,8 +340,19 @@ function detectExtremes(pixels) {
   return out;
 }
 
-/** HSL saturation of a colour, 0..1. */
-function saturation({ r, g, b }) {  const max = Math.max(r, g, b) / 255;
+/**
+ * HSL saturation, 0..1.
+ *
+ * Used rather than the `(max - min) / max` form because that one collapses for dark colours: it
+ * divides by `max`, so a colour at 20% brightness can never report more than 0.2 of "saturation"
+ * however strong its hue is. HSL saturation is a property of the hue, which is what both the
+ * usability filter and the per-band "most saturated wins" rule are asking about.
+ *
+ * Exported so ui/test/palette.test.mjs can assert on the *character* of a swatch, not just its
+ * brightness - "the darkest swatch is a dark blue" is the property that was wrong.
+ */
+export function saturation({ r, g, b }) {
+  const max = Math.max(r, g, b) / 255;
   const min = Math.min(r, g, b) / 255;
   const lightness = (max + min) / 2;
   if (max === min) return 0;

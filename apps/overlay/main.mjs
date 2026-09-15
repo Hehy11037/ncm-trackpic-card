@@ -63,28 +63,29 @@ const CDP_PORT = Number(process.env.OVERLAY_CDP_PORT ?? 9223);
 /**
  * How often the pointer is sampled.
  *
- * 60ms rather than the original 120ms: this is the resolution of "did the pointer leave?", and at
+ * 40ms rather than the original 120ms: this is the resolution of "did the pointer leave?", and at
  * 120ms the roll-up felt sluggish on top of its own delay. The query is a cheap Win32 call.
  */
-const HOVER_POLL_MS = 50;
+const HOVER_POLL_MS = 40;
 /**
  * How long the pointer must stay away before the card rolls up.
  *
- * 200ms. A deliberate move away is obvious well before that; the delay exists only to forgive a
- * pointer that clips the edge. The *motion* is what the user judges the speed by, and that is
- * `RESIZE_MS` - see `animateGeometryTo`.
+ * 120ms. This is the number felt as "reaction time", and a deliberate move away from the card is
+ * unambiguous well before it elapses - the delay exists only to forgive a pointer that clips the
+ * edge. An unwanted roll-up is cheap to undo, because the expand delay is shorter still.
  */
-const COLLAPSE_DELAY_MS = 200;
+const COLLAPSE_DELAY_MS = 120;
 /** How long the pointer must rest on the rolled-up strip before it expands again. */
-const EXPAND_DELAY_MS = 60;
-/** How often the window follows the cursor during a drag or a resize: one display frame. */
-const DRAG_FOLLOW_MS = 16;
+const EXPAND_DELAY_MS = 40;
+/** How often the resize tween steps. One display frame. */
+const TWEEN_FRAME_MS = 16;
 /**
  * How long the roll-up and the unroll take.
  *
  * Short enough to feel like a snap rather than a transition, long enough to be read as movement.
+ * This is the *duration*; the reaction time is `COLLAPSE_DELAY_MS` plus one poll.
  */
-const RESIZE_MS = 140;
+const RESIZE_MS = 120;
 /**
  * Grace period after the shell itself moves or shows the window.
  *
@@ -160,7 +161,7 @@ let hoverErrors = 0;
  * the user could not recover by hand.
  */
 let dragGrab = null;
-let dragTimer = null;
+/** Whether the drag moved the window at all, so a plain click does not rewrite the state file. */
 let dragMoved = false;
 /**
  * The window's size, captured when a drag begins and never read back while it runs.
@@ -169,6 +170,8 @@ let dragMoved = false;
  * whose scale factor is not whole, which showed up as the card slowly growing while it was moved.
  */
 let dragSize = null;
+/** The display the drag started on. Displays do not change mid-drag, and the query is synchronous. */
+let dragWorkArea = null;
 /** Set once per drag when the OS reports a size other than the one we asked for. */
 let dragSizeMismatch = false;
 /** When the drag last moved the window, so a gesture that never ends can be dropped. */
@@ -361,7 +364,7 @@ function animateGeometryTo(target, ms = RESIZE_MS) {
       stopResizeTween();
       persistWindowState();
     }
-  }, DRAG_FOLLOW_MS);
+  }, TWEEN_FRAME_MS);
 }
 
 function stopResizeTween() {
@@ -738,20 +741,57 @@ function bindIpc() {
 
   /* --------------------------------------------------------------- dragging */
 
-  ipcMain.on('overlay:drag-start', (event) => {
+  ipcMain.on('overlay:drag-start', (event, x, y) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     const bounds = mainWindow.getBounds();
-    const cursor = screen.getCursorScreenPoint();
-    // The offset of the press inside the window is what the follow loop holds constant.
-    dragGrab = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
+    /*
+     * The cursor position comes from the renderer's `pointermove`, not from polling.
+     *
+     * A `setInterval` fires *near* every frame rather than on it, so the window is sometimes moved
+     * twice within one frame and sometimes not at all - which reads as stutter. `pointermove` is
+     * delivered in step with the compositor and carries the position as of the frame being drawn.
+     */
+    dragGrab = { x: Number(x) - bounds.x, y: Number(y) - bounds.y };
     // Captured once, so the size can never be fed back to itself while the drag runs.
     dragSize = { width: bounds.width, height: bounds.height };
     dragSizeMismatch = false;
     dragMoved = false;
     dragLastAt = Date.now();
-    // A resize tween in flight would fight the follow loop for the same bounds.
+    // Displays do not change mid-drag, and `getDisplayMatching` is a synchronous query on the
+    // cursor path - the one place where an extra millisecond is visible.
+    dragWorkArea = workAreaForWindow();
     stopResizeTween();
-    startDragFollow();
+  });
+
+  ipcMain.on('overlay:drag-move', (event, x, y) => {
+    if (!mainWindow || !dragGrab || !dragSize || event.sender !== mainWindow.webContents) return;
+    const bounds = mainWindow.getBounds();
+    /*
+     * Report a size the OS gave back that is not the one we are asking for.
+     *
+     * The size argument is captured at the press and re-asserted every move, so `bounds` should
+     * match it exactly. When it does not, something outside this process is resizing the window -
+     * a display change mid-drag being the obvious candidate - and the card would visibly change
+     * size under the user. Logged once per drag: the point is to name the cause, not to flood.
+     */
+    if (!dragSizeMismatch && (bounds.width !== dragSize.width || bounds.height !== dragSize.height)) {
+      dragSizeMismatch = true;
+      console.warn(
+        `[shell] 拖动中窗口尺寸被系统改动: 请求 ${dragSize.width}x${dragSize.height}，实际 ${bounds.width}x${bounds.height}`,
+      );
+    }
+    const target = dragTarget(
+      { x: Number(x), y: Number(y) },
+      dragGrab,
+      dragSize,
+      dragWorkArea ?? workAreaForWindow(),
+    );
+    if (target.x === bounds.x && target.y === bounds.y) return;
+    dragMoved = true;
+    dragLastAt = Date.now();
+    // Never let the card roll up in the middle of being moved.
+    suppressUntil = Date.now() + SUPPRESS_MS;
+    mainWindow.setBounds({ x: target.x, y: target.y, ...dragSize }, false);
   });
 
   ipcMain.on('overlay:drag-end', (event) => {
@@ -765,79 +805,21 @@ function bindIpc() {
 }
 
 /**
- * Follow the cursor until the drag ends.
- *
- * The window chases the pointer in the *shell* rather than by applying deltas the renderer
- * reports. Two things fall out of that, and both were bugs before:
- *
- *  - The cursor can never outrun the window and leave it, so the renderer keeps receiving pointer
- *    events and `pointerup` always arrives. A drag that ended early because the pointer escaped
- *    used to leave the card collapsed in a place the user could not reach.
- *  - Every position is clamped to the display, so the window - and therefore the strip it rolls
- *    up into - is always somewhere a pointer can get to.
- *
- * The **size is captured once, at the press**, and never read back. Feeding `getBounds().width`
- * into the next `setBounds` looks harmless and is not: on a display whose scale factor is not a
- * whole number, DIP to physical pixels and back can round differently, so each frame can write a
- * size a fraction larger than it read. At 60 frames a second that compounds - the window visibly
- * grows while it is dragged, then snaps back when something else resizes it. The user saw exactly
- * that.
- */
-function startDragFollow() {
-  if (dragTimer) return;
-  dragTimer = setInterval(() => {
-    if (quitting || !mainWindow || mainWindow.isDestroyed() || !dragGrab || !dragSize) {
-      endDrag('follow-stopped');
-      return;
-    }
-    const bounds = mainWindow.getBounds();
-    /*
-     * Report a size the OS gave back that is not the one we are asking for.
-     *
-     * The size argument is captured at the press and re-asserted every frame, so `bounds` should
-     * match it exactly. When it does not, something outside this process is resizing the window -
-     * a display change mid-drag being the obvious candidate - and the card would visibly change
-     * size under the user. Logged once per drag: the point is to name the cause, not to flood.
-     */
-    if (!dragSizeMismatch && (bounds.width !== dragSize.width || bounds.height !== dragSize.height)) {
-      dragSizeMismatch = true;
-      console.warn(
-        `[shell] 拖动中窗口尺寸被系统改动: 请求 ${dragSize.width}x${dragSize.height}，实际 ${bounds.width}x${bounds.height}`,
-      );
-    }
-    const cursor = screen.getCursorScreenPoint();
-    const target = dragTarget(cursor, dragGrab, dragSize, workAreaForWindow());
-    if (target.x === bounds.x && target.y === bounds.y) return;
-    dragMoved = true;
-    dragLastAt = Date.now();
-    // Never let the card roll up in the middle of being moved.
-    suppressUntil = Date.now() + SUPPRESS_MS;
-    mainWindow.setBounds({ x: target.x, y: target.y, ...dragSize }, false);
-  }, DRAG_FOLLOW_MS);
-}
-
-/**
  * Forget an in-flight drag.
  *
  * A drag that never ends leaves `dragGrab` set, and the pointer watcher skips every tick while a
  * drag is open - so the card would silently stop rolling up altogether. That failure mode has
  * already cost this project a round, so a stale drag is dropped rather than trusted.
+ *
+ * The window's size was captured at the press and is never read back, so it should be identical
+ * here. If it is not, something else resized the window mid-drag, which is worth saying out loud:
+ * "the card grows while I drag it" is otherwise impossible to attribute from the outside.
  */
 function endDrag(reason) {
-  if (dragTimer) {
-    clearInterval(dragTimer);
-    dragTimer = null;
-  }
   if (!dragGrab) return;
   dragGrab = null;
+  dragWorkArea = null;
 
-  /*
-   * Report a size change across the drag.
-   *
-   * The window's size is captured at the press and never read back, so it should be identical
-   * here. If it is not, something else resized the window mid-drag and that is worth knowing -
-   * "the card slowly grows while I drag it" is otherwise impossible to attribute from the outside.
-   */
   if (mainWindow && !mainWindow.isDestroyed() && dragSize) {
     const bounds = mainWindow.getBounds();
     if (bounds.width !== dragSize.width || bounds.height !== dragSize.height) {
@@ -923,7 +905,5 @@ app.on('will-quit', () => {
   if (hoverTimer) clearInterval(hoverTimer);
   hoverTimer = null;
   stopResizeTween();
-  if (dragTimer) clearInterval(dragTimer);
-  dragTimer = null;
   stopHost();
 });

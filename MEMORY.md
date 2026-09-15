@@ -147,6 +147,13 @@ Break one of these and a check fails. That is the point - none of them are visua
     height.** Together those make the roll-up read as the panel sliding up, with the window's
     bottom edge eating the card - instead of the card shrinking towards its middle, or popping into
     the strip halfway through.
+15. **The drag's cursor position comes from the renderer's `pointermove`**, sent as absolute screen
+    coordinates at most once per frame. Never poll the cursor on a timer in the shell for this: a
+    timer fires near a frame rather than on it, and the irregularity reads as stutter.
+16. **Choosing a colour and judging contrast use different luminance measures.** `luma255` (0-255,
+    no gamma) is for "is this near-black?", "which band does it fall in?". WCAG relative luminance
+    is for "can text be read on this?". Using the WCAG one to filter dark colours discards exactly
+    the swatches a dark-blue cover is made of.
 
 ## 5. Commands
 
@@ -222,21 +229,28 @@ Each of these cost real time. The reason matters more than the rule.
     grows visibly while it is dragged. Capture the size once, at the press, and reuse it.
 14. **A resize with no motion reads as slow however short the delay is.** The roll-up was cut from
     600ms to 300ms and still felt slow, because nothing moved - there was nothing to judge the
-    speed by except the pause. A 140ms ease-out tween fixed the perception, and the mode threshold
+    speed by except the pause. A 120ms ease-out tween fixed the perception, and the mode threshold
     had to move to the collapsed height so the tween looks like a roll-up rather than a pop.
+15. **`setInterval` is not a frame clock.** Polling the cursor every 16ms moves the window *near*
+    each frame rather than on it - sometimes twice in one frame, sometimes not at all - and that
+    irregularity is what "卡顿" means, even though every step is identical in size. Drive anything
+    that must look smooth from `pointermove` or an animation frame.
+16. **Two luminance measures, two jobs.** The palette pipeline filtered with WCAG relative
+    luminance, which weights blue at 0.0722 and linearises, so a rich dark blue measures 0.034 and
+    fell below the 0.06 "too dark" cut. The cover's own colour was thrown away and its darkest band
+    was filled with a grey. Filtering and banding use the 0-255 luma; only contrast uses WCAG.
 
 ## 7. Current state
 
-* `npm run check` (8 steps) green, `npm test` (78) green, `tsc --noEmit` clean.
-* **Confirmed by the user**: the colour band works, the lock works, and the flip jitter is gone.
-  The jitter fix was `will-change: transform, opacity` on `.face`, keeping both faces on stable
-  compositor layers from the first paint. The earlier `data-settled` attempt did not work and is
-  gone.
+* `npm run check` (8 steps) green, `npm test` (91) green, `tsc --noEmit` clean.
+* **Confirmed by the user**: the colour band works, the lock works, the flip jitter is gone, and
+  the drag no longer changes the window's size. The jitter fix was `will-change: transform,
+  opacity` on `.face`; the growth fix was capturing the window size at the press instead of reading
+  it back every frame.
 * Awaiting the user's report on this round:
-  * whether the 140ms ease-out tween makes the roll-up read as fast;
-  * whether the drag still grows the window — the shell now prints
-    `拖动期间窗口尺寸被改动: WxH -> WxH` if anything resizes it mid-drag, which names the culprit
-    outright if the size capture was not the whole story.
+  * whether driving the drag from `pointermove` removed the stutter;
+  * whether a 120ms collapse delay (plus one 40ms poll) is quick enough, and not twitchy;
+  * whether `ロンググッドバイ`'s cover now yields a dark blue instead of a dark grey.
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

@@ -151,15 +151,20 @@ console.log('\n--- 窗口拖动 ---');
   check('壳端有放弃僵死拖动的兜底', /DRAG_STALE_MS/.test(shellJs) && /endDrag\(/.test(shellJs));
 
   /*
-   * The window follows the cursor in the shell, holding the pressed point at a fixed offset. That
-   * is what stops the cursor from outrunning the window: an escaped cursor meant no `pointerup`, a
-   * drag that never ended, and a card left somewhere unreachable.
+   * The window's position is computed in the shell from absolute screen coordinates.
+   *
+   * The *coordinates*, though, come from the renderer's `pointermove` and not from polling the
+   * cursor on a timer: a `setInterval` fires near a frame rather than on it, so the window is
+   * sometimes moved twice within one frame and sometimes not at all, which the eye reads as stutter.
    */
-  check('壳自己跟随指针', /startDragFollow/.test(shellJs) && /screen\.getCursorScreenPoint\(\)/.test(shellJs));
-  check('不再由渲染层上报位移', !/dragMove/.test(preloadJs) && !/overlay:drag-move/.test(shellJs));
+  check('壳按坐标移动窗口', /overlay:drag-move/.test(shellJs) && /dragTarget\(/.test(shellJs));
+  check('不再用定时器轮询光标', !/startDragFollow/.test(shellJs) && !/getCursorScreenPoint\(\)[\s\S]{0,200}dragGrab/.test(shellJs));
+  check('渲染层每帧上报一次坐标', /requestAnimationFrame/.test(dragJs) && /dragMove\?\.\(pending\.x/.test(dragJs));
+  check('上报的是绝对坐标不是位移', /dragMove: \(x, y\)/.test(preloadJs));
+  check('按下即开始，没有死区', !/DRAG_THRESHOLD_PX/.test(dragJs) && /bridge\(\)\.dragStart\(event\.screenX, event\.screenY\)/.test(dragJs));
   check('拖动期间不自动收起', /if \(dragGrab\)/.test(shellJs));
 
-  for (const verb of ['dragStart', 'dragEnd']) {
+  for (const verb of ['dragStart', 'dragMove', 'dragEnd']) {
     check(`桥接暴露 ${verb}`, new RegExp(`${verb}:`).test(preloadJs));
   }
   // The shell owns the arithmetic now, and it lives with the other window geometry.
@@ -175,9 +180,11 @@ console.log('\n--- 拖动时的窗口尺寸 ---');
    * dragged, then snap back. The size is captured at the press and never read back.
    */
   check('拖动开始时捕获尺寸', /dragSize = \{ width: bounds\.width, height: bounds\.height \}/.test(shellJs));
-  const follow = shellJs.slice(shellJs.indexOf('function startDragFollow'), shellJs.indexOf('function endDrag'));
-  check('跟随循环用捕获的尺寸', /\.\.\.dragSize/.test(follow));
-  check('跟随循环不回读尺寸', !/width: bounds\.width/.test(follow) && !/height: bounds\.height/.test(follow));
+  const dragHandlers = shellJs.slice(shellJs.indexOf("ipcMain.on('overlay:drag-start'"), shellJs.indexOf('function endDrag'));
+  check('移动时用捕获的尺寸', /\.\.\.dragSize/.test(dragHandlers));
+  // The mismatch warning deliberately *reads* bounds to compare; what must never happen is the
+  // read-back size being written straight back out, which is what the growth was.
+  check('移动时不把读回的尺寸写回去', !/setBounds\(\{ \.\.\.bounds/.test(dragHandlers));
   check('结束时校验尺寸没变', /拖动期间窗口尺寸被改动/.test(shellJs));
 }
 
@@ -215,6 +222,15 @@ console.log('\n--- 收起/展开动画 ---');
   check('收起/展开走补间', /function animateGeometryTo/.test(shellJs));
   const resizeMs = Number(/const RESIZE_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN);
   check('补间时长很短（<= 250ms）', Number.isFinite(resizeMs) && resizeMs <= 250, `${resizeMs}ms`);
+  // The reaction time the user feels is the delay plus one poll, so both are asserted to stay low.
+  const collapseMs = Number(/const COLLAPSE_DELAY_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN);
+  const pollMs = Number(/const HOVER_POLL_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN);
+  check(
+    '收起反应时间（延迟 + 一次轮询）<= 200ms',
+    collapseMs + pollMs <= 200,
+    `${collapseMs} + ${pollMs} = ${collapseMs + pollMs}ms`,
+  );
+  check('展开比收起更快', Number(/const EXPAND_DELAY_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN) <= collapseMs);
   check('用缓出曲线', /easeOutCubic/.test(shellJs) && /export function easeOutCubic/.test(shellUtils));
   // The tween must step from values captured once - see the drag-size check above for why.
   check('补间起点只读一次', /const from = \{ x: current\.x/.test(shellJs));

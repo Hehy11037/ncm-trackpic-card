@@ -188,6 +188,36 @@ console.log('\n--- 拖动时的窗口尺寸 ---');
   check('结束时校验尺寸没变', /拖动期间窗口尺寸被改动/.test(shellJs));
 }
 
+console.log('\n--- 托盘菜单 ---');
+{
+  /*
+   * The owner of the app asked for the tray menu to be cut back to size and quit. It had become a
+   * control panel, and every item removed has to still be reachable somewhere - which is what the
+   * rest of this block asserts, because "the tray no longer offers it" is only acceptable while
+   * "the card does" stays true.
+   */
+  const start = shellJs.indexOf('function trayTemplate()');
+  const end = shellJs.indexOf('function createTray()');
+  const menu = shellJs.slice(start, end);
+  check(
+    '托盘菜单只有尺寸与退出',
+    menu.includes('CARD_WIDTH_PRESETS') &&
+      menu.includes('preset.label') &&
+      menu.includes("label: '退出'"),
+  );
+  // Everything else that used to be in there.
+  for (const gone of ['显示 / 隐藏', '展开卡片', '居中显示', '立即收起', "type: 'checkbox'"]) {
+    check(`托盘不再有「${gone}」`, !menu.includes(gone));
+  }
+  // ... and the recovery the tray used to provide is now the icon's own click.
+  check('单击托盘图标可显示/隐藏', /tray\.on\('click', \(\) => toggleWindow\(\)\)/.test(shellJs));
+  check(
+    '从托盘显示必定展开',
+    /function showWindow\(\)[\s\S]{0,600}setCollapsed\(false\)/.test(shellJs),
+  );
+  check('菜单只构建一次', !/refreshTrayMenu/.test(shellJs));
+}
+
 console.log('\n--- 舞台锚点与模式阈值 ---');
 {
   /*
@@ -438,12 +468,12 @@ console.log('\n--- 收起 / 展开 ---');
   check('收起不依赖渲染层握手', /webContents\.once\('dom-ready'/.test(shellJs));
   check('渲染层不再发送 ready', !/overlay:ready/.test(shellJs) && !/ready: \(\)/.test(preloadJs));
 
-  // Lock: owned and persisted by the shell, offered both on the card and in the tray, and
-  // defaulting to ON so an overlay never rolls itself up by surprise on first run.
+  // Lock: owned and persisted by the shell, controlled from the card and `L`, and defaulting to ON
+  // so an overlay never rolls itself up by surprise on first run.
   check('锁定状态由壳持有', /let locked = true/.test(shellJs) && /overlay:toggle-lock/.test(shellJs));
   check('锁定状态写入存档', /locked,/.test(shellJs) && /locked: state\.locked === true/.test(shellUtils));
   check('锁定默认开启', /typeof raw\.locked === 'boolean' \? raw\.locked : true/.test(shellUtils));
-  check('托盘也能锁定', /锁定（鼠标离开不收起）/.test(shellJs) && /type: 'checkbox'/.test(shellJs));
+  check('卡片上有锁定键', html.includes('id="lock"') && /on\('lock'/.test(mainJs) && /event\.key === 'l'/.test(mainJs));
   check('渲染层订阅壳的锁定状态', /watchState/.test(mainJs) && /watchState/.test(preloadJs));
   check('渲染层不再自己存锁定', !/LOCK_KEY/.test(mainJs) && !/ncm-card:locked/.test(mainJs));
   check('锁定状态推送给渲染层', /send\('overlay:state'/.test(shellJs));

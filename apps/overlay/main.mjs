@@ -457,12 +457,14 @@ function persistWindowState() {
   });
 }
 
-/** Keep the card button and the tray checkbox showing the same thing. */
+/**
+ * "Do not auto-collapse". Owned and persisted here; the card's lock button and `L` are its only
+ * controls, and they are views of this value rather than copies of it.
+ */
 function setLocked(next) {
   locked = next === true;
   if (locked && collapsed) setCollapsed(false);
   mainWindow?.webContents.send('overlay:state', { locked });
-  refreshTrayMenu();
   persistWindowState();
   console.info(`[shell] 锁定: ${locked ? '开（不再自动收起）' : '关（鼠标离开会收起）'}`);
 }
@@ -723,47 +725,26 @@ function toggleWindow() {
 
 /* ---------------------------------------------------------------------- tray */
 
+/**
+ * The tray menu: three sizes and quit, and nothing else.
+ *
+ * It was a control panel - show/hide, expand, centre, a lock checkbox, a collapse item - and the
+ * owner of the app asked for it to be cut back to the two things worth reaching for from the
+ * notification area. The sizes are not behind a disabled "尺寸" header either: the labels say what
+ * they are, and the point of the change was fewer rows.
+ *
+ * Nothing is lost by removing the rest:
+ *
+ *  - **show / hide, and recovery from a rolled-up card**, are the tray icon's own left-click, which
+ *    toggles the window and always brings it back expanded (`showWindow` un-collapses);
+ *  - **the lock** lives on the card and on `L`. It is still owned and persisted by the shell, so
+ *    removing the checkbox did not move the state anywhere;
+ *  - **centre** was only ever a convenience for a window someone had dragged off somewhere.
+ */
 function trayTemplate() {
   return [
-    { label: '显示 / 隐藏', click: () => toggleWindow() },
-    {
-      // An explicit way back to the full card, whatever state it is in. The card itself is
-      // normally enough - moving onto the strip expands it - but a control that only exists in
-      // the window cannot recover a window that is somewhere awkward.
-      label: '展开卡片',
-      enabled: collapsed,
-      click: () => showWindow(),
-    },
-    {
-      label: '居中显示',
-      click: () => {
-        setCollapsed(false);
-        mainWindow?.center();
-        showWindow();
-      },
-    },
-    { type: 'separator' },
-    {
-      /*
-       * The lock also lives here, and not only on the card, because it is the one control that
-       * decides whether the window disappears when the pointer leaves. If the card's own
-       * button is unreachable - rolled up, or the preload bridge failed to load - this still
-       * works, so the overlay can never get stuck in a state its user cannot change.
-       */
-      label: '锁定（鼠标离开不收起）',
-      type: 'checkbox',
-      checked: locked,
-      click: (item) => setLocked(item.checked),
-    },
-    {
-      label: '立即收起',
-      enabled: !locked,
-      click: () => setCollapsed(true),
-    },
-    { type: 'separator' },
-    { label: '尺寸', enabled: false },
     ...CARD_WIDTH_PRESETS.map((preset) => ({
-      label: `  ${preset.label}（${preset.width}）`,
+      label: `${preset.label}（${preset.width}）`,
       click: () => {
         setCardWidth(preset.width);
         showWindow();
@@ -780,19 +761,16 @@ function trayTemplate() {
   ];
 }
 
-/** Rebuilt rather than mutated: the checkbox and the enabled state both depend on `locked`. */
-function refreshTrayMenu() {
-  if (!tray) return;
-  // Held in a module-level binding as well: the menu is replaced from inside its own click
-  // handler, and a menu that is only referenced by the tray can be collected while it is open.
-  trayMenu = Menu.buildFromTemplate(trayTemplate());
-  tray.setContextMenu(trayMenu);
-}
-
 function createTray() {
   tray = new Tray(iconImage(16));
-  tray.setToolTip('Now Playing — 网易云同步卡片');
-  refreshTrayMenu();
+  tray.setToolTip('Now Playing — 网易云同步卡片（单击显示/隐藏）');
+  /*
+   * Built once and held in a module-level binding. The menu no longer changes, and a menu that is
+   * only referenced by the tray can be collected while it is open.
+   */
+  trayMenu = Menu.buildFromTemplate(trayTemplate());
+  tray.setContextMenu(trayMenu);
+  // Left-click is the whole show/hide and un-collapse story now, so it is not incidental.
   tray.on('click', () => toggleWindow());
 }
 

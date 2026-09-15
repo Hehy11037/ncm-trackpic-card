@@ -711,6 +711,26 @@ pointer has been outside for a second longer than the delay and the card is stil
 every guard already passed - it prints the state machine's own view along with `locked` and
 `ready`.
 
+## 2026-09-15 (11) — the tray is not a control panel
+
+Asked for directly: "windows 右下角小图标那里不需要那么多选项，只需要更改尺寸和退出的选项即可".
+It had accumulated show/hide, expand, centre, a lock checkbox and a collapse item - a control panel
+in the notification area.
+
+Cut to three sizes and 退出. What matters is that **nothing became unreachable**, and the check
+asserts each of those separately rather than trusting that the menu shrank:
+
+* show/hide, and recovery from a rolled-up card, are the tray icon's own left-click. `showWindow`
+  un-collapses, so a card stuck as a strip comes back expanded;
+* the lock is on the card and on `L`, and is still owned and persisted by the shell - removing the
+  checkbox did not move the state anywhere;
+* centre was only ever a convenience for a window someone had dragged somewhere odd.
+
+The menu is also built once now instead of being rebuilt whenever the lock changed, since nothing
+in it is stateful any more. `trayTemplate` survives as a function only so the check can read the
+menu's contents out of the source and assert what is *not* in it.
+
+
 
 
 

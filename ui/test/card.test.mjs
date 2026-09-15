@@ -77,6 +77,7 @@ function fakeView() {
     progressThumb: { style: {} },
     timeNow: { textContent: '' },
     miniFill: { style: {} },
+    progressTrack: { dataset: {}, setAttribute: (name, value) => { view.el.progressTrack[name] = value; } },
   };
   view.scrubFraction = null;
   view.lastFraction = -1;
@@ -162,5 +163,18 @@ describe('CardView.setScrub', () => {
     view.tick(2_000, 0.25);
     assert.equal(view.el.fill.style.width, '25.00%');
     assert.equal(view.el.timeNow.textContent, '0:02');
+  });
+
+  it('keeps the slider role honest while playing and while dragging', () => {
+    // `role="slider"` with an `aria-valuenow` frozen at 0 reports a position that never changes.
+    const view = fakeView();
+    view.tick(2_000, 0.25);
+    assert.equal(view.el.progressTrack['aria-valuenow'], '25');
+    view.setScrub(0.7, 10_000);
+    assert.equal(view.el.progressTrack['aria-valuenow'], '70');
+    // Back to the clock, and back to the clock's value.
+    view.setScrub(null);
+    view.tick(4_000, 0.4);
+    assert.equal(view.el.progressTrack['aria-valuenow'], '40');
   });
 });

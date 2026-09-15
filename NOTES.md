@@ -551,6 +551,48 @@ it leaves no listener behind.
 `MEMORY.md` is new: the current rules, constraints, invariants and traps, as opposed to `NOTES.md`,
 which is the chronological record of how they were learned.
 
+## 2026-09-15 (8) — a jump reads as slow, and a window that grew while being dragged
+
+### Cutting the delay did not make the roll-up feel faster
+
+Reducing the delay from 600ms to 300ms helped, but the user still reported it as slow - and their
+own suggested fix was the right one: add a fast animation. That is the actual diagnosis. A resize
+with no motion gives the eye nothing to judge the speed by except the pause before it, so the pause
+is all that gets perceived. The roll-up now tweens over **140ms** with an ease-out curve, and reads
+as a quick movement rather than a wait followed by a jump.
+
+Two things had to change with it, or the motion would have looked wrong:
+
+* **The stage is anchored to the window's top** instead of being centred. The window's top edge
+  stays put and its bottom edge comes up, so the card is *eaten from below* - which is the roll-up.
+  A centred stage would have shrunk the card towards its middle from both ends.
+* **The mode threshold moved to the collapsed height.** It used to be `expanded - 40`, so a
+  collapse would have swapped the card for the strip 40px into the animation and popped. The card
+  now stays the card until the window is essentially the strip, and the clipping does the work.
+  `ui/test/layout.test.mjs` pins that, because it is invisible from the tooling side and
+  unmistakable on screen.
+
+Both also removed the last `transform` from an ancestor of the card, which the flip work had
+already been suspicious of.
+
+### The card grew while it was dragged
+
+`dragTarget` was fed `getBounds()` every frame and its result written back with the same size -
+which looks obviously harmless and is not. `getBounds()` and `setBounds()` round-trip through
+physical pixels; on a display whose scale factor is not a whole number (125% and 150% are the common
+Windows ones) each round trip can land a fraction of a pixel out, so every frame can write a size
+slightly larger than it read. At 60 frames a second that compounds into visible growth, ending in
+whatever resizes the window next - which is why the "sudden shrink" always arrived with it.
+
+The size is now captured once, at the press, and reused for the whole drag. `endDrag` compares the
+window against it and warns if anything else resized the window mid-drag, so if the capture was not
+the whole story the terminal names who else was involved. The resize tween steps from values
+captured once, for the same reason.
+
+**Generalised**: never feed a window's own geometry back into the next `setBounds`. Invariant 13 in
+`MEMORY.md`.
+
+
 
 
 

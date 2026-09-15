@@ -32,6 +32,7 @@ import {
   clampToWorkArea,
   createHoverState,
   dragTarget,
+  easeOutCubic,
   fitWindow,
   loadWindowState,
   makeIconPng,
@@ -190,6 +191,25 @@ console.log('\n--- 拖动时的窗口位置 ---');
   // Sub-pixel positions make a scaled display blurry, so the result is always whole pixels.
   const rounded = clampToWorkArea({ x: 10.4, y: 10.6 }, size, workArea);
   check('位置取整', rounded.x === 10 && rounded.y === 11, JSON.stringify(rounded));
+}
+
+/* ------------------------------------------------------------------ easing */
+
+console.log('\n--- 收起动画的缓动 ---');
+{
+  check('起点为 0', easeOutCubic(0) === 0);
+  check('终点为 1', easeOutCubic(1) === 1);
+  // Monotonic and clamped: a late timer tick must not overshoot the target height.
+  const samples = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1].map(easeOutCubic);
+  check(
+    '单调递增',
+    samples.every((value, i) => i === 0 || value > samples[i - 1]),
+    samples.map((v) => v.toFixed(3)).join(' '),
+  );
+  check('越界被夹住', easeOutCubic(-1) === 0 && easeOutCubic(2) === 1);
+  // Ease-OUT, not ease-in: most of the distance is covered in the first half, which is what makes
+  // a short tween read as fast rather than as a slow slide.
+  check('前一半走完大部分距离', easeOutCubic(0.5) > 0.8, easeOutCubic(0.5).toFixed(3));
 }
 
 /* ------------------------------------------------------- hover -> collapse */

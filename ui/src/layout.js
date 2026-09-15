@@ -86,12 +86,34 @@ export function applyLayoutUnit(stage = document.getElementById('stage')) {
 }
 
 /**
+ * Expanded or rolled up, from the window's height alone.
+ *
+ * The threshold sits at the *collapsed* height rather than halfway between the two, and that is
+ * deliberate. During the resize tween the window passes through every height in between, and the
+ * card should stay the card until the window is essentially the strip:
+ *
+ *  - collapsing, the full card is clipped from below by the window's shrinking bottom edge, which
+ *    is what a roll-up is supposed to look like. Switching to the mini bar halfway would make the
+ *    card vanish while the window was still tall.
+ *  - expanding, the card is drawn at full height with only its top visible and the growing window
+ *    reveals it downwards. Switching late would leave the mini bar stretched over a tall window.
+ *
+ * `tolerance` absorbs the rounding between the shell's `Math.round(card * aspect)` and this
+ * expression.
+ *
+ * @param {number} windowHeight current `window.innerHeight`
+ * @param {number} collapsedWindowHeight window height while the strip is showing
+ */
+export function stageModeFor(windowHeight, collapsedWindowHeight, tolerance = 12) {
+  return windowHeight <= collapsedWindowHeight + tolerance ? 'mini' : 'expanded';
+}
+
+/**
  * Decide whether the stage is showing the full card or the rolled-up bar.
  *
- * The *window's* height is the signal, not a message from the shell: the shell resizes the
- * window and the renderer follows, so the visible mode can never disagree with the window
- * it is drawn in, and no IPC round trip can leave the two out of step. The margin between
- * the two heights is hundreds of pixels, so the 40px tolerance is far from ambiguous.
+ * The *window's* height is the signal, not a message from the shell: the shell resizes the window
+ * and the renderer follows, so the visible mode can never disagree with the window it is drawn in,
+ * and no IPC round trip can leave the two out of step.
  *
  * @param {HTMLElement} [stage] defaults to #stage
  * @returns {'expanded' | 'mini'}
@@ -100,8 +122,9 @@ export function syncStageMode(stage = document.getElementById('stage')) {
   if (!stage) return 'expanded';
   const width = stage.clientWidth || MIN_STAGE_WIDTH;
   const pad = Math.max(0, (window.innerWidth - width) / 2);
-  const expandedWindowHeight = width * STAGE_ASPECT + pad * 2;
-  const mode = window.innerHeight < expandedWindowHeight - 40 ? 'mini' : 'expanded';
+  // The strip's own window height: the threshold is measured against it, not against the card's.
+  const collapsedWindowHeight = Math.round(width * MINI_RATIO) + pad * 2;
+  const mode = stageModeFor(window.innerHeight, collapsedWindowHeight);
   if (stage.dataset.mode !== mode) stage.dataset.mode = mode;
   return mode;
 }

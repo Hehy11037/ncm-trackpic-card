@@ -139,6 +139,14 @@ Break one of these and a check fails. That is the point - none of them are visua
     full lyrics are indistinguishable from real ones by inspection.
 12. **`npm run check` must pass with nothing else running.** Every check is self-contained; a check
     that silently depends on the environment is worse than no check, because it is believed.
+13. **A window's own size is never fed back into the next `setBounds`.** Capture it once and reuse
+    it: on a display whose scale factor is not whole, DIP to physical and back can round
+    differently, so re-applying what was just read compounds into visible growth. Applies to both
+    the drag and the resize tween.
+14. **The stage is anchored to the window's top, and the mode threshold sits at the *collapsed*
+    height.** Together those make the roll-up read as the panel sliding up, with the window's
+    bottom edge eating the card - instead of the card shrinking towards its middle, or popping into
+    the strip halfway through.
 
 ## 5. Commands
 
@@ -208,19 +216,27 @@ Each of these cost real time. The reason matters more than the rule.
     control that is covered, a component that never mounted - all look identical. That is why the
     card logs a hit-test self-check at startup, logs every colour pick, and the shell logs every
     roll-up and drag transition.
+13. **Never feed a window's own geometry back into the next `setBounds`.** `getBounds()` and
+    `setBounds()` round-trip through physical pixels, so on a 125% or 150% display each frame can
+    write a size a fraction larger than it read. At 60 frames a second that compounds: the card
+    grows visibly while it is dragged. Capture the size once, at the press, and reuse it.
+14. **A resize with no motion reads as slow however short the delay is.** The roll-up was cut from
+    600ms to 300ms and still felt slow, because nothing moved - there was nothing to judge the
+    speed by except the pause. A 140ms ease-out tween fixed the perception, and the mode threshold
+    had to move to the collapsed height so the tween looks like a roll-up rather than a pop.
 
 ## 7. Current state
 
-* Working tree clean at `2cbe413`; everything up to `2cbe413` pushed to `origin/main`.
-* `npm run check` (8 steps) green, `npm test` (72) green, `tsc --noEmit` clean.
-* Unverified by eye, awaiting the user's report after a restart:
-  * whether the window appearing immediately removed the startup hourglass;
-  * whether the faster collapse (60ms poll + 300ms delay) feels right;
-  * whether the cursor-following drag is continuous;
-  * **the flip jitter.** The current attempt is `will-change: transform, opacity` on `.face`, to
-    keep both faces on stable compositor layers. This is a *hypothesis*; an earlier attempt
-    (`data-settled`) did not help and was removed. If it persists, the distinguishing questions are:
-    during or after the animation, every flip or only the first, the whole card or only the cover.
+* `npm run check` (8 steps) green, `npm test` (78) green, `tsc --noEmit` clean.
+* **Confirmed by the user**: the colour band works, the lock works, and the flip jitter is gone.
+  The jitter fix was `will-change: transform, opacity` on `.face`, keeping both faces on stable
+  compositor layers from the first paint. The earlier `data-settled` attempt did not work and is
+  gone.
+* Awaiting the user's report on this round:
+  * whether the 140ms ease-out tween makes the roll-up read as fast;
+  * whether the drag still grows the window — the shell now prints
+    `拖动期间窗口尺寸被改动: WxH -> WxH` if anything resizes it mid-drag, which names the culprit
+    outright if the size capture was not the whole story.
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

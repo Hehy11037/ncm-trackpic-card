@@ -34,6 +34,7 @@ import {
   clampToWorkArea,
   createHoverState,
   dragTarget,
+  easeOutCubic,
   fitWindow,
   loadWindowState,
   makeIconPng,
@@ -65,18 +66,25 @@ const CDP_PORT = Number(process.env.OVERLAY_CDP_PORT ?? 9223);
  * 60ms rather than the original 120ms: this is the resolution of "did the pointer leave?", and at
  * 120ms the roll-up felt sluggish on top of its own delay. The query is a cheap Win32 call.
  */
-const HOVER_POLL_MS = 60;
+const HOVER_POLL_MS = 50;
 /**
  * How long the pointer must stay away before the card rolls up.
  *
- * 300ms rather than the original 600ms, for the same reason: a deliberate move away is obvious
- * well before half a second, and the delay is the part that is actually noticed.
+ * 200ms. A deliberate move away is obvious well before that; the delay exists only to forgive a
+ * pointer that clips the edge. The *motion* is what the user judges the speed by, and that is
+ * `RESIZE_MS` - see `animateGeometryTo`.
  */
-const COLLAPSE_DELAY_MS = 300;
+const COLLAPSE_DELAY_MS = 200;
 /** How long the pointer must rest on the rolled-up strip before it expands again. */
-const EXPAND_DELAY_MS = 80;
-/** How often the window follows the cursor during a drag: one display frame. */
+const EXPAND_DELAY_MS = 60;
+/** How often the window follows the cursor during a drag or a resize: one display frame. */
 const DRAG_FOLLOW_MS = 16;
+/**
+ * How long the roll-up and the unroll take.
+ *
+ * Short enough to feel like a snap rather than a transition, long enough to be read as movement.
+ */
+const RESIZE_MS = 140;
 /**
  * Grace period after the shell itself moves or shows the window.
  *
@@ -154,8 +162,17 @@ let hoverErrors = 0;
 let dragGrab = null;
 let dragTimer = null;
 let dragMoved = false;
+/**
+ * The window's size, captured when a drag begins and never read back while it runs.
+ *
+ * Feeding `getBounds().width` into the next `setBounds` compounds a DIP rounding drift on displays
+ * whose scale factor is not whole, which showed up as the card slowly growing while it was moved.
+ */
+let dragSize = null;
 /** When the drag last moved the window, so a gesture that never ends can be dropped. */
 let dragLastAt = 0;
+/** The short tween that animates the roll-up and the unroll. */
+let resizeTimer = null;
 
 /** A drag with no movement for this long is treated as abandoned rather than left open. */
 const DRAG_STALE_MS = 30_000;
@@ -264,9 +281,13 @@ function workAreaForWindow() {
   return screen.getDisplayMatching(mainWindow.getBounds()).workArea;
 }
 
-/** Resize the window to match the current card width and collapsed state. */
-function applyGeometry() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+/**
+ * Where the window belongs for the current card width and collapsed state.
+ *
+ * Separated from the applying of it because the roll-up tweens towards this and the card-width
+ * presets jump straight to it.
+ */
+function geometryTarget() {
   const bounds = mainWindow.getBounds();
   const workArea = workAreaForWindow();
   const fit = fitWindow(cardWidth, workArea);
@@ -281,14 +302,70 @@ function applyGeometry() {
    * edge, so a window left hanging above the top of the display would put the strip where no
    * pointer can reach it, and the card could never be expanded again.
    */
-  const position = clampToWorkArea(
-    { x: bounds.x, y: bounds.y },
-    { width: fit.width, height },
-    workArea,
-  );
+  const position = clampToWorkArea({ x: bounds.x, y: bounds.y }, { width: fit.width, height }, workArea);
 
-  mainWindow.setBounds({ x: position.x, y: position.y, width: fit.width, height }, false);
+  return { x: position.x, y: position.y, width: fit.width, height };
+}
+
+/** Jump straight to the target, with no tween. Used for width changes and at startup. */
+function applyGeometry() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  stopResizeTween();
+  mainWindow.setBounds(geometryTarget(), false);
   persistWindowState();
+}
+
+/**
+ * Resize with a short tween.
+ *
+ * The roll-up used to be a single jump. Even once the delay was cut, it read as slow - because
+ * nothing moved, so there was nothing to judge the speed by except the pause. A 140ms tween makes
+ * it read as a deliberate movement and hides the sampling delay inside the motion.
+ *
+ * `setBounds`'s own `animate` flag is macOS-only, so the tween steps the height itself. It steps
+ * from values captured once, never from what `getBounds()` reports mid-flight, for the same reason
+ * the drag does: reading the size back and writing it again can compound a rounding drift.
+ */
+function animateGeometryTo(target, ms = RESIZE_MS) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  stopResizeTween();
+
+  const current = mainWindow.getBounds();
+  const from = { x: current.x, y: current.y, height: current.height };
+  if (from.height === target.height && from.y === target.y && from.x === target.x) {
+    mainWindow.setBounds(target, false);
+    persistWindowState();
+    return;
+  }
+
+  const startedAt = Date.now();
+  resizeTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      stopResizeTween();
+      return;
+    }
+    const t = Math.min(1, (Date.now() - startedAt) / ms);
+    const eased = easeOutCubic(t);
+    mainWindow.setBounds(
+      {
+        x: Math.round(from.x + (target.x - from.x) * eased),
+        y: Math.round(from.y + (target.y - from.y) * eased),
+        width: target.width,
+        height: Math.round(from.height + (target.height - from.height) * eased),
+      },
+      false,
+    );
+    if (t >= 1) {
+      stopResizeTween();
+      persistWindowState();
+    }
+  }, DRAG_FOLLOW_MS);
+}
+
+function stopResizeTween() {
+  if (!resizeTimer) return;
+  clearInterval(resizeTimer);
+  resizeTimer = null;
 }
 
 function setCollapsed(next) {
@@ -296,7 +373,12 @@ function setCollapsed(next) {
   if (collapsed === value) return;
   collapsed = value;
   console.info(`[shell] ${value ? '收起' : '展开'}窗口（锁定=${locked ? '开' : '关'}）`);
-  applyGeometry();
+  // A drag owns the window's bounds while it runs; let it finish first.
+  if (dragGrab) {
+    applyGeometry();
+    return;
+  }
+  animateGeometryTo(geometryTarget());
 }
 
 function setCardWidth(next) {
@@ -660,8 +742,12 @@ function bindIpc() {
     const cursor = screen.getCursorScreenPoint();
     // The offset of the press inside the window is what the follow loop holds constant.
     dragGrab = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
+    // Captured once, so the size can never be fed back to itself while the drag runs.
+    dragSize = { width: bounds.width, height: bounds.height };
     dragMoved = false;
     dragLastAt = Date.now();
+    // A resize tween in flight would fight the follow loop for the same bounds.
+    stopResizeTween();
     startDragFollow();
   });
 
@@ -686,28 +772,30 @@ function bindIpc() {
  *    used to leave the card collapsed in a place the user could not reach.
  *  - Every position is clamped to the display, so the window - and therefore the strip it rolls
  *    up into - is always somewhere a pointer can get to.
+ *
+ * The **size is captured once, at the press**, and never read back. Feeding `getBounds().width`
+ * into the next `setBounds` looks harmless and is not: on a display whose scale factor is not a
+ * whole number, DIP to physical pixels and back can round differently, so each frame can write a
+ * size a fraction larger than it read. At 60 frames a second that compounds - the window visibly
+ * grows while it is dragged, then snaps back when something else resizes it. The user saw exactly
+ * that.
  */
 function startDragFollow() {
   if (dragTimer) return;
   dragTimer = setInterval(() => {
-    if (quitting || !mainWindow || mainWindow.isDestroyed() || !dragGrab) {
+    if (quitting || !mainWindow || mainWindow.isDestroyed() || !dragGrab || !dragSize) {
       endDrag('follow-stopped');
       return;
     }
     const bounds = mainWindow.getBounds();
     const cursor = screen.getCursorScreenPoint();
-    const target = dragTarget(
-      cursor,
-      dragGrab,
-      { width: bounds.width, height: bounds.height },
-      workAreaForWindow(),
-    );
+    const target = dragTarget(cursor, dragGrab, dragSize, workAreaForWindow());
     if (target.x === bounds.x && target.y === bounds.y) return;
     dragMoved = true;
     dragLastAt = Date.now();
     // Never let the card roll up in the middle of being moved.
     suppressUntil = Date.now() + SUPPRESS_MS;
-    mainWindow.setBounds({ ...bounds, x: target.x, y: target.y }, false);
+    mainWindow.setBounds({ x: target.x, y: target.y, ...dragSize }, false);
   }, DRAG_FOLLOW_MS);
 }
 
@@ -725,6 +813,24 @@ function endDrag(reason) {
   }
   if (!dragGrab) return;
   dragGrab = null;
+
+  /*
+   * Report a size change across the drag.
+   *
+   * The window's size is captured at the press and never read back, so it should be identical
+   * here. If it is not, something else resized the window mid-drag and that is worth knowing -
+   * "the card slowly grows while I drag it" is otherwise impossible to attribute from the outside.
+   */
+  if (mainWindow && !mainWindow.isDestroyed() && dragSize) {
+    const bounds = mainWindow.getBounds();
+    if (bounds.width !== dragSize.width || bounds.height !== dragSize.height) {
+      console.warn(
+        `[shell] 拖动期间窗口尺寸被改动: ${dragSize.width}x${dragSize.height} -> ${bounds.width}x${bounds.height}`,
+      );
+    }
+  }
+  dragSize = null;
+
   if (dragMoved) {
     persistWindowState();
     console.info(`[shell] 拖动结束（${reason}）`);
@@ -799,5 +905,8 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   if (hoverTimer) clearInterval(hoverTimer);
   hoverTimer = null;
+  stopResizeTween();
+  if (dragTimer) clearInterval(dragTimer);
+  dragTimer = null;
   stopHost();
 });

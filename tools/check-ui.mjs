@@ -42,6 +42,7 @@ const ASSETS = [
   ['/src/layout.js', 'text/javascript'],
   ['/src/lyrics.js', 'text/javascript'],
   ['/src/palette.js', 'text/javascript'],
+  ['/src/resize-clock.js', 'text/javascript'],
   ['/src/socket.js', 'text/javascript'],
 ];
 

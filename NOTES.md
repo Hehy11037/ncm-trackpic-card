@@ -643,6 +643,75 @@ cover showing both extremes - so the fix cannot be "make everything blue".
 **Generalised**: choosing a colour and judging contrast are different jobs with different measures.
 Invariant 16 in `MEMORY.md`.
 
+## 2026-09-15 (10) — `map` passed the index, and a timer is still not a frame clock
+
+### The grey swatch was `Array.prototype.map`
+
+The user's description was exact: the first swatch was a deep grey that appeared nowhere in the
+cover, blue showed up only as a *lighter* blue in positions three and four, and the bug affected
+both blue and red covers.
+
+The line responsible was one word long:
+
+```js
+return chosen.map(boostSaturation);
+```
+
+`Array.prototype.map` calls its callback with `(element, index, array)`, and `boostSaturation`'s
+second parameter is `factor`. So the first swatch was boosted by **0** - which collapses every
+channel onto the midpoint of the colour, i.e. **a pure grey** - the second was boosted by **1**,
+leaving it untouched, and the third, fourth and fifth were multiplied by 2, 3 and 4, blowing the
+darkest blues out to a saturated primary. On a light cover the midpoint of a bright colour is a
+plausible-looking light neutral, which is why it survived unnoticed for so long and why the user
+could still say most covers looked fine.
+
+The diagnostic that found it: `tools/…`-style scratch script running the real pipeline over a
+synthetic cover and printing every stage. The candidate list was *entirely blue* and the output's
+first entry was still `#232323` - and `#232323` is the midpoint of the darkest candidate, so the
+`factor` had to be 0. Reconstructing the other four from factors 1, 2, 3, 4 matched the observed
+output exactly.
+
+**The test that should have caught this did not.** "The darkest swatch is blue" passed with the bug
+present, because the swatch with factor 4 had two channels driven to zero and was therefore
+*darker* than the fabricated grey. The new assertions are about the first slot, and about the
+palette as a whole: no neutral swatch when the artwork has no neutral colour, no hue the artwork
+does not contain, and no saturation far beyond the artwork's own. Reverting the fix now fails five
+of them, including `rgb(35,35,35)`.
+
+**Generalised**: `map`, `filter` and `forEach` pass the index. Wrap the callback.
+
+### The resize tween was still on a timer
+
+The drag was made smooth by driving it from `pointermove` instead of a `setInterval`, and the
+roll-up tween was left behind on the very same pattern - so it stayed 一顿一顿的 for the same
+reason. `requestAnimationFrame` lives in the renderer and nowhere else in this app, so the shell
+now *asks* for a tick and the renderer answers once per frame for the length of the tween. The
+values stay in the shell: it computes each step from its own clock, so a late tick delays the
+motion but cannot distort the curve. A token per tween means a straggler cannot move the window
+after a newer animation has started, and a timer backstop finishes the move if the renderer stops
+answering.
+
+### Three ways the roll-up could stall, all now bounded
+
+"偶尔鼠标移开却一直没有收缩" has three candidates, and all three were reachable:
+
+* a **leaked drag**. The pointer watcher skips every tick while a drag is open, so a renderer that
+  never sees the `pointerup` leaves the card unable to collapse - for the 30 seconds the stale
+  guard allowed. Now 4 seconds, which is safe because the renderer re-arms on the next move with
+  the button held, so ending a live gesture by mistake costs nothing;
+* **suppression after a drag**, which was 2.5 seconds of "never collapse" starting from the moment
+  the drag ended. The watcher already skips while the drag is open, so the per-move suppression was
+  redundant; the settle window is now 350ms;
+* a **bad pointer sample**, which called `hoverState.reset()` and so restarted the "pointer has been
+  away" timer. An error every other tick could therefore keep the collapse from ever reaching its
+  delay. A failed tick is now skipped without touching the state.
+
+And because a stall may still have a cause none of this covers, the watcher now reports one: if the
+pointer has been outside for a second longer than the delay and the card is still expanded - with
+every guard already passed - it prints the state machine's own view along with `locked` and
+`ready`.
+
+
 
 
 

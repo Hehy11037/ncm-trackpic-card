@@ -18,6 +18,7 @@ const SCRIPTS = [
   'ui/src/drag.js',
   'ui/src/layout.js',
   'ui/src/lyrics.js',
+  'ui/src/resize-clock.js',
   'ui/src/socket.js',
   'ui/src/clock.js',
   'ui/src/palette.js',

@@ -31,6 +31,7 @@ const css = makeCssReader({ tokens: tokensText, rules: `${tokensText}\n${cardTex
 const html = readStyle('ui/index.html');
 const mainJs = readStyle('ui/src/main.js');
 const cardJs = readStyle('ui/src/card.js');
+const dragJs = readStyle('ui/src/drag.js');
 const layoutJs = readStyle('ui/src/layout.js');
 const shellJs = readStyle('apps/overlay/main.mjs');
 const shellUtils = readStyle('apps/overlay/shell-utils.mjs');
@@ -65,7 +66,7 @@ console.log('--- 样式读取工具 ---');
   // survives, which is exactly the pair of behaviours a naive lookup gets wrong.
   check(
     '同一选择器的后一条规则生效',
-    (css.declaration('.lyric-line', 'color') ?? '').includes('--lyric-2'),
+    (css.declaration('.lyric-line', 'color') ?? '').includes('--lyric-color'),
     css.declaration('.lyric-line', 'color'),
   );
   check('未声明的属性不会丢', css.value('.lyric-line', 'line-height') === 1.45, String(css.value('.lyric-line', 'line-height')));
@@ -128,7 +129,6 @@ console.log('\n--- 窗口拖动 ---');
   check('没有任何元素声明拖拽区', !/-webkit-app-region:\s*drag/.test(css.rules));
   check('tokens.css 也没有', !/-webkit-app-region:\s*drag/.test(css.tokens));
 
-  const dragJs = readStyle('ui/src/drag.js');
   check('拖动由指针手势实现', /installDragToMove/.test(dragJs) && /pointerdown/.test(dragJs));
   check('拖动已安装到界面', /installDragToMove\(\{ shell \}\)/.test(mainJs));
   check('按下控件不会拖动', /CONTROL_SELECTOR/.test(dragJs) && /closest\(CONTROL_SELECTOR\)/.test(dragJs));
@@ -222,6 +222,12 @@ console.log('\n--- 收起/展开动画 ---');
   check('收起/展开走补间', /function animateGeometryTo/.test(shellJs));
   const resizeMs = Number(/const RESIZE_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN);
   check('补间时长很短（<= 250ms）', Number.isFinite(resizeMs) && resizeMs <= 250, `${resizeMs}ms`);
+  check('用缓出曲线', /easeOutCubic/.test(shellJs) && /export function easeOutCubic/.test(shellUtils));
+  // The tween must step from values captured once - see the drag-size check above for why.
+  check('补间起点只读一次', /const from = \{ x: current\.x/.test(shellJs));
+  check('退出时清掉补间定时器', /will-quit[\s\S]{0,240}stopResizeTween\(\)/.test(shellJs));
+  // A drag owns the bounds; a tween underneath it would fight for the same window.
+  check('拖动时不启动补间', /if \(dragGrab\) \{[\s\S]{0,80}applyGeometry\(\)/.test(shellJs));
   // The reaction time the user feels is the delay plus one poll, so both are asserted to stay low.
   const collapseMs = Number(/const COLLAPSE_DELAY_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN);
   const pollMs = Number(/const HOVER_POLL_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN);
@@ -231,12 +237,74 @@ console.log('\n--- 收起/展开动画 ---');
     `${collapseMs} + ${pollMs} = ${collapseMs + pollMs}ms`,
   );
   check('展开比收起更快', Number(/const EXPAND_DELAY_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN) <= collapseMs);
-  check('用缓出曲线', /easeOutCubic/.test(shellJs) && /export function easeOutCubic/.test(shellUtils));
-  // The tween must step from values captured once - see the drag-size check above for why.
-  check('补间起点只读一次', /const from = \{ x: current\.x/.test(shellJs));
-  check('退出时清掉补间定时器', /will-quit[\s\S]{0,240}stopResizeTween\(\)/.test(shellJs));
-  // A drag owns the bounds; a tween underneath it would fight for the same window.
-  check('拖动时不启动补间', /if \(dragGrab\) \{[\s\S]{0,80}applyGeometry\(\)/.test(shellJs));
+
+  /*
+   * The tween is stepped by the renderer's animation frames, not by a timer in the shell.
+   *
+   * A `setInterval` fires near a frame rather than on it, so the window is sometimes resized twice
+   * inside one frame and sometimes not at all - which is read as 一顿一顿的 however smooth the
+   * curve is. This is the same lesson the drag learned; the renderer is the only side with a frame
+   * clock.
+   */
+  check('补间由渲染层的帧驱动', /overlay:animate-resize/.test(shellJs) && /overlay:resize-tick/.test(shellJs));
+  check('没有用 setInterval 步进补间', !/resizeTimer = setInterval/.test(shellJs));
+  check('有兜底定时器收尾', /finishResizeTween/.test(shellJs));
+  check('过期 tick 会被忽略', /token !== resizeToken/.test(shellJs));
+  check('渲染层实现了帧时钟', /installResizeClock/.test(mainJs) && /requestAnimationFrame/.test(readStyle('ui/src/resize-clock.js')));
+}
+
+console.log('\n--- 收起不会卡住 ---');
+{
+  /*
+   * "偶尔鼠标移开却一直没有收缩" has three possible stalls, each of which used to last a long
+   * time or forever. All three are now short or self-reporting.
+   */
+  const dragStale = Number(/const DRAG_STALE_MS = ([\d_]+)/.exec(shellJs)?.[1].replace(/_/g, '') ?? NaN);
+  // While a drag is open the watcher skips every tick, so a leaked drag means "never collapses".
+  // A short guard is safe because the renderer re-arms on the next move with the button held.
+  check('僵死拖动的兜底很短（<= 5s）', dragStale <= 5000, `${dragStale}ms`);
+  check('拖动后的抑制也很短', Number(/const DRAG_SETTLE_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN) <= 500);
+  check('渲染层会在按住时续拖', /event\.buttons & 1/.test(dragJs));
+  // Resetting the machine on a bad tick restarts the "pointer has been away" timer, so an error
+  // every other tick could stop the collapse ever reaching its delay.
+  const catchBlock = shellJs.slice(shellJs.indexOf('指针监听出错'), shellJs.indexOf('}, HOVER_POLL_MS)'));
+  check('采样出错不会重置状态机', !/hoverState\.reset\(\)/.test(catchBlock));
+  check('卡住时会自己报告', /仍未收起/.test(shellJs));
+}
+
+console.log('\n--- 歌词颜色 ---');
+{
+  /*
+   * One colour for every entry. There used to be four, handed out by depth, which made the page
+   * read as a hue gradient rather than as lyrics; the owner of the design asked for that to go and
+   * depth is already carried by size, blur and opacity.
+   */
+  const lyricsJs = readStyle('ui/src/lyrics.js');
+  check('只设置一个歌词颜色', /--lyric-color/.test(lyricsJs) && !/--lyric-\$\{i\}/.test(lyricsJs));
+  check('不再有按深度分色的规则', !/data-depth=/.test(css.rules) && !/--lyric-[0-9]/.test(css.rules));
+  check('所有歌词行用同一个颜色', /\.lyric-line \{\s*color: var\(--lyric-color/.test(css.rules));
+  // The colour is still chosen for contrast: a mid-tone background can leave no swatch readable,
+  // and the white/near-black fallback has to survive.
+  check('仍然按对比度选色', /contrastRatio/.test(lyricsJs) && />= 3/.test(lyricsJs));
+}
+
+console.log('\n--- 调色板提取 ---');
+{
+  /*
+   * The fabrication this guards against: `chosen.map(boostSaturation)` passes the array *index* as
+   * the optional `factor`, so swatch 0 was multiplied by 0 - collapsing every channel onto the
+   * colour's midpoint and producing a pure grey - swatch 1 was left alone, and 2..4 were blown out
+   * to saturated primaries. ui/test/palette.test.mjs asserts on the results; this asserts that the
+   * call cannot be written that way again.
+   */
+  // Comments are stripped: the fix is documented by quoting the broken call verbatim.
+  const paletteJs = stripComments(readStyle('ui/src/palette.js'));
+  check('boostSaturation 不直接传给 map', !/\.map\(boostSaturation\)/.test(paletteJs));
+  check('boostSaturation 的 factor 是显式的', /map\(\(color\) => boostSaturation\(color\)\)/.test(paletteJs));
+  check('调色板有单元测试', /assertPaletteMatches/.test(readStyle('ui/test/palette.test.mjs')));
+  // Choosing a colour and judging contrast are different jobs with different measures.
+  check('过滤用 luma255 而不是 WCAG', /const luma = luma255\(/.test(paletteJs));
+  check('极端色阈值与过滤阈值同源', /luma <= DARK_LUMA/.test(paletteJs) && /luma >= LIGHT_LUMA/.test(paletteJs));
 }
 
 /* ------------------------------------------------------------ stale assets */

@@ -101,12 +101,15 @@ export class LyricsView {
   /**
    * Apply the track's palette to the lyric text.
    *
-   * Colours are chosen by **contrast against the current background**, not by luminance
-   * order. Ordering by luminance and using the darkest swatch made the text vanish whenever
-   * the chosen background was itself dark: the "most legible" swatch was the one closest to
-   * the background. So the palette is sorted by contrast ratio against the background, the
-   * highest-contrast colour is used for the current entry, and each subsequent depth step
-   * takes the next best contrast.
+   * **One colour for every entry.** There used to be four, handed out by depth, which made the
+   * page read as a hue gradient rather than as lyrics - the current line one colour, its
+   * neighbours two more, the far ones a fourth. Depth is already carried by size, blur and
+   * opacity, none of which compete with the background for attention.
+   *
+   * The colour is whichever palette swatch has the **highest contrast against the current
+   * background**. Ordering by luminance and taking the darkest swatch made the text vanish
+   * whenever the chosen background was itself dark: the "most legible" swatch was the one closest
+   * to the background it sat on.
    *
    * @param {{r:number,g:number,b:number}[]} colors palette from the cover
    * @param {{r:number,g:number,b:number}} [background] the colour currently painted behind
@@ -117,25 +120,22 @@ export class LyricsView {
     const backgroundRgb = background ?? colors[0];
     const bgLuma = relativeLuminance(backgroundRgb);
 
-    // Highest contrast first, so depth 0 gets the most readable colour.
-    const ranked = [...colors]
-      .map((color) => ({ color, ratio: contrastRatio(bgLuma, relativeLuminance(color)) }))
-      .sort((a, b) => b.ratio - a.ratio)
-      .map((entry) => entry.color);
+    const best = [...colors].sort(
+      (a, b) => contrastRatio(bgLuma, relativeLuminance(b)) - contrastRatio(bgLuma, relativeLuminance(a)),
+    )[0];
 
-    const root = document.documentElement;
-    for (let i = 0; i < 4; i++) {
-      const swatch = ranked[Math.min(i, ranked.length - 1)];
-      const ratio = contrastRatio(bgLuma, relativeLuminance(swatch));
-      /*
-       * If even the best swatch is weak against this background (a mid-tone cover can
-       * produce no usable light or dark colour), fall back to plain white or near-black,
-       * which is what the text-scheme decision already uses elsewhere.
-       */
-      const usable = ratio >= 3;
-      const rgb = usable ? swatch : bgLuma < 0.42 ? { r: 237, g: 241, b: 243 } : { r: 28, g: 32, b: 36 };
-      root.style.setProperty(`--lyric-${i}`, `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`);
-    }
+    /*
+     * A mid-tone cover can yield no swatch that is readable on the chosen background. The best of
+     * the available ones then still fails, and plain white or near-black is used instead - the
+     * same fallback the card's text scheme already makes.
+     */
+    const usable = contrastRatio(bgLuma, relativeLuminance(best)) >= 3;
+    const rgb = usable ? best : bgLuma < 0.42 ? { r: 237, g: 241, b: 243 } : { r: 28, g: 32, b: 36 };
+
+    document.documentElement.style.setProperty(
+      '--lyric-color',
+      `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+    );
   }
 
   /**
@@ -301,8 +301,6 @@ export class LyricsView {
       node.style.setProperty('--d', Math.min(depth, DEPTH_LIMIT).toFixed(2));
       node.classList.toggle('is-active', i === index);
       node.classList.toggle('is-offscreen', Math.abs(distance) > MAX_DISTANCE);
-      // Bucketed depth drives the per-depth palette colour in CSS.
-      node.dataset.depth = String(Math.min(Math.round(Math.abs(depth)), 3));
     }
   }
 

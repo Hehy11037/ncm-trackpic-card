@@ -151,9 +151,13 @@ Break one of these and a check fails. That is the point - none of them are visua
     coordinates at most once per frame. Never poll the cursor on a timer in the shell for this: a
     timer fires near a frame rather than on it, and the irregularity reads as stutter.
 16. **Choosing a colour and judging contrast use different luminance measures.** `luma255` (0-255,
-    no gamma) is for "is this near-black?", "which band does it fall in?". WCAG relative luminance
+    no gamma) is for "is this near-black?", "which band does it fall in?. WCAG relative luminance
     is for "can text be read on this?". Using the WCAG one to filter dark colours discards exactly
     the swatches a dark-blue cover is made of.
+17. **A renderer module is never passed bare to `Array.prototype.map`** if it takes an optional
+    second parameter. `map` passes the index there. `chosen.map(boostSaturation)` turned the first
+    swatch grey (factor 0), left the second alone (factor 1) and blew the rest out (factors 2-4).
+18. **Lyrics use one colour.** Depth is carried by size, blur and opacity, not by hue.
 
 ## 5. Commands
 
@@ -239,18 +243,35 @@ Each of these cost real time. The reason matters more than the rule.
     luminance, which weights blue at 0.0722 and linearises, so a rich dark blue measures 0.034 and
     fell below the 0.06 "too dark" cut. The cover's own colour was thrown away and its darkest band
     was filled with a grey. Filtering and banding use the 0-255 luma; only contrast uses WCAG.
+17. **`Array.prototype.map` passes the index as the second argument.** A helper with an optional
+    second parameter therefore receives the index when passed bare: `chosen.map(boostSaturation)`
+    boosted the first swatch by 0 - collapsing it to a pure grey - left the second alone, and
+    multiplied the rest by 2, 3 and 4. Always wrap it: `.map((x) => f(x))`.
+18. **Nothing that must look smooth is stepped by `setInterval` in the main process.** Both the
+    drag and the window-resize tween are now driven by the renderer's animation frames. The shell
+    computes the values, the renderer supplies the clock, and each sends the other a token so a
+    tick from a superseded animation is ignored.
+19. **Anything that can stall the roll-up has to self-heal or say so.** A leaked drag, a suppressed
+    tick and a bad pointer sample have each stopped the card collapsing. The drag guard is 4s (a
+    live drag restarts on the next move), suppression after a drag is 350ms, a failed sample no
+    longer resets the "pointer is away" timer, and a pointer that has been gone for a second
+    without a collapse is reported with the state of every guard.
 
 ## 7. Current state
 
-* `npm run check` (8 steps) green, `npm test` (91) green, `tsc --noEmit` clean.
-* **Confirmed by the user**: the colour band works, the lock works, the flip jitter is gone, and
-  the drag no longer changes the window's size. The jitter fix was `will-change: transform,
-  opacity` on `.face`; the growth fix was capturing the window size at the press instead of reading
-  it back every frame.
+* `npm run check` (8 steps) green, `npm test` (95) green, `tsc --noEmit` clean.
+* **Confirmed by the user**: the colour band works, the lock works, the flip jitter is gone, the
+  drag no longer changes the window's size, and dragging is smooth. The jitter fix was
+  `will-change: transform, opacity` on `.face`; the growth fix was capturing the window size at the
+  press instead of reading it back every frame; the smoothness fix was driving the drag from
+  `pointermove` rather than polling a timer.
 * Awaiting the user's report on this round:
-  * whether driving the drag from `pointermove` removed the stutter;
-  * whether a 120ms collapse delay (plus one 40ms poll) is quick enough, and not twitchy;
-  * whether `ロンググッドバイ`'s cover now yields a dark blue instead of a dark grey.
+  * whether the roll-up tween (now stepped by the renderer's frames) is smooth;
+  * whether the occasional "moved the mouse away and it never collapsed" is gone, and if not what
+    the terminal says - the shell now prints either `指针离开 …ms 仍未收起` with every guard's
+    state, or `拖动 …ms 没有动静，已放弃该手势`;
+  * whether the lyrics read better in one colour;
+  * whether `ロンググッドバイ`'s cover now yields its deep blue.
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

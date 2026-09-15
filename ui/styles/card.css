@@ -647,32 +647,30 @@
  *
  * Note on the "arc" idea: a per-character curve would need the text split into spans and
  * re-split on every scroll, and it fights the per-entry transition. The nearest-row effect
- * is therefore carried by scale, sharpness and colour, all of which are compositor-only.
+ * is therefore carried by scale, sharpness and opacity, all of which are compositor-only.
  */
 .lyric-line.is-active {
   font-weight: 700;
-  /* The palette's darkest swatch, so the nearest row is also the most legible. */
-  color: var(--lyric-0, var(--text-strong));
   opacity: 1;
   filter: none;
   transform: translateZ(0) scale(1.08);
 }
 
-/* Outer entries take progressively lighter palette colours, lightening with depth. */
+/*
+ * One colour for every entry.
+ *
+ * There used to be four, picked from the cover palette and handed out by depth, so the page read
+ * as a hue gradient rather than as lyrics: the current line one colour, its neighbours two more,
+ * and the far ones a fourth. The owner of the design asked for that to go - either the current
+ * line alone should be coloured, or everything should be one colour - and depth is already carried
+ * by size, blur and opacity, which do not fight the background for attention.
+ *
+ * The colour itself is the palette swatch with the highest contrast against the current
+ * background, chosen in ui/src/lyrics.js. That is also why it is a token rather than a literal: it
+ * has to change when the background does.
+ */
 .lyric-line {
-  color: var(--lyric-2, var(--text-strong));
-}
-
-.lyric-line[data-depth='1'] {
-  color: var(--lyric-1, var(--text-strong));
-}
-
-.lyric-line[data-depth='2'] {
-  color: var(--lyric-2, var(--text-strong));
-}
-
-.lyric-line[data-depth='3'] {
-  color: var(--lyric-3, var(--text-strong));
+  color: var(--lyric-color, var(--text-strong));
 }
 
 .lyric-line .text {

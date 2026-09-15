@@ -257,6 +257,12 @@ Each of these cost real time. The reason matters more than the rule.
     live drag restarts on the next move), suppression after a drag is 350ms, a failed sample no
     longer resets the "pointer is away" timer, and a pointer that has been gone for a second
     without a collapse is reported with the state of every guard.
+20. **A command has three ends: the contract, the sender, and the handler.** `playPause` was
+    declared in `ControlCommand`, sent by the button and the space bar, and had no `case` in the
+    bridge's switch - so the largest control on the card threw `unsupported command` on every press
+    and looked like it worked for one frame. `check-bridge-script.mjs` now cross-checks all three,
+    and the host confirms a transport command against the client's own `playingState` rather than
+    trusting that it ran.
 
 ## 7. Current state
 
@@ -268,6 +274,12 @@ Each of these cost real time. The reason matters more than the rule.
   `pointermove` rather than polling a timer.
 * The tray menu is now just 小 / 中 / 大 and 退出, by the owner's request. Show/hide and recovery
   from a rolled-up card are the tray icon's left-click; the lock is on the card and on `L`.
+* **Play/pause is wired up but its effect on the client is unconfirmed.** The bridge reads
+  `playingState` and calls `setAudioPlayerPlay`/`Pause`; the host reads the state back and reports
+  `成功` / `未确认` / `失败`. If it reports `未确认`, the documented fallbacks are in
+  `docs/contracts.md` §6, media keys first. This needs one test with the client running - it is the
+  one function in the app that calls *into* the client's audio pipeline, and calling it is a
+  different thing from the wrapping that was measured not to work.
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

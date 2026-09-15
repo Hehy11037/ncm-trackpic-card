@@ -36,7 +36,22 @@ import {
 } from './bridge-script.ts';
 import { CdpSession, DEFAULT_CDP_PORT, type CdpTarget } from './cdp.ts';
 import { diagnose, detailFor, toConnectionInfo } from './client-process.ts';
-import { pressMediaKey } from './media-key.ts';
+import { pressMediaKey, type MediaKey } from './media-key.ts';
+
+/**
+ * The media key each transport command is sent as.
+ *
+ * The bridge has cases for all of these and they were measured not to work, so they are not tried:
+ * a second attempt after a media key would be a *second* skip if the key did land, and a
+ * double-skip is worse than a control that reports failure.
+ */
+const MEDIA_KEY_FOR: Partial<Record<ControlCommand['type'], MediaKey>> = {
+  playPause: 'playpause',
+  play: 'playpause',
+  pause: 'playpause',
+  next: 'next',
+  previous: 'prev',
+};
 
 /**
  * How long to wait for the client to show the state a transport command asked for.
@@ -195,7 +210,25 @@ export class ClientSession extends EventEmitter {
     this.setBridgeAlive(false, '宿主已停止');
   }
 
-  /** Push a control command through the bridge and wait briefly for its result. */
+  /**
+   * Run a control command.
+   *
+   * The transport commands go out as **media keys**, and the rest go through the bridge.
+   *
+   * That is not the design this started with. Both of the bridge's routes were measured against a
+   * running client and neither moves it:
+   *
+   *  - `setAudioPlayerPlay`/`setAudioPlayerPause` run without throwing and change nothing;
+   *  - `dispatch({ type: 'playing/playNextOrPrev' })` returns a perfectly good action object, so the
+   *    receipt says `ok: true`, and the track does not change. `docs/contracts.md` section 6 called
+   *    skip-to-next "solved" on the strength of that receipt, which is exactly the trap this
+   *    function's confirmation was added to close.
+   *
+   * A media key is the path a keyboard's play button uses - the client's own global hotkey - so it
+   * does not depend on the client's internals, and it is the one transport mechanism that cannot
+   * break when the client is updated. It is therefore the primary, not a fallback. The bridge's
+   * routes are kept for `setVolume`, `toggleMute` and `setMode`, which have no media-key equivalent.
+   */
   async control(command: ControlCommand): Promise<ControlResult> {
     const session = this.cdp;
     if (!session || !this.bridgeAlive) {
@@ -207,6 +240,67 @@ export class ClientSession extends EventEmitter {
       };
     }
 
+    const key = MEDIA_KEY_FOR[command.type];
+    if (!key) return this.controlViaBridge(session, command);
+
+    const before = this.rawPlayingState();
+    const beforeSongId = this.currentSongId();
+    const beforePositionMs = this.lastSnapshot?.playhead?.positionMs ?? 0;
+    const expectedState = expectedPlayingState(command, before);
+
+    const pressed = pressMediaKey(key);
+    if (!pressed.ok) {
+      return {
+        ok: false,
+        command,
+        via: 'none',
+        confirmed: false,
+        playingState: { before, after: before },
+        message: `媒体键发送失败：${pressed.message}`,
+      };
+    }
+
+    const changed = await this.waitForTransportEffect(
+      session,
+      expectedState,
+      beforeSongId,
+      beforePositionMs,
+    );
+    const after = this.rawPlayingState();
+
+    if (changed) {
+      return {
+        ok: true,
+        command,
+        via: 'media-key',
+        confirmed: true,
+        playingState: { before, after },
+        message: `${pressed.message}，客户端已确认`,
+      };
+    }
+
+    /*
+     * The key went out and the client did not move. Two things can be true, and they need
+     * different fixes, so both are reported: nothing has the media hotkey registered (the client
+     * has a global-hotkey option, and it may be off), or something else consumed the key.
+     */
+    const diagnosis = await this.diagnoseTransport(session);
+    return {
+      ok: false,
+      command,
+      via: 'media-key',
+      confirmed: false,
+      playingState: { before, after },
+      message:
+        `${pressed.message}，但客户端没有变化（playingState ${before ?? '?'} → ${after ?? '?'}` +
+        (beforeSongId !== null ? `，歌曲仍为 ${beforeSongId}` : '') +
+        '）；可能是客户端的「全局快捷键」被关闭，或按键被其它程序接收' +
+        (diagnosis ? `；${diagnosis}` : ''),
+    };
+  }
+
+  /** The bridge route, used for the commands with no media-key equivalent. */
+  private async controlViaBridge(session: CdpSession, command: ControlCommand): Promise<ControlResult> {
     const before = this.rawPlayingState();
     const result = await this.sendControl(session, command);
     if (!result.ok) return result;
@@ -214,36 +308,18 @@ export class ClientSession extends EventEmitter {
     /*
      * Ask the client whether it actually did anything.
      *
-     * `ok` only means the command reached the page and ran without throwing. A control surface that
-     * silently does nothing - which is exactly what play/pause was suspected of, and why the
-     * largest button on the card was dead - produces the same "success" as one that works. So the
-     * play state is read again a moment later and reported alongside.
+     * `ok` only means the command reached the page and ran without throwing, and a `dispatch` that
+     * changes nothing returns exactly that. So the play state is read again a moment later and
+     * reported alongside.
      */
     const expected = expectedPlayingState(command, before);
     if (expected === null) return result;
 
     const after = await this.waitForPlayingState(session, expected);
     if (after === expected) return confirmedResult(result, before, after);
-
-    /* The confirmation window can expire a moment before a slow-but-working call lands. */
     const recheck = this.rawPlayingState();
     if (recheck === expected) return confirmedResult(result, before, recheck);
 
-    /*
-     * The client's audio module did not move it, so try the path a keyboard's play button uses.
-     *
-     * Measured: `setAudioPlayerPlay/Pause` runs without throwing and changes nothing. The media key
-     * goes through the client's own global hotkey, which is the one control path already known to
-     * work - and it is version-proof, because it does not depend on the client's internals at all.
-     */
-    const viaKey = await this.fallbackViaMediaKey(session, command, before, expected, after);
-    if (viaKey) return viaKey;
-
-    /*
-     * Both paths failed, so stop guessing and ask the page why: the export arities, the dva action
-     * names, and the client's own transport buttons are returned in the message and land in the
-     * terminal.
-     */
     const diagnosis = await this.diagnoseTransport(session);
     return {
       ...result,
@@ -255,46 +331,34 @@ export class ClientSession extends EventEmitter {
     };
   }
 
+  /** The song id of the last snapshot, or null. */
+  private currentSongId(): number | null {
+    return this.lastSnapshot?.song?.id ?? null;
+  }
+
   /**
-   * Press the media key, if the client is still not where it was asked to be.
+   * Wait for a transport command to show *some* effect on the client.
    *
-   * The key *toggles*, so it is only pressed after re-reading the state: a pipeline call that was
-   * merely slow, followed by a toggle, would land the client back where it started.
+   * Several signals, because one does not fit all three commands: a play/pause flips `playingState`,
+   * a skip changes the song, and a skip in repeat-one mode changes neither - it restarts the same
+   * song, which shows up as the playhead jumping backwards.
    */
-  private async fallbackViaMediaKey(
+  private async waitForTransportEffect(
     session: CdpSession,
-    command: ControlCommand,
-    before: number | null,
-    expected: number,
-    observed: number | null,
-  ): Promise<ControlResult | null> {
-    if (command.type !== 'playPause' && command.type !== 'play' && command.type !== 'pause') return null;
-    if (this.rawPlayingState() === expected) return null;
-
-    const pressed = pressMediaKey('playpause');
-    if (!pressed.ok) {
-      return {
-        ok: false,
-        command,
-        via: 'none',
-        confirmed: false,
-        playingState: { before, after: observed },
-        message: `音频管线没有生效，媒体键兜底也失败：${pressed.message}`,
-      };
+    expectedState: number | null,
+    beforeSongId: number | null,
+    beforePositionMs: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + CONTROL_CONFIRM_MS;
+    while (Date.now() < deadline) {
+      if (this.cdp !== session) return false;
+      if (expectedState !== null && this.rawPlayingState() === expectedState) return true;
+      if (beforeSongId !== null && this.currentSongId() !== beforeSongId) return true;
+      const position = this.lastSnapshot?.playhead?.positionMs ?? 0;
+      if (beforePositionMs > 3000 && position < beforePositionMs - 1000) return true;
+      await delay(50);
     }
-
-    const after = await this.waitForPlayingState(session, expected);
-    return {
-      ok: true,
-      command,
-      via: 'media-key',
-      confirmed: after === expected,
-      playingState: { before, after },
-      message:
-        after === expected
-          ? `${pressed.message}，客户端已确认`
-          : `${pressed.message}，但客户端状态仍是 ${after ?? '未知'}`,
-    };
+    return false;
   }
 
   /** Ask the page what its transport surfaces look like. Diagnostics only. */

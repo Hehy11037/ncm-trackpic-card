@@ -24,19 +24,47 @@ export interface BridgeScriptOptions {
   commandPollMs?: number;
 }
 
+/** Stable short hash of the script body, used as the bridge's identity. */
+export function hashScript(source: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < source.length; i++) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
 /** Build the bridge source. Pure string assembly; do not add template holes below. */
 export function buildBridgeScript(options: BridgeScriptOptions): string {
   const audioModuleId = JSON.stringify(String(options.audioModuleId));
   const pollMs = Number.isFinite(options.commandPollMs) ? Number(options.commandPollMs) : 50;
   const prefix = JSON.stringify(BRIDGE_PREFIX);
+  /** Placeholder replaced with the real id once the body is assembled. */
+  const ID_PLACEHOLDER = '__MO_BRIDGE_ID__';
 
-  return `(() => {
+  const body = `(() => {
   const PREFIX = ${prefix};
   const AUDIO_MODULE_ID = ${audioModuleId};
   const POLL_MS = ${pollMs};
+  const BRIDGE_ID = ${JSON.stringify(ID_PLACEHOLDER)};
 
-  if (window.__moBridge && window.__moBridge.version === 2 && !window.__moBridge.disposed) {
-    return { ok: true, already: true, version: 2 };
+  /*
+   * Replace a bridge that is already installed, and only skip if it is *this* build.
+   *
+   * The guard used to be a hand-written version number, and it was not bumped when the command
+   * switch gained a case - so a client page that still had the previous injection kept answering
+   * from the old code, and every play/pause press came back "unsupported command" from a bridge
+   * that the host believed it had just replaced. A hand-maintained version is a promise to
+   * remember; a hash of the script is the fact.
+   *
+   * The old bridge is disposed rather than abandoned, or its subscriptions and its command timer
+   * would keep running alongside the new one.
+   */
+  if (window.__moBridge && window.__moBridge.id !== BRIDGE_ID && !window.__moBridge.disposed) {
+    try { window.__moBridge.dispose(); } catch (_) {}
+  }
+  if (window.__moBridge && window.__moBridge.id === BRIDGE_ID && !window.__moBridge.disposed) {
+    return { ok: true, already: true, id: BRIDGE_ID };
   }
 
   const require = window.__moRequire;
@@ -443,7 +471,7 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
   }, POLL_MS);
 
   window.__moBridge = {
-    version: 2,
+    id: BRIDGE_ID,
     audioModuleId: AUDIO_MODULE_ID,
     /** Force a state + lyric re-send; used by the host when a UI attaches. */
     resend,
@@ -455,9 +483,16 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
   };
 
   emitState();
-  send('ready', { audioModuleId: AUDIO_MODULE_ID, progressCount, store: true });
-  return { ok: true, version: 2, audioModuleId: AUDIO_MODULE_ID };
+  send('ready', { audioModuleId: AUDIO_MODULE_ID, progressCount, store: true, bridgeId: BRIDGE_ID });
+  return { ok: true, id: BRIDGE_ID, audioModuleId: AUDIO_MODULE_ID };
 })()`;
+
+  /*
+   * The identity is a hash of the assembled body, with the placeholder left in place while
+   * hashing. Every edit therefore produces a new id, and a page still running an older injection
+   * replaces it on the next attach - which is what the hand-written version failed to do.
+   */
+  return body.replaceAll(ID_PLACEHOLDER, hashScript(body));
 }
 
 /** Page-side helper the host calls after pushing a command. */

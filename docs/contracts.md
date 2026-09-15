@@ -197,50 +197,73 @@ Node's `fetch` worked. Use Node.
 | Capability | Status |
 | --- | --- |
 | Read state and progress | **solved** |
-| Skip to next / previous | **solved** — clicking next in the UI dispatches `playing/onUpdate` + `playing/onUpdateCurPlaying` carrying the full new `curPlaying` object. Dispatching these (or the equivalent player action) reproduces a track change. |
-| Play / pause | **command wired, client does not react to the audio-module call; media-key fallback added** — see below |
+| Play / pause | **media key primary; not yet confirmed on this machine** — see below |
+| Skip to next / previous | **not solved** — the bridge dispatch returns `ok: true` and changes nothing. An earlier version of this table called it *solved* on the strength of that receipt. The receipt only means "the action ran"; it says nothing about the client. |
 | Mute / mode | implemented via `host/onUpdate` and `playing/switchPlayingMode`; unconfirmed |
 
-### Play / pause: what was measured, and the fallback that is now wired
+### The confirmation rule
 
-The overlay sends one command, `{ type: 'playPause' }`, from both the button and the space bar. The
-bridge reads the client's own `playingState` (1 = paused, 2 = playing) and calls
-`setAudioPlayerPlay` or `setAudioPlayerPause` accordingly, **on the audio module** rather than on a
-destructured reference.
+Two different questions, and conflating them cost a lot of time here:
 
-**Measured: that call has no effect.** The command now reaches the page and runs without throwing -
-before this it did not even do that, because the bridge's switch had no `playPause` case and every
-press threw `unsupported command: playPause` - but the client's `playingState` does not move. The
-function is called with `(null, null)`, and its real signature is not knowable from disk: the web
-bundle is packed (no `.js` files in the install directory, and `orpheus.ntpk` does not contain the
-export names as readable text).
+- `ControlResult.ok` — the command was delivered and executed without throwing.
+- `ControlResult.confirmed` — the client was **observed** to change: `playingState` reached the
+  expected value, or the song id changed, or the playhead jumped backwards by more than a second
+  (a repeat-one skip changes neither of the first two). Bounded by `CONTROL_CONFIRM_MS = 900`.
 
-So the transport falls back, in order:
+Only `confirmed` is a working control. The host logs `成功` / `未确认` / `失败` with the `via` route and
+the `playingState` transition, so a dead button is visible in the terminal instead of looking wired up.
 
-1. **The audio module**, as above.
-2. **A media key** (`VK_MEDIA_PLAY_PAUSE`, injected with `keybd_event` from `tools/media-key.ps1`).
-   This is the client's own global hotkey - the same path a keyboard's play button uses - so it does
-   not depend on the client's internals at all, and it is version-proof. The key *toggles*, so it is
-   only pressed after re-reading `playingState`: a pipeline call that was merely slow, followed by a
-   toggle, would land the client back where it started.
-3. **A page-side diagnostic**, `{ type: 'diagnoseTransport' }`, which reports the play/pause exports
-   with their arity, every dva action whose name mentions playing, and the client's own transport
-   buttons in the DOM. It is requested when both paths fail, and the answer goes into the log.
+### Why play/pause looked dead twice, for two different reasons
 
-Whatever happens, the outcome is reported rather than assumed: `ControlResult.confirmed` says
-whether the client was *observed* in the state the command asked for, and the host logs `成功`,
-`未确认` or `失败` with the `playingState` transition.
+**First reason: the bridge had no `playPause` case.** The type was legal, the button sent it, and every
+press fell to `default` and threw `unsupported command: playPause`.
 
-If the media key also proves inert, the remaining candidates are:
+**Second reason: the client kept running the previous injection.** After that case was added, the log
+*still* said `unsupported command: playPause`. The guard that was meant to replace an old bridge
+compared a hand-written `version: 2`, which nobody had bumped. It is now a content hash:
+`hashScript(body)` (FNV-1a) is substituted into the script at `__MO_BRIDGE_ID__`, an installed copy
+whose id differs is `dispose()`d before the new one takes over, and `tools/check-bridge-script.mjs`
+asserts that the id really is the script's own hash and that it changes with the content. A
+hand-maintained version number is a promise to remember; a hash is a fact.
 
-1. Dismiss the media key as a setting: the client has a global-hotkey option that may be off, and
-   `keybd_event` reaches nothing if nothing registered the key.
+**What was actually measured about the audio module.** With the fresh bridge in place, the call was
+made on the audio module (`setAudioPlayerPlay` / `setAudioPlayerPause`, chosen from the bridge's own
+read of `playingState`, 1 = paused / 2 = playing) rather than on a destructured reference. It runs
+without throwing and `playingState` does not move. The real signature is not knowable from disk: the
+install directory has no `.js` files and `orpheus.ntpk` does not contain the export names as readable
+text.
+
+### How a transport command is sent now
+
+Routing lives in `Session.control()` (`packages/host/src/session.ts`):
+
+1. **Media key is primary**, not a fallback: `VK_MEDIA_PLAY_PAUSE` (0xB3), `VK_MEDIA_NEXT_TRACK`
+   (0xB0), `VK_MEDIA_PREV_TRACK` (0xB1), injected system-wide with `keybd_event` from
+   `tools/media-key.ps1` via `packages/host/src/media-key.ts` (`stdio: 'ignore'`, spawn errors are
+   reported not thrown). This is the client's own global hotkey — the path a keyboard's play button
+   uses — so it does not depend on the client's internals and survives client updates.
+   The keys *toggle/skip*, so **exactly one press is sent and there is no retry**: a fallback that
+   pressed the key and then also dispatched through the bridge would skip two tracks whenever the
+   confirmation merely arrived late. `tools/check-interaction.mjs` asserts `pressMediaKey` appears
+   once and that `controlViaBridge` is reachable from exactly one branch.
+2. **The bridge route** stays for the commands with no media-key equivalent — `setVolume`,
+   `toggleMute`, `setMode` — and for `diagnoseTransport`.
+3. **A page-side diagnostic**, `{ type: 'diagnoseTransport' }`, requested when a key had no
+   observable effect. It reports the play/pause exports with their arity, every dva action whose name
+   mentions playing, and the client's own transport buttons in the DOM; the answer goes in the log
+   line that explains the failure.
+
+If the media key also proves inert, the remaining candidates are, in order:
+
+1. Dismiss the media key as a *setting*: the client has a global-hotkey option that may be off, and
+   `keybd_event` reaches nothing if nothing registered the key. `pressMediaKey` succeeding only means
+   the key was injected; delivery is a separate fact that only a real press can establish.
 2. Click the client's own transport button, which `diagnoseTransport` now lists. That is the one
-   control path already known to work, and it is what the "reuse the app's own path" idea amounts
-   to in practice.
+   control path already known to work, and it is what "reuse the app's own path" amounts to.
 3. Hook `Function.prototype.apply`/`call` with a stack-based module lookup to find the *reference*
    the client's own button uses, and call that.
-4. Enumerate more of the `playing/*` action namespace and replay through `dispatch`.
+4. Enumerate more of the `playing/*` action namespace and replay through `dispatch` — with the
+   caveat that a dispatch returning `ok: true` is not evidence, per the confirmation rule above.
 
 Also useful: `state['@@dva']` holds the dva model table; enumerating its keys yields every
 registered action name, and `diagnoseTransport` prints the play/pause ones.

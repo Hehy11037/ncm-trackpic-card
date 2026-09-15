@@ -1,23 +1,52 @@
 // Live end-to-end harness for phase 1.
 //
 //   node tools/host-smoke.mjs [--seconds 12] [--send]
+//   node tools/host-smoke.mjs --control '{"type":"setVolume","volume":0.4}' --control '{"type":"seek","positionMs":60000}'
 //
 // Starts the real host (CDP -> discovery -> bridge -> loopback broadcast),
 // connects a fake overlay client with Node's built-in WebSocket, and reports what
 // actually arrives. Exits non-zero if the essential path is broken.
+//
+// `--control` (repeatable) pushes a command through the *whole* stack - host routing,
+// the injected bridge, the client's own audio wrapper - and prints the result the
+// overlay would receive, including whether the client was observed changing. It is the
+// only harness that exercises the confirmation logic against a live client.
 
 import { createHost } from '../packages/host/src/index.ts';
 
 function parseArgs(argv) {
-  const out = { seconds: 12, send: false, hostPort: 8787, cdpPort: 9223 };
+  const out = { seconds: 12, send: false, hostPort: 8787, uiPort: 0, cdpPort: 9223, controls: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--send') out.send = true;
     else if (a === '--seconds') out.seconds = Number(argv[++i]);
     else if (a === '--host-port') out.hostPort = Number(argv[++i]);
+    else if (a === '--ui-port') out.uiPort = Number(argv[++i]);
     else if (a === '--cdp-port') out.cdpPort = Number(argv[++i]);
+    else if (a === '--control') out.controls.push(parseCommand(argv[++i]));
   }
   return out;
+}
+
+/**
+ * A control command from the command line.
+ *
+ * `type=setVolume,volume=0.4` as well as raw JSON: PowerShell eats the quotes out of a
+ * JSON argument before node ever sees it, and a harness whose arguments have to be
+ * escaped three ways is a harness nobody runs.
+ */
+function parseCommand(text) {
+  const trimmed = String(text ?? '').trim();
+  if (trimmed.startsWith('{')) return JSON.parse(trimmed);
+  const command = {};
+  for (const part of trimmed.split(',')) {
+    const at = part.indexOf('=');
+    if (at < 0) continue;
+    const key = part.slice(0, at).trim();
+    const raw = part.slice(at + 1).trim();
+    command[key] = raw !== '' && Number.isFinite(Number(raw)) ? Number(raw) : raw;
+  }
+  return command;
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -32,6 +61,7 @@ const connectionStates = new Set();
 const host = createHost({
   cdpPort: args.cdpPort,
   hostPort: args.hostPort,
+  uiPort: args.uiPort,
   log: (level, message) => {
     if (level === 'debug') return;
     console.log(`[host:${level}] ${message}`);
@@ -90,6 +120,22 @@ if (args.send) {
   await new Promise((r) => setTimeout(r, 500));
   const result2 = await host.control({ type: 'playPause' });
   console.log(`   回切: ok=${result2.ok} via=${result2.via} ${result2.message ?? ''}`);
+}
+
+if (args.controls.length) {
+  await new Promise((r) => setTimeout(r, 800));
+  let failures = 0;
+  for (const command of args.controls) {
+    console.log(`\n→ ${JSON.stringify(command)}`);
+    const result = await host.control(command);
+    console.log(
+      `   结果: ok=${result.ok} via=${result.via} confirmed=${result.confirmed ?? '(不可判定)'}` +
+        (result.positionMs != null ? ` positionMs=${result.positionMs}` : ''),
+    );
+    console.log(`   ${result.message ?? ''}`);
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  if (failures) console.log(`\n有 ${failures} 条指令没有得到确认`);
 }
 
 await new Promise((r) => setTimeout(r, args.seconds * 1000));

@@ -217,13 +217,33 @@ export interface LyricDoc {
 
 /* --------------------------------------------------------------- transport */
 
-/** Commands the overlay may send. Seek is intentionally out of scope for v1. */
+/**
+ * The four play modes the card offers, in the order the client's own button cycles
+ * them (measured by clicking it four times and reading `playing.playingMode`).
+ *
+ * `playAi` and `playFm` exist in the client's enum but are not user-selectable modes
+ * in the same sense - the client treats switching into them as a different kind of
+ * change (it rewrites the play queue) - so the card does not offer them.
+ */
+export const PLAY_MODES = ['playOrder', 'playCycle', 'playOneCycle', 'playRandom'] as const;
+
+export type PlayModeValue = (typeof PLAY_MODES)[number];
+
+/**
+ * Commands the overlay may send.
+ *
+ * `seek` carries MILLISECONDS, like every other duration on this wire, and is
+ * converted to the client's unit at the boundary (`msToSeekSeconds`) rather than at
+ * the call site - the client's `audioplayer.seek` takes whole seconds, and getting
+ * that wrong seeks a track to the wrong place rather than failing.
+ */
 export type ControlCommand =
   | { type: 'playPause' }
   | { type: 'play' }
   | { type: 'pause' }
   | { type: 'next' }
   | { type: 'previous' }
+  | { type: 'seek'; positionMs: number }
   | { type: 'setVolume'; volume: number }
   | { type: 'toggleMute' }
   | { type: 'setMode'; mode: PlayMode }
@@ -251,6 +271,8 @@ export interface ControlResult {
   confirmed?: boolean;
   /** The client's `playingState` before and after, when it was readable. */
   playingState?: { before: number | null; after: number | null };
+  /** Where the client says it actually is after a seek, in milliseconds. */
+  positionMs?: number | null;
 }
 
 /** Messages the host pushes to overlay clients. */
@@ -275,6 +297,30 @@ export type ClientMessage =
 export function secondsToMs(seconds: number | null | undefined): number | null {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return null;
   return Math.round(seconds * 1000);
+}
+
+/**
+ * Milliseconds to the whole seconds the client's `audioplayer.seek` expects.
+ *
+ * Measured, not assumed: the client's own progress bar called
+ * `seek({playId, seekId, value: 109})` for a target of 109 seconds, and the reply
+ * echoed `position: 109`. Whole seconds it is - and rounding rather than flooring
+ * matters at the end of a track, where flooring a 0.6s remainder would seek a
+ * fraction of a second short of the point the user released the pointer.
+ */
+export function msToSeekSeconds(positionMs: number | null | undefined): number | null {
+  if (positionMs === null || positionMs === undefined || !Number.isFinite(positionMs)) return null;
+  return Math.max(0, Math.round(positionMs / 1000));
+}
+
+/**
+ * The client's `seekId`: a fresh, unique string per seek.
+ *
+ * Taken from what the client itself sends - `"<songId>|seek|<random>"` - because the
+ * reply is matched by this id, so two seeks racing each other must not share one.
+ */
+export function makeSeekId(songId: number | string | null | undefined, random: string): string {
+  return `${songId == null ? '' : songId}|seek|${random}`;
 }
 
 /** Client song ids arrive as strings in some fields and numbers in others. */

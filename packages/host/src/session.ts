@@ -77,22 +77,75 @@ function confirmedResult(
 }
 
 /**
- * The `playingState` a command should end up at, or null when it cannot be judged.
+ * What the client should look like after a command, or null when it cannot be judged.
  *
  * `playingState` is 1 = paused and 2 = playing (measured; see docs/contracts.md). Anything else -
- * no track loaded - means the client may legitimately not move, so nothing is asserted.
+ * no track loaded - means the client may legitimately not move, so nothing is asserted. Volume,
+ * mode and position *can* be asserted, and are: each of them has an observable field, and a
+ * control that writes the wrong one (which is exactly what `playing/setVolume` does) looks
+ * identical to a working one until something reads the field back.
  */
-function expectedPlayingState(command: ControlCommand, before: number | null): number | null {
-  if (before !== 1 && before !== 2) return null;
+interface Expectation {
+  /** How the expectation reads in a log line. */
+  describe: string;
+  /** Whether the observation the host can make now satisfies the command. */
+  matches: (session: ClientSession, result: ControlResult) => boolean;
+}
+
+function expectationFor(command: ControlCommand, snapshot: PlaybackSnapshot | null): Expectation | null {
+  const raw = snapshot?.playback.rawPlayingState ?? null;
+  const volume = snapshot?.playback.volume ?? null;
+  const mode = snapshot?.playback.mode ?? null;
+  const positionMs = snapshot?.playhead?.positionMs ?? null;
+
   switch (command.type) {
     case 'play':
-      return 2;
+      return raw === 1 || raw === 2 ? { describe: 'playingState 2', matches: (s) => s.rawPlayingState() === 2 } : null;
     case 'pause':
-      return 1;
+      return raw === 1 || raw === 2 ? { describe: 'playingState 1', matches: (s) => s.rawPlayingState() === 1 } : null;
     case 'playPause':
-      return before === 2 ? 1 : 2;
+      if (raw !== 1 && raw !== 2) return null;
+      return raw === 2
+        ? { describe: 'playingState 1', matches: (s) => s.rawPlayingState() === 1 }
+        : { describe: 'playingState 2', matches: (s) => s.rawPlayingState() === 2 };
+    case 'setVolume':
+      return {
+        describe: `音量 ${command.volume.toFixed(2)}`,
+        // The client stores a float32, so 0.35 comes back as 0.34999999... A tolerance, not equality.
+        matches: (s) => {
+          const now = s.volume();
+          return now != null && Math.abs(now - command.volume) < 0.02;
+        },
+      };
+    case 'toggleMute':
+      if (volume == null) return null;
+      return volume > 0
+        ? { describe: '音量 0', matches: (s) => s.volume() === 0 }
+        : { describe: '音量恢复', matches: (s) => (s.volume() ?? 0) > 0 };
+    case 'setMode':
+      return {
+        describe: `播放模式 ${command.mode}`,
+        matches: (s) => s.mode() === command.mode,
+      };
+    case 'seek':
+      return {
+        describe: `播放位置约 ${Math.round(command.positionMs / 1000)}s`,
+        /*
+         * The receipt is the client's own reply - `{code: 0, position}` - so it counts even before
+         * the next progress sample arrives. Otherwise the playhead is compared with a tolerance:
+         * playback continues while the check runs, and a second of drift is the clock, not a miss.
+         */
+        matches: (s, result) => {
+          if (result.positionMs != null) {
+            return Math.abs(result.positionMs - command.positionMs) < 1500;
+          }
+          const now = s.positionMs();
+          if (now == null) return false;
+          if (positionMs != null && Math.abs(now - positionMs) < 500) return false; // never moved
+          return Math.abs(now - command.positionMs) < 2500;
+        },
+      };
     default:
-      // next / previous / volume / mute / mode do not have a single state to assert.
       return null;
   }
 }
@@ -246,7 +299,8 @@ export class ClientSession extends EventEmitter {
     const before = this.rawPlayingState();
     const beforeSongId = this.currentSongId();
     const beforePositionMs = this.lastSnapshot?.playhead?.positionMs ?? 0;
-    const expectedState = expectedPlayingState(command, before);
+    const expectedState =
+      command.type === 'playPause' ? (before === 2 ? 1 : 2) : command.type === 'play' ? 2 : 1;
 
     const pressed = pressMediaKey(key);
     if (!pressed.ok) {
@@ -299,26 +353,31 @@ export class ClientSession extends EventEmitter {
     };
   }
 
-  /** The bridge route, used for the commands with no media-key equivalent. */
+  /**
+   * The bridge route: everything without a media-key equivalent, and the only route to the audio
+   * wrapper for volume and position.
+   *
+   * `ok` only means the command reached the page and ran without throwing, and an action that
+   * changes nothing (or the wrong field) returns exactly that - `playing/setVolume` is a working
+   * action that does not move the volume. So whatever the command asked for is read back before the
+   * result is called confirmed.
+   */
   private async controlViaBridge(session: CdpSession, command: ControlCommand): Promise<ControlResult> {
     const before = this.rawPlayingState();
+    const expectation = expectationFor(command, this.lastSnapshot);
     const result = await this.sendControl(session, command);
-    if (!result.ok) return result;
+    if (!result.ok) {
+      return { ...result, confirmed: false, playingState: { before, after: this.rawPlayingState() } };
+    }
 
-    /*
-     * Ask the client whether it actually did anything.
-     *
-     * `ok` only means the command reached the page and ran without throwing, and a `dispatch` that
-     * changes nothing returns exactly that. So the play state is read again a moment later and
-     * reported alongside.
-     */
-    const expected = expectedPlayingState(command, before);
-    if (expected === null) return result;
+    if (!expectation) {
+      // Nothing observable to assert: report the receipt and say so rather than guessing.
+      return { ...result, confirmed: undefined, playingState: { before, after: this.rawPlayingState() } };
+    }
 
-    const after = await this.waitForPlayingState(session, expected);
-    if (after === expected) return confirmedResult(result, before, after);
-    const recheck = this.rawPlayingState();
-    if (recheck === expected) return confirmedResult(result, before, recheck);
+    const observed = await this.waitFor(expectation, result);
+    const after = this.rawPlayingState();
+    if (observed) return confirmedResult(result, before, after);
 
     const diagnosis = await this.diagnoseTransport(session);
     return {
@@ -326,9 +385,19 @@ export class ClientSession extends EventEmitter {
       confirmed: false,
       playingState: { before, after },
       message:
-        `${result.message ?? result.via}（客户端状态仍为 ${after ?? '未知'}）` +
+        `${result.message ?? result.via}（客户端没有变成${expectation.describe}）` +
         (diagnosis ? `；${diagnosis}` : ''),
     };
+  }
+
+  /** Poll the expectation against the snapshots the client is already pushing. */
+  private async waitFor(expectation: Expectation, result: ControlResult): Promise<boolean> {
+    const deadline = Date.now() + CONTROL_CONFIRM_MS;
+    while (Date.now() < deadline) {
+      if (expectation.matches(this, result)) return true;
+      await delay(50);
+    }
+    return expectation.matches(this, result);
   }
 
   /** The song id of the last snapshot, or null. */
@@ -372,8 +441,30 @@ export class ClientSession extends EventEmitter {
   }
 
   /** The client's raw `playingState`, straight from the last snapshot. */
-  private rawPlayingState(): number | null {
+  rawPlayingState(): number | null {
     return this.lastSnapshot?.playback?.rawPlayingState ?? null;
+  }
+
+  /*
+   * Read-only views of the last snapshot, for the expectations above.
+   *
+   * Deliberately public and deliberately dumb: they read the *client's* last reported value, so an
+   * expectation can never be satisfied by the overlay's own optimistic state.
+   */
+
+  /** The client's current volume, 0..1, or null. */
+  volume(): number | null {
+    return this.lastSnapshot?.playback?.volume ?? null;
+  }
+
+  /** The client's current play mode, or null. */
+  mode(): string | null {
+    return this.lastSnapshot?.playback?.mode ?? null;
+  }
+
+  /** The last playhead the client published, in milliseconds, or null. */
+  positionMs(): number | null {
+    return this.lastSnapshot?.playhead?.positionMs ?? null;
   }
 
   /**
@@ -417,7 +508,7 @@ export class ClientSession extends EventEmitter {
     const deadline = Date.now() + 1500;
     while (Date.now() < deadline) {
       await delay(60);
-      let results: { id: string; ok: boolean; via: string; message?: string }[];
+      let results: { id: string; ok: boolean; via: string; message?: string; positionMs?: number | null }[];
       try {
         results = await session.evaluateJson(commandResultPollExpression());
       } catch {
@@ -430,6 +521,7 @@ export class ClientSession extends EventEmitter {
           command,
           via: (hit.via?.split(':')[0] as ControlResult['via']) ?? 'none',
           message: hit.message ?? hit.via,
+          positionMs: hit.positionMs ?? null,
         };
       }
     }
@@ -669,12 +761,22 @@ export class ClientSession extends EventEmitter {
 
     const raw = payload.raw ?? {};
     const status: PlaybackStatus = rawPlayingStateToStatus(raw.playingState as number | null);
+    const volume = (raw.playingVolume as number | null) ?? null;
     const playback: Playback = {
       status,
       rawPlayingState: (raw.playingState as number | null) ?? null,
       mode: (raw.playingMode as PlayMode | null) ?? null,
-      volume: (raw.playingVolume as number | null) ?? null,
-      muted: raw.muteVolume != null ? Number(raw.muteVolume) > 0 : null,
+      volume,
+      /*
+       * Muted means the volume is zero - *not* `muteVolume > 0`.
+       *
+       * `muteVolume` is the value the client remembers so it can restore it, measured from its own
+       * mute effect: muting puts `{muteVolume: playingVolume}` and then sets the volume to 0, and
+       * unmuting restores the volume without clearing `muteVolume`. So it is > 0 both before and
+       * after a mute - the earlier mapping read it as "muted", which drew a silenced card for a
+       * track playing at full volume.
+       */
+      muted: volume == null ? null : volume <= 0.001,
       speed: (raw.playingSpeed as number | null) ?? null,
     };
 

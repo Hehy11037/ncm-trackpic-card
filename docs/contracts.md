@@ -197,9 +197,11 @@ Node's `fetch` worked. Use Node.
 | Capability | Status |
 | --- | --- |
 | Read state and progress | **solved** |
-| Play / pause | **media key primary; not yet confirmed on this machine** — see below |
-| Skip to next / previous | **not solved** — the bridge dispatch returns `ok: true` and changes nothing. An earlier version of this table called it *solved* on the strength of that receipt. The receipt only means "the action ran"; it says nothing about the client. |
-| Mute / mode | implemented via `host/onUpdate` and `playing/switchPlayingMode`; unconfirmed |
+| Play / pause | **solved** — media key, confirmed by the client (the user has verified it) |
+| Skip to next / previous | **solved** — media key. The bridge dispatch returns `ok: true` and changes nothing; an earlier version of this table called it *solved* on the strength of that receipt. |
+| Play mode | **solved** — `playing/onUpdate {playingMode, lastPlayingMode}`; see below |
+| Volume / mute | **solved** — `AudioPlayer.setVolume`; see below |
+| Seek | **solved** — `AudioPlayer.seek({playId, seekId, value})`; see below |
 
 ### The confirmation rule
 
@@ -246,8 +248,10 @@ Routing lives in `Session.control()` (`packages/host/src/session.ts`):
    pressed the key and then also dispatched through the bridge would skip two tracks whenever the
    confirmation merely arrived late. `tools/check-interaction.mjs` asserts `pressMediaKey` appears
    once and that `controlViaBridge` is reachable from exactly one branch.
-2. **The bridge route** stays for the commands with no media-key equivalent — `setVolume`,
-   `toggleMute`, `setMode` — and for `diagnoseTransport`.
+2. **The bridge route** stays for everything with no media-key equivalent — `seek`, `setVolume`,
+   `toggleMute`, `setMode` — and for `diagnoseTransport`. Each of those *is* confirmed now, against
+   its own observable field: volume against `playing.playingVolume`, mode against `playingMode`,
+   position against the playhead (or the client's own seek reply).
 3. **A page-side diagnostic**, `{ type: 'diagnoseTransport' }`, requested when a key had no
    observable effect. It reports the play/pause exports with their arity, every dva action whose name
    mentions playing, and the client's own transport buttons in the DOM; the answer goes in the log
@@ -267,6 +271,82 @@ If the media key also proves inert, the remaining candidates are, in order:
 
 Also useful: `state['@@dva']` holds the dva model table; enumerating its keys yields every
 registered action name, and `diagnoseTransport` prints the play/pause ones.
+
+### Play mode, volume and position — all three measured
+
+These are the controls with **no media-key equivalent**, so unlike play/pause they have to go
+through the client. Each was established by driving the client's own control and reading the
+result, not by reading the bundle — the bundle is packed, and the two most useful surfaces here
+(an object instance's prototype methods and a module-level object literal) are invisible to any
+"scan the exports" trick.
+
+**Play mode.** Four user-facing values, and their order was obtained by clicking the client's own
+mode button four times and reading `playing.playingMode` plus the button's own tooltip:
+
+| `playingMode` | Tooltip | Client's own icon class |
+| --- | --- | --- |
+| `playOrder` | 顺序播放 | `cmd-icon-order` |
+| `playCycle` | 列表循环 | `cmd-icon-loop` |
+| `playOneCycle` | 单曲循环 | `cmd-icon-singleloop` |
+| `playRandom` | 随机播放 | `cmd-icon-shuffle` |
+
+(`playAi` and `playFm` are in the client's enum — module `6`, export `i` — but switching into them
+rewrites the play queue, so the card does not offer them.)
+
+Setting it is a plain store write, with the mode we came *from* passed along:
+
+```js
+store.dispatch({ type: 'playing/onUpdate', payload: { playingMode: next, lastPlayingMode: current } });
+```
+
+That is the last thing the client's own mode effect does, and the client's own footer icon follows
+it. A `store.dispatch` tap records **nothing** while clicking that button, because the models hold
+their own reference to dispatch — so none of the slider or mode paths are observable that way, and
+the action had to be found by trying it.
+
+**Volume.** `playing.playingVolume` is the store's copy, but writing it does not change the sound:
+dispatching `playing/setVolume {volume: 0.35}` moved the store to 0.35 and left
+`AudioPlayer.getApplicationVolume()` at 0.5. The client's own slider dispatches *nothing at all* —
+dragging it from 0.42 to 0.30 recorded zero actions and the store followed anyway. The real call is:
+
+```js
+AudioPlayer.setVolume(0.42)   // module 4, export `AudioPlayer`
+```
+
+which is what the client's `stepVolume` effect uses; the store then follows on its own through the
+client's native-to-store `subscribeVolume` subscription, which is also the receipt the host
+confirms against.
+
+Mute is *not* a flag. The client's own effect mutes by remembering the volume and setting it to
+zero, and unmuting restores the remembered value without clearing it:
+
+```js
+// mute:   put({type:'onUpdate', payload:{muteVolume: playingVolume}}); setVolume(0)
+// unmute: setVolume(muteVolume || 0.1)
+```
+
+So `muteVolume > 0` means "not muted", and the correct test for muted is `playingVolume === 0`.
+
+**Position.** `audioplayer.seek` takes `(playId, seekId, value)` and `value` is **whole seconds**.
+The shape comes from the client's own progress bar, captured by wrapping the wrapper's method (its
+methods live on a prototype, so an exports scan cannot see them) and dragging:
+
+```
+seek({ playId: "2102424489_UOH3CY", seekId: "2102424489|seek|46YB26", value: 109 })
+  → { playId, seekId, code: 0, position: 109 }
+```
+
+- `playId` comes from the progress stream: `audioPlayerPlayProgress$` publishes
+  `[playId, seconds, state]`.
+- `seekId` is a fresh unique id per call — the reply is matched by it.
+- The reply is a real receipt (`code` plus where the player ended up), which is what
+  `ControlResult.positionMs` carries.
+
+**The native player's whole vocabulary**, from `call("audioplayer.<name>", ...)` literals:
+`load`, `play`, `pause`, `stop`, `seek`, `getPlayedTime`, `getPlaybackInfo`, `setVolume`,
+`setPlaybackRate`, `getApplicationVolume`, `getSystemMasterVolume`, `isDeviceMute`. Volume is a
+method on the `AudioPlayer` instance rather than one of these named calls — which is why
+`audioplayer.*` alone looks like it has no volume control.
 
 ---
 
@@ -296,7 +376,10 @@ registered action name, and `diagnoseTransport` prints the play/pause ones.
 | `tools/audio-streams.mjs` | Sample audio pipeline streams; find call sites. |
 | `tools/watch-progress.mjs` | **Progress acceptance test** — run while playing. |
 | `tools/capture-controls.mjs` | Tap `store.dispatch` for a fixed window and capture actions. |
-| `tools/arm-dispatch-tap.mjs` | Persistent dispatch recorder: `--install`, `--dump`, `--clear`. |
+| `tools/arm-dispatch-tap.mjs` | Persistent dispatch recorder: `--install`, `--dump`, `--clear`. Records nothing for the client's own sliders or mode button: those models hold their own dispatch reference. |
+| `tools/probe-controls.mjs` | **Read-only reconnaissance for mode / volume / seek**: the mode enum, the `audioplayer.*` vocabulary, the `AudioPlayer` wrapper and the source of its methods. |
+| `tools/probe-client-ui.mjs` | **Mutating reconnaissance**: drives the client's own controls with real CDP input events and records what they call, so argument shapes are measured instead of guessed. Restores mode and volume afterwards. |
+| `tools/host-smoke.mjs` | Live end-to-end harness. `--control type=setVolume,volume=0.4` pushes a command through host → bridge → client and prints whether the client was confirmed to change. |
 | `tools/tap-controls.mjs` | Wrap pipeline functions to capture call arguments. |
 | `tools/host-smoke.mjs` | **Phase-1 end-to-end test**: host + fake overlay client. |
 | `tools/host-run.mjs` | Run the host in the foreground with a live track view. |

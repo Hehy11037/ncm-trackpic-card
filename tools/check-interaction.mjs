@@ -32,6 +32,7 @@ const html = readStyle('ui/index.html');
 const mainJs = readStyle('ui/src/main.js');
 const cardJs = readStyle('ui/src/card.js');
 const dragJs = readStyle('ui/src/drag.js');
+const scrubJs = readStyle('ui/src/scrub.js');
 const layoutJs = readStyle('ui/src/layout.js');
 const shellJs = readStyle('apps/overlay/main.mjs');
 const shellUtils = readStyle('apps/overlay/shell-utils.mjs');
@@ -132,7 +133,17 @@ console.log('\n--- 窗口拖动 ---');
   check('拖动由指针手势实现', /installDragToMove/.test(dragJs) && /pointerdown/.test(dragJs));
   check('拖动已安装到界面', /installDragToMove\(\{ shell \}\)/.test(mainJs));
   check('按下控件不会拖动', /CONTROL_SELECTOR/.test(dragJs) && /closest\(CONTROL_SELECTOR\)/.test(dragJs));
-  check('色带被排除在拖动之外', /'button, a, input, select, textarea, \.band, \.band-segment'/.test(dragJs));
+  /*
+   * The exclusion list, element by element.
+   *
+   * Pinning the whole selector string made this check fail the moment a new draggable control was
+   * added - which is the opposite of useful: the list is *supposed* to grow. What matters is that
+   * each interactive thing is on it, so a press there cannot also drag the window.
+   */
+  const controlSelector = /const CONTROL_SELECTOR = '([^']+)'/.exec(dragJs)?.[1] ?? '';
+  for (const selector of ['button', '.band', '.band-segment', '.progress-track', '.volume-bar']) {
+    check(`拖动排除 ${selector}`, controlSelector.includes(selector));
+  }
   // Capture keeps a fast flick from releasing outside the window and leaving the drag running.
   check('使用指针捕获', /setPointerCapture/.test(dragJs));
   check('有兜底结束（取消 / 失焦）', /pointercancel/.test(dragJs) && /lostpointercapture/.test(dragJs));
@@ -244,13 +255,166 @@ console.log('\n--- 播放控制的发送路径 ---');
 
   const controlBody = sessionTs.slice(
     sessionTs.indexOf('async control(command'),
-    sessionTs.indexOf('/** The bridge route'),
+    sessionTs.indexOf('private async controlViaBridge'),
   );
   check('媒体键路径不再发桥接指令', !/sendControl\(/.test(controlBody));
   check('结果标注发送方式', /via: 'media-key'/.test(controlBody));
   check('客户端没变化时不算成功', /confirmed: false/.test(controlBody) && /ok: false/.test(controlBody));
   // A skip in repeat-one changes neither the state nor the song, so the playhead is a signal too.
   check('跳过以换歌或播放头回退确认', /currentSongId\(\) !== beforeSongId/.test(sessionTs) && /position < beforePositionMs - 1000/.test(sessionTs));
+}
+
+console.log('\n--- 传输控制条的排布 ---');
+{
+  /*
+   * Play mode on the left, previous/play/next together in the middle, volume on the right.
+   *
+   * The order in the markup is what the finger sees, and the two side slots have to be the *same*
+   * width or the play button is merely spaced between two edges instead of centred on the card -
+   * which is what the reference has, and what the previous absolute-positioning trick achieved (at
+   * the cost of repeating the transform in every hover/active rule).
+   */
+  const order = ['mode', 'previous', 'playPause', 'next', 'mute'].map((action) =>
+    html.indexOf(`data-action="${action}"`),
+  );
+  check('五个控件都在', order.every((at) => at >= 0));
+  check(
+    '顺序是 模式 / 上一首 / 播放 / 下一首 / 音量',
+    order.every((at, i) => i === 0 || (order[i - 1] >= 0 && at > order[i - 1])),
+    order.join(','),
+  );
+  check('左右两侧同宽', css.declaration('.controls__side', 'width') !== null);
+  check(
+    '播放按钮不再绝对定位',
+    css.declaration('.ctrl--primary', 'position') === null &&
+      /flex:\s*none/.test(css.blocks('.ctrl--primary').join('\n')),
+  );
+  // The equal-width sides only centre the group if the group itself is not stretched.
+  check('中间一组不拉伸', /\.controls__center\s*\{[^}]*display:\s*flex/.test(cardText));
+
+  // Four mode glyphs, one per mode, selected by the card's own attribute.
+  for (const mode of ['playOrder', 'playCycle', 'playOneCycle', 'playRandom']) {
+    check(`模式图标 ${mode}`, new RegExp(`data-mode='${mode}'`).test(cardText));
+  }
+  const icons = [...html.matchAll(/class="mode-icon mode-icon--(\w+)"/g)].map((m) => m[1]);
+  check('图标数量与模式数量一致', new Set(icons).size === 4, icons.join(','));
+
+  /*
+   * The mode list must be the client's own, in the client's own order.
+   *
+   * `ui/` cannot import the shared contract (it is served as plain modules with no build step), so
+   * the list is declared twice on purpose - and checked here, the same way the card's aspect ratio
+   * is declared in three languages and compared.
+   */
+  const uiModes = [...(/export const MODE_CYCLE = \[([^\]]+)\]/.exec(readStyle('ui/src/card.js'))?.[1] ?? '')
+    .matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
+  const sharedModes = [...(/export const PLAY_MODES = \[([^\]]+)\]/.exec(readStyle('packages/shared/src/types.ts'))?.[1] ?? '')
+    .matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
+  check('界面与契约的模式列表一致', uiModes.join(',') === sharedModes.join(','), `${uiModes} vs ${sharedModes}`);
+  check('模式循环里有四个', uiModes.length === 4);
+  check('按钮有四种状态', new RegExp(`data-mode="playOrder"`).test(html));
+}
+
+console.log('\n--- 拖动进度条与音量条 ---');
+{
+  /*
+   * Both bars are the same gesture, so both must be installed through the same helper - and the
+   * helper is where the two bugs that always show up here are handled: pointer capture (a drag that
+   * leaves the element must keep reporting) and `pointercancel` (which is *not* a release; treating
+   * it as one seeks wherever the pointer happened to be when Chromium gave up).
+   */
+  check('两条都装了拖动', (mainJs.match(/installScrub\(/g) ?? []).length === 2);
+  check('拖动条是横向的', /axis: 'x'/.test(mainJs));
+  check('使用指针捕获', /setPointerCapture/.test(scrubJs));
+  /*
+   * Only a release commits. A `pointercancel` or a lost capture - which Chromium fires when the
+   * window moves under the pointer - must end the gesture *without* sending a command, or the seek
+   * would go to wherever the pointer happened to be when the browser gave up.
+   */
+  check('取消走不提交的出口', /const onPointerCancel = \(\) => finish\(false\)/.test(scrubJs));
+  check(
+    '取消与丢失捕获都接上这个出口',
+    /addEventListener\('pointercancel', onPointerCancel\)/.test(scrubJs) &&
+      /addEventListener\('lostpointercapture', onPointerCancel\)/.test(scrubJs),
+  );
+  check('只有松手才提交', (scrubJs.match(/finish\(true\)/g) ?? []).length === 1);
+  check('按下时不选中文字', /preventDefault\(\)/.test(scrubJs));
+  // Ratio is measured from the strip, never from the event target: the fill is a child of the bar,
+  // so a press on the fill arrives with the fill as target.
+  check('比例取自拖动条自身', /element\.getBoundingClientRect\(\)/.test(scrubJs));
+  check('键盘也能调', /ArrowRight|ArrowLeft/.test(scrubJs));
+  // The arrows are also the card's skip keys, so the bar must swallow the press it handles.
+  check('键盘处理后不再冒泡', /stopPropagation\(\)/.test(scrubJs));
+
+  /*
+   * The two hit areas, which are the reason the band was ever unclickable: a 1.48u bar is about
+   * 6px tall on a 440px card, and a 6px target is not a target. Both use a `::before` overlay, so
+   * the geometry below them does not move (a padded box with a cancelling margin works too, but it
+   * shifts every measurement after it - the band's approach, and the band is the only thing after
+   * which nothing is measured).
+   */
+  check('进度条有加高的命中区', /\.progress-track::before\s*\{[^}]*top:\s*calc\(var\(--u\) \* -/.test(cardText));
+  check('音量条有加高的命中区', /\.volume-bar::before\s*\{[^}]*top:\s*calc\(var\(--u\) \* -/.test(cardText));
+  check('进度条可显示滑块', /\.progress:hover \.progress-thumb/.test(cardText));
+  check('拖动时滑块常显', /data-scrubbing='true'\] \.progress-thumb/.test(cardText));
+  check('进度条有滑块元素', /id="progress-thumb"/.test(html));
+  check('拖动时时间变亮', /data-scrubbing='true'\] \.progress-times/.test(cardText));
+
+  // While the pointer is down the preview *is* the position; the clock may not overwrite it.
+  check('拖动时时钟不夺回进度条', /scrubFraction != null/.test(readStyle('ui/src/card.js')));
+  check('快照到来前不放掉预览', /Math\.abs\(playheadMs - scrub\.ms\) < 1500/.test(mainJs));
+  check('预览有超时兜底', /PLAY_PAUSE_OPTIMISM_MS \* 2/.test(mainJs));
+  // A single command per gesture: one per preview frame would be dozens of seeks per drag.
+  const seekHandler = mainJs.slice(mainJs.indexOf('function installSeekBar'), mainJs.indexOf('function installVolumeBar'));
+  check('拖动过程中不发指令', !/control\(/.test(seekHandler.slice(0, seekHandler.indexOf('onCommit'))));
+  check('松手才发跳转指令', /onCommit[\s\S]{0,400}control\(\{ type: 'seek', positionMs/.test(seekHandler));
+  // No duration yet (nothing playing) means there is nowhere to seek to.
+  check('没有时长就不跳转', /if \(!\(duration > 0\)\)/.test(seekHandler));
+
+  check('音量条拖动即预览', /onPreview[\s\S]{0,200}setVolumePreview\(fraction\)/.test(mainJs));
+  // The drag guard in `setVolume` must not swallow the preview itself, or the bar would not follow
+  // the pointer: the preview is what the drag is producing, not a snapshot arriving mid-drag.
+  check('预览越过拖动保护', /setVolumePreview\(volume\)\s*\{/.test(readStyle('ui/src/card.js')));
+  check('松手才发音量指令', /onCommit[\s\S]{0,300}control\(\{ type: 'setVolume', volume \}\)/.test(mainJs));
+  // Held until the client's own value arrives, or the bar jumps back under the pointer.
+  check('音量预览也会被保持', /volumePreview != null[\s\S]{0,400}setVolumePreview\(volumePreview\)/.test(mainJs));
+  check('点击喇叭键静音', /action === 'mute'\) link\.control\(\{ type: 'toggleMute' \}\)/.test(mainJs));
+  // The panel overlaps the card's controls while hidden, so it must not take clicks then.
+  check('音量条默认不吃点击', /\.volume-pop\s*\{[^}]*pointer-events:\s*none/.test(cardText));
+  check('悬停才显示音量条', /\.controls__volume:hover \.volume-pop/.test(cardText));
+  check('拖动时音量条不收起', /data-open='true'/.test(cardText) && /setAttribute\('data-open', 'true'\)/.test(mainJs));
+  check('音量条向上弹出', /\.volume-pop\s*\{[^}]*bottom:\s*calc\(100%/.test(cardText));  /*
+   * Right-aligned, not centred on the button. The volume button is the rightmost element on the
+   * card, so a ~20u panel centred on it hangs off the card and over the transparent margin the
+   * floating shadow renders in - where it is either clipped or drawn over the shadow.
+   */
+  const sessionSource = readStyle('packages/host/src/session.ts');
+  check(
+    '静音就是音量为零',
+    /muted: volume == null \? null : volume <= 0\.001/.test(sessionSource) &&
+      !/muted: raw\.muteVolume/.test(sessionSource),
+  );
+  check('音量条贴右边不出界', /\.volume-pop\s*\{[^}]*right:\s*0/.test(cardText) && css.declaration('.volume-pop', 'left') === null);
+}
+
+console.log('\n--- 播放/暂停的即时反馈 ---');
+{
+  /*
+   * The button used to flicker and feel slow.
+   *
+   * The command was immediate; the *drawing* was not. A media key takes the client a moment to act
+   * on, and the client keeps publishing snapshots until it does - so drawing every snapshot
+   * verbatim flipped the button, flipped it back, and flipped it again. The optimistic value is now
+   * held until the client agrees, the host reports a failure, or it times out.
+   */
+  check('乐观状态会被保持', /function displayedStatus\(/.test(mainJs));
+  check('保持有超时', /PLAY_PAUSE_OPTIMISM_MS = \d+/.test(mainJs));
+  check('客户端确认后交还', /clientStatus === pending\.expect[\s\S]{0,80}pendingPlayPause = null/.test(mainJs));
+  check('快照画的是处理过的状态', /view\.setSnapshot\(effective\)/.test(mainJs));
+  check('按钮立刻反映翻转', /view\.setStatus\(pendingPlayPause\.expect\)/.test(mainJs));
+  check('失败时回退', /view\.setStatus\(lastSnapshot\?\.playback\?\.status/.test(mainJs));
+  // `setStatus` must be its own operation, or the revert would have to rebuild a whole snapshot.
+  check('状态可以单独绘制', /setStatus\(status\)\s*\{/.test(readStyle('ui/src/card.js')));
 }
 
 console.log('\n--- 托盘菜单 ---');

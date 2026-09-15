@@ -889,3 +889,126 @@ the *shape* being asserted is capable of going red, not that the shipped check i
 
 
 
+
+
+## 2026-09-15 (14) — three controls the media keys could not reach
+
+The transport works now (the owner confirmed play/pause and skipping), so the next three controls all
+had the same problem: **there is no media key for "play this mode", "this volume" or "this position"**,
+so unlike play/pause they have to go through the client — and the client's internals are packed.
+
+The rule from the previous round applies with full force: `ok` is not evidence. So each of the three
+was established by *driving the client's own control and reading the result*, and then implemented as
+the thing the client itself does. Three instruments, all still in `tools/`:
+
+- `probe-controls.mjs` (read-only): the mode enum, every `audioplayer.*` call, and — the useful one —
+  `Function.prototype.toString` of the `AudioPlayer` wrapper's own methods. A class instance keeps its
+  methods on the prototype, so no exports-scanning trick can see them; asking the object itself can.
+- `probe-client-ui.mjs` (**mutating**): real CDP `Input` events on the client's own buttons and
+  sliders, with `store.dispatch` tapped and the wrapper's methods wrapped. It moves the user's
+  playback, so it also restores mode and volume when it is done.
+- `host-smoke.mjs --control type=setVolume,volume=0.4`: the whole stack — host routing, the injected
+  bridge, the client's audio wrapper, and the confirmation logic.
+
+### The mode button dispatches nothing observable
+
+Clicking the client's own mode button changes `playingMode` and records **zero** store actions. That
+is not because there is no action: it is because the dva models captured their own reference to
+`dispatch` when they were built, so replacing `store.dispatch` sees only what React components send.
+An instrument that silently misses the thing you are looking for is worse than no instrument — the
+first reading said "the mode is not a dispatch at all", which is the opposite of the truth.
+
+What worked was trying a candidate and reading the client's own footer icon, which is rendered from
+the store. The action is the last thing the client's own effect does:
+
+```js
+dispatch({ type: 'playing/onUpdate', payload: { playingMode: next, lastPlayingMode: current } });
+```
+
+`lastPlayingMode` is the mode we came *from*, which the client's own click confirmed:
+`playRandom` → `playCycle` produced `{playingMode: 'playCycle', lastPlayingMode: 'playRandom'}`.
+
+Four modes, and their Chinese names came from the button's own tooltip as it cycled:
+`playOrder` 顺序播放 → `playCycle` 列表循环 → `playOneCycle` 单曲循环 → `playRandom` 随机播放.
+
+### The volume action that works, runs, and changes nothing
+
+`playing/setVolume` is a real action. It runs. `playing.playingVolume` changes to exactly what was
+asked for. **And the sound does not change** - `AudioPlayer.getApplicationVolume()` stayed at 0.5
+while the store went to 0.35.
+
+This is the same shape as `next`/`previous` returning `ok: true`: a receipt that describes the
+*command*, not the *world*. The difference is that the store field moved, which is what makes it
+seductive — the card would have shown the right number and the music would have ignored it.
+
+The client's own volume slider dispatches nothing at all (dragging 0.42 → 0.30 recorded zero
+actions, and the store followed anyway, through the client's native-to-store subscription). The call
+is `AudioPlayer.setVolume(v)`, the same one the client's `stepVolume` effect makes.
+
+### `muteVolume` does not mean muted
+
+Latent, and found while wiring volume up: the host had been reporting
+`muted: muteVolume > 0`. The client's mute effect *remembers* the current volume in `muteVolume`
+before setting the volume to 0, and unmuting restores it without clearing the field. So
+`muteVolume > 0` is true before a mute, during it, and after it — and the card would have drawn a
+silenced speaker for a track playing at full volume. Muted is `playingVolume === 0`.
+
+### Seeking: 109 means 109 seconds
+
+`audioplayer.seek` takes three arguments and nothing on disk says what they are. Wrapping the
+wrapper's `seek` (on the instance, which shadows the prototype method) and dragging the client's own
+progress bar answered it in one shot:
+
+```
+seek({ playId: "2102424489_UOH3CY", seekId: "2102424489|seek|46YB26", value: 109 })
+  → { playId, seekId, code: 0, position: 109 }   playhead: 125s → 131s
+```
+
+Whole seconds; `playId` from the progress stream; a fresh `seekId` per call because the reply is
+matched by it. The reply is a genuine receipt — a code and the position the player moved to — so
+`ControlResult.positionMs` carries it and the host can confirm a seek without waiting for the next
+sample.
+
+The conversion lives in the bridge (`Math.round(ms / 1000)`), which cannot import the shared helper
+because it is string-assembled and carries no imports. So the rule is written twice, and
+`packages/host/src/transport.test.ts` extracts the bridge's own line and *evaluates* it against the
+shared function — the duplication is checked rather than trusted.
+
+### The button felt slow because it was drawn twice
+
+The owner's report was "暂停和播放按钮的切换反应时间有点慢", and the command was never slow: a media
+key is immediate. The *drawing* was the problem. The client takes a moment to act on the key and
+keeps publishing snapshots until it does, so a card that drew every snapshot verbatim flipped the
+button, flipped it back, and flipped it again.
+
+The optimistic flip is now **held**: it wins over incoming snapshots until the client agrees, the
+host reports a failure, or 1.2s passes. That needs a `displayedStatus()` in one place and a
+`setStatus()` on the card view, because the revert has to redraw the status alone — a whole snapshot
+is not available at that moment, and rebuilding one to change one attribute is how a revert ends up
+reverting something else too.
+
+The same shape appeared again in the volume bar: the commit reaches the native player, and until it
+reports back, snapshots still carry the *old* volume. So the chosen volume is held too, until the
+client's own value arrives.
+
+### Two gestures on two bars, one helper
+
+The progress bar and the volume bar are the same gesture in two directions, so `ui/src/scrub.js`
+handles both. The parts that are easy to get wrong are the parts that already went wrong once each
+in this project: pointer capture (a drag that leaves the element must keep reporting), `pointercancel`
+and `lostpointercapture` (**not** releases — Chromium fires them when the window moves under the
+pointer, and committing there seeks to wherever the pointer was when the browser gave up), measuring
+the ratio from the *strip* rather than the event target (the fill is a child, so a press on the fill
+arrives with the fill as target), and committing once on release rather than once per frame.
+
+Both bars take their hit area from a `::before` overlay rather than padding: a 1.48u bar is about 6px
+tall on a 440px card, and a 6px target is not a target. The colour band solved the same problem with
+padding plus a cancelling negative margin, but that moves everything measured after it — fine for the
+band (nothing is measured below it), not fine here.
+
+They also had to be added to the window-drag gesture's exclusion list, or pressing the progress bar
+would move the window *and* scrub at the same time.
+
+One more conflict, and it is the same double-action shape as a media key with a fallback: the arrow
+keys are the card's skip keys, so an arrow pressed while the bar has focus would seek **and** change
+track. The bar stops propagation for the keys it handles.

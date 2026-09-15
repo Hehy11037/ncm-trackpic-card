@@ -234,6 +234,17 @@ export interface ControlResult {
   /** How the command was applied, for diagnostics. */
   via: 'dispatch' | 'pipeline' | 'media-key' | 'none';
   message?: string;
+  /**
+   * Whether the *client* was then observed in the state the command asked for.
+   *
+   * `ok` only means the command reached the page and ran without throwing - which is not the same
+   * as the client reacting. The two are worth distinguishing, because "the button did nothing" and
+   * "the button worked" are otherwise indistinguishable from the outside. `undefined` when it
+   * cannot be judged: no track loaded, or no snapshot to compare against.
+   */
+  confirmed?: boolean;
+  /** The client's `playingState` before and after, when it was readable. */
+  playingState?: { before: number | null; after: number | null };
 }
 
 /** Messages the host pushes to overlay clients. */
@@ -243,6 +254,7 @@ export type HostMessage =
   | { kind: 'playhead'; playhead: Playhead; songId: number | null }
   | { kind: 'lyrics'; doc: LyricDoc }
   | { kind: 'connection'; connection: ConnectionInfo }
+  | { kind: 'controlResult'; result: ControlResult }
   | { kind: 'error'; message: string; at: EpochMs };
 
 /** Messages an overlay client may send to the host. */

@@ -49,6 +49,8 @@ let lastLyricsDoc = null;
 let lastFrameAt = performance.now();
 let hidden = false;
 let staleSince = 0;
+/** The optimistic play/pause flip awaiting the host's verdict, or null. */
+let pendingPlayPause = null;
 /** "Do not auto-collapse". Owned by the shell; this is only the copy the button renders. */
 let locked = true;
 
@@ -75,6 +77,53 @@ function toggleLock() {
     return;
   }
   bridge.toggleLock();
+}
+
+/* ---------------------------------------------------------------- transport */
+
+/**
+ * Play/pause, with the button's feedback tied to what the client actually did.
+ *
+ * The card *mirrors* the client, so drawing a state the client has not been observed in is a lie -
+ * and it used to be a lasting one: the button flipped locally, the command was sent as `playPause`,
+ * and the bridge had no case for it and threw, whereupon the next snapshot flipped the button back.
+ * The result was a control that appeared to work for a moment and then undid itself, with the
+ * reason visible only in the host's log.
+ *
+ * The flip is still optimistic, because a control that waits for a round trip feels broken. But it
+ * is *reverted* when the host reports that the client did not follow, and the reason is said out
+ * loud rather than swallowed.
+ */
+function sendPlayPause() {
+  // Read from the snapshot, not from the clock: the snapshot is the client's last known state, and
+  // the clock may already hold an optimistic flip from a previous click.
+  const wasPlaying = (lastSnapshot?.playback?.status ?? 'paused') === 'playing';
+  clock.onPlayback({ ...(lastSnapshot?.playback ?? {}), status: wasPlaying ? 'paused' : 'playing' }, clock.durationMs);
+  pendingPlayPause = { wasPlaying, at: performance.now() };
+  link.control({ type: 'playPause' });
+}
+
+/**
+ * The host's verdict on a command.
+ *
+ * `confirmed === false` means the client was told to change state and was then observed not to.
+ * `ok === false` means the command never even ran. Both undo the optimistic flip.
+ */
+function handleControlResult(result) {
+  if (!result) return;
+  if (result.command?.type !== 'playPause') return;
+  const failed = result.ok !== true || result.confirmed === false;
+  if (!failed) {
+    pendingPlayPause = null;
+    return;
+  }
+  const pending = pendingPlayPause;
+  pendingPlayPause = null;
+  // Put the card back to the last state the client was actually seen in.
+  clock.onPlayback(lastSnapshot?.playback ?? {}, clock.durationMs);
+  const why = result.message ?? result.via ?? '未知原因';
+  console.warn(`[overlay] 播放/暂停没有生效：${why}`);
+  if (pending) console.warn(`[overlay] 客户端未从「${pending.wasPlaying ? '播放' : '暂停'}」改变`);
 }
 
 /* ------------------------------------------------------------------ messages */
@@ -139,6 +188,10 @@ function handleMessage(message) {
       connected = message.connection?.state === 'ready';
       break;
 
+    case 'controlResult':
+      handleControlResult(message.result);
+      break;
+
     case 'error':
       console.warn('[overlay]', message.message);
       break;
@@ -168,14 +221,7 @@ function bindInput() {
     button.addEventListener('click', () => {
       const action = button.dataset.action;
       if (action === 'playPause') {
-        // Optimistic: flip locally so the button feels instant, and let the next
-        // snapshot correct us if the client disagrees.
-        const status = lastSnapshot?.playback?.status;
-        clock.onPlayback(
-          { ...(lastSnapshot?.playback ?? {}), status: status === 'playing' ? 'paused' : 'playing' },
-          clock.durationMs,
-        );
-        link.control({ type: 'playPause' });
+        sendPlayPause();
         return;
       }
       if (action === 'next' || action === 'previous') link.control({ type: action });

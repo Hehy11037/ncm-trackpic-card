@@ -36,6 +36,36 @@ import {
 } from './bridge-script.ts';
 import { CdpSession, DEFAULT_CDP_PORT, type CdpTarget } from './cdp.ts';
 import { diagnose, detailFor, toConnectionInfo } from './client-process.ts';
+
+/**
+ * How long to wait for the client to show the state a transport command asked for.
+ *
+ * Long enough to cover the client's own round trip to its audio pipeline, short enough that a
+ * button does not feel like it is waiting. It costs no extra traffic: the snapshots it watches are
+ * already arriving.
+ */
+const CONTROL_CONFIRM_MS = 900;
+
+/**
+ * The `playingState` a command should end up at, or null when it cannot be judged.
+ *
+ * `playingState` is 1 = paused and 2 = playing (measured; see docs/contracts.md). Anything else -
+ * no track loaded - means the client may legitimately not move, so nothing is asserted.
+ */
+function expectedPlayingState(command: ControlCommand, before: number | null): number | null {
+  if (before !== 1 && before !== 2) return null;
+  switch (command.type) {
+    case 'play':
+      return 2;
+    case 'pause':
+      return 1;
+    case 'playPause':
+      return before === 2 ? 1 : 2;
+    default:
+      // next / previous / volume / mute / mode do not have a single state to assert.
+      return null;
+  }
+}
 import { discover, type DiscoveryResult } from './discovery.ts';
 
 const RECONNECT_MIN_MS = 2000;
@@ -162,6 +192,58 @@ export class ClientSession extends EventEmitter {
       };
     }
 
+    const before = this.rawPlayingState();
+    const result = await this.sendControl(session, command);
+    if (!result.ok) return result;
+
+    /*
+     * Ask the client whether it actually did anything.
+     *
+     * `ok` only means the command reached the page and ran without throwing. A control surface that
+     * silently does nothing - which is exactly what play/pause was suspected of, and why the
+     * largest button on the card was dead - produces the same "success" as one that works. So the
+     * play state is read again a moment later and reported alongside.
+     */
+    const expected = expectedPlayingState(command, before);
+    if (expected === null) return result;
+
+    const after = await this.waitForPlayingState(session, expected);
+    return {
+      ...result,
+      confirmed: after === expected,
+      playingState: { before, after },
+      message:
+        after === expected
+          ? `${result.message ?? result.via}（客户端已确认）`
+          : `${result.message ?? result.via}（指令已执行，但客户端状态仍是 ${after ?? '未知'}）`,
+    };
+  }
+
+  /** The client's raw `playingState`, straight from the last snapshot. */
+  private rawPlayingState(): number | null {
+    return this.lastSnapshot?.playback?.rawPlayingState ?? null;
+  }
+
+  /**
+   * Wait for the client to reach an expected `playingState`, or give up.
+   *
+   * Polled from the snapshots the client is already pushing, so this costs no extra traffic.
+   */
+  private async waitForPlayingState(session: CdpSession, expected: number): Promise<number | null> {
+    const deadline = Date.now() + CONTROL_CONFIRM_MS;
+    let latest = this.rawPlayingState();
+    while (Date.now() < deadline) {
+      if (latest === expected) return latest;
+      await delay(50);
+      // A drop means the confirmation can no longer be judged; report what was last seen.
+      if (this.cdp !== session) return latest;
+      latest = this.rawPlayingState();
+    }
+    return latest;
+  }
+
+  /** Push the command and read its receipt from the page's result queue. */
+  private async sendControl(session: CdpSession, command: ControlCommand): Promise<ControlResult> {
     const id = `c${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     try {
       await session.evaluate(
@@ -204,7 +286,6 @@ export class ClientSession extends EventEmitter {
   }
 
   /* ------------------------------------------------------------ internals */
-
   private async attempt(): Promise<void> {
     if (this.stopping) return;
 

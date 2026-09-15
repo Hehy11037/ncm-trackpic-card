@@ -152,7 +152,19 @@ export function createHost(options: HostOptions = {}): Host {
     switch (message?.kind) {
       case 'control': {
         const result = await session.control(message.command);
-        log('info', `控制指令 ${message.command.type} → ${result.ok ? '成功' : '失败'} (${result.via})`);
+        /*
+         * The confirmation is the interesting half of the log line: `成功` only means the command
+         * reached the page. `未确认` means the client was told to change state and did not - which
+         * is the difference between a working control and a dead one, and it is exactly what the
+         * play/pause deck was before it was wired up.
+         */
+        const verdict = !result.ok ? '失败' : result.confirmed === false ? '未确认' : '成功';
+        const state =
+          result.playingState && result.playingState.before !== null
+            ? `，playingState ${result.playingState.before} → ${result.playingState.after ?? '?'}`
+            : '';
+        log(result.ok && result.confirmed !== false ? 'info' : 'warn', `控制指令 ${message.command.type} → ${verdict} (${result.via})${state}`);
+        broadcast({ kind: 'controlResult', result });
         break;
       }
       case 'requestSnapshot': {

@@ -294,14 +294,46 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
 
   const dispatch = (action) => store.dispatch(action);
 
+  /** The client's own play state: 1 = paused, 2 = playing (measured). */
+  const playingState = () => {
+    const st = store.getState().playing || {};
+    return typeof st.playingState === 'number' ? st.playingState : null;
+  };
+
+  const transport = (want) => {
+    const fn = want === 'pause' ? audio.setAudioPlayerPause : audio.setAudioPlayerPlay;
+    if (typeof fn !== 'function') {
+      const available = Object.keys(audio).filter((k) => /play|pause/i.test(k)).join(', ');
+      throw new Error(
+        '音频模块没有 setAudioPlayer' + (want === 'pause' ? 'Pause' : 'Play') + '（可用: ' + available + '）',
+      );
+    }
+    // Called on the module rather than bare: the function needs the module as its receiver.
+    fn.call(audio, null, null);
+    return want;
+  };
+
   const execute = (command) => {
     const t = command && command.type;
     switch (t) {
+      case 'playPause': {
+        /*
+         * The UI only ever sends this one, and it used to fall straight through to the default
+         * case and throw - so the largest control on the card, and the space bar, did nothing at
+         * all. The deck is a toggle, so the state to flip away from is read here rather than
+         * guessed by the caller.
+         */
+        const state = playingState();
+        if (state === null) throw new Error('读不到 playingState，无法判断该播放还是暂停');
+        const want = state === 2 ? 'pause' : 'play';
+        transport(want);
+        return 'pipeline:setAudioPlayer' + (want === 'pause' ? 'Pause' : 'Play') + ':from' + state;
+      }
       case 'play':
-        audio.setAudioPlayerPlay(null, null);
+        transport('play');
         return 'pipeline:setAudioPlayerPlay';
       case 'pause':
-        audio.setAudioPlayerPause(null, null);
+        transport('pause');
         return 'pipeline:setAudioPlayerPause';
       case 'stop':
         audio.setAudioPlayerStop(null);

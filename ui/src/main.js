@@ -161,7 +161,15 @@ function handleControlResult(result) {
   }
 
   if (type === 'seek') {
-    // Whether it worked or not, stop previewing: from here the playhead is the truth.
+    /*
+     * The client's own receipt places the bar; then the playhead is the truth again.
+     *
+     * Releasing the preview alone would be enough while a track is playing, because progress
+     * samples keep arriving - but a *paused* client may publish nothing, and the bar would snap
+     * back to where the track was before the seek until something moved it. The seek reply carries
+     * `position`, so the bar can be put where the client says it now is.
+     */
+    if (!failed && scrub && typeof result.positionMs === 'number') snapTo(result.positionMs);
     releaseScrub();
     if (failed) console.warn(`[overlay] 跳转未确认: ${result.message ?? result.via}`);
     return;
@@ -192,6 +200,20 @@ let scrub = null;
 function releaseScrub() {
   scrub = null;
   view.setScrub(null);
+}
+
+/**
+ * Move the clock to a position the client reported, without waiting for a progress sample.
+ *
+ * `onPlayhead` snaps rather than eases when the jump is large, which is exactly a seek, and it
+ * re-anchors from there - so a paused track whose progress stream has gone quiet still shows the
+ * position it was actually moved to.
+ */
+function snapTo(positionMs) {
+  clock.onPlayhead(
+    { positionMs, playId: lastSnapshot?.playhead?.playId ?? null, at: Date.now(), sampleCount: clock.sampleCount },
+    lastSnapshot?.song?.id ?? null,
+  );
 }
 
 /**

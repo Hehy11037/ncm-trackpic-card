@@ -557,7 +557,9 @@ export class ClientSession extends EventEmitter {
     const session = this.cdp;
     if (!session || session.isClosed) return;
     try {
-      const health = await session.evaluateJson<{ alive: boolean }>(bridgeHealthExpression());
+      const health = await session.evaluateJson<{ alive: boolean; id?: string }>(
+        bridgeHealthExpression(),
+      );
       if (!health?.alive) {
         // The page navigated or the bridge was torn down: re-establish it.
         this.emit('log', 'debug', '桥接脚本已失效，正在重新注入');
@@ -613,10 +615,16 @@ export class ClientSession extends EventEmitter {
     switch (envelope.kind) {
       case 'ready':
         this.progressSamples = 0;
+        /*
+         * The build id is printed because it is the only evidence that the page is running the
+         * injection the host just made. When it was not, every play/pause press answered
+         * `unsupported command: playPause` from code that no longer existed in the source, and
+         * nothing in the log said which copy had replied.
+         */
         this.emit(
           'log',
           'info',
-          `桥接就绪（音频模块 ${envelope.payload?.audioModuleId}）`,
+          `桥接就绪（音频模块 ${envelope.payload?.audioModuleId}，桥接 ${envelope.payload?.bridgeId ?? '未知'}）`,
         );
         break;
 

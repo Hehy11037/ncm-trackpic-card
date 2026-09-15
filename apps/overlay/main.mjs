@@ -169,6 +169,8 @@ let dragMoved = false;
  * whose scale factor is not whole, which showed up as the card slowly growing while it was moved.
  */
 let dragSize = null;
+/** Set once per drag when the OS reports a size other than the one we asked for. */
+let dragSizeMismatch = false;
 /** When the drag last moved the window, so a gesture that never ends can be dropped. */
 let dragLastAt = 0;
 /** The short tween that animates the roll-up and the unroll. */
@@ -744,6 +746,7 @@ function bindIpc() {
     dragGrab = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
     // Captured once, so the size can never be fed back to itself while the drag runs.
     dragSize = { width: bounds.width, height: bounds.height };
+    dragSizeMismatch = false;
     dragMoved = false;
     dragLastAt = Date.now();
     // A resize tween in flight would fight the follow loop for the same bounds.
@@ -788,6 +791,20 @@ function startDragFollow() {
       return;
     }
     const bounds = mainWindow.getBounds();
+    /*
+     * Report a size the OS gave back that is not the one we are asking for.
+     *
+     * The size argument is captured at the press and re-asserted every frame, so `bounds` should
+     * match it exactly. When it does not, something outside this process is resizing the window -
+     * a display change mid-drag being the obvious candidate - and the card would visibly change
+     * size under the user. Logged once per drag: the point is to name the cause, not to flood.
+     */
+    if (!dragSizeMismatch && (bounds.width !== dragSize.width || bounds.height !== dragSize.height)) {
+      dragSizeMismatch = true;
+      console.warn(
+        `[shell] 拖动中窗口尺寸被系统改动: 请求 ${dragSize.width}x${dragSize.height}，实际 ${bounds.width}x${bounds.height}`,
+      );
+    }
     const cursor = screen.getCursorScreenPoint();
     const target = dragTarget(cursor, dragGrab, dragSize, workAreaForWindow());
     if (target.x === bounds.x && target.y === bounds.y) return;

@@ -240,8 +240,18 @@
 }
 
 /* While scrubbing, the preview is what the user is pointing at: make that unmistakable. */
+/*
+ * While scrubbing, the bar reads as thicker - without changing any in-flow property.
+ *
+ * It used to be `height: calc(var(--u) * 2.1)`, and the track is an ordinary block in the column, so
+ * pressing the bar made every element below it - the times, the whole transport row, the colour
+ * band, the credit - jump down by 0.62u and jump back on release. A control that moves the layout
+ * out from under the pointer is worse than one that does not emphasise itself at all.
+ *
+ * `box-shadow` spreads the same colour the track already uses, and occupies no space.
+ */
 .progress[data-scrubbing='true'] .progress-track {
-  height: calc(var(--u) * 2.1);
+  box-shadow: 0 0 0 calc(var(--u) * 0.31) var(--panel-line);
 }
 
 .progress[data-scrubbing='true'] .progress-times {

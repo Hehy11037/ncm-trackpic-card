@@ -17,6 +17,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 import { makeCssReader, readStyle } from './css-values.mjs';
 import {
+  composeStrip,
   encodePng,
   extractIcons,
   iconStyle,
@@ -27,13 +28,16 @@ import {
   styledSubpaths,
   visibleAt,
 } from './svg-path.mjs';
+import { transportRowLayout } from './transport-layout.mjs';
 
 function parseArgs(argv) {
-  const out = { out: '.scratch/icons', size: 96 };
+  const out = { out: '.scratch/icons', size: 96, rows: true, unit: 8.8 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--out') out.out = argv[++i];
     else if (a === '--size') out.size = Number(argv[++i]);
+    else if (a === '--unit') out.unit = Number(argv[++i]);
+    else if (a === '--no-rows') out.rows = false;
   }
   return out;
 }
@@ -171,6 +175,98 @@ if (modeIcons.length) {
   const distinct = new Set(modeIcons.map((icon) => icon.paths.map((path) => path.d).join('|')));
   console.log(`\n模式图标 ${modeIcons.length} 个，其中 ${distinct.size} 个互不相同`);
   if (distinct.size !== modeIcons.length) failures++;
+}
+
+/*
+ * The transport row itself.
+ *
+ * Not a browser screenshot - the positions come from `tools/transport-layout.mjs`, which computes
+ * them from the stylesheet (flexbox with `space-between`, two equal side slots, a gapped centre
+ * group), and each glyph is drawn at the size that layout gives it. What this answers is the thing
+ * a static check cannot: does the arrangement *look* right - is the play button visibly central, are
+ * the five spread sensibly, does the volume panel fit inside the card.
+ */
+if (args.rows) {
+  const layout = transportRowLayout(css);
+  /*
+   * The five glyphs, found by what encloses them rather than by their path data.
+   *
+   * `prev` and `next` are plain `.ctrl` buttons with no class of their own, so they are the first
+   * and second icon owned by a bare `ctrl` - in DOM order, which is the row's order. Matching on
+   * path data instead would break the moment a glyph is redrawn, which is the one thing this tool
+   * exists to encourage.
+   */
+  const bareCtrl = icons.filter((icon) => icon.owner.trim() === 'ctrl');
+  /*
+   * The mode glyphs are named by the *icon* (`mode-icon--order`), not by the mode
+   * (`playOrder`), so the two have to be mapped. The mapping is the stylesheet's: it is what
+   * `.ctrl--mode[data-mode='playOrder'] .mode-icon--order` joins together.
+   */
+  const modeClassFor = { playOrder: 'order', playCycle: 'cycle', playOneCycle: 'single', playRandom: 'random' };
+  const rowIcons = {
+    modes: new Map(modeIcons.map((icon) => [icon.cls.match(/mode-icon--(\w+)/)?.[1], icon])),
+    previous: bareCtrl[0],
+    playPause: icons.find((icon) => icon.cls === 'icon-play'),
+    next: bareCtrl[1],
+    volume: icons.find((icon) => /ctrl--volume/.test(icon.owner)),
+  };
+  for (const [mode, suffix] of Object.entries(modeClassFor)) {
+    if (!rowIcons.modes.has(suffix)) failures++;
+    void mode;
+  }
+
+  /** One glyph, ready for `composeStrip`, at a named slot's position and size. */
+  const place = (slot, icon, filter = () => true) => {
+    const subpaths = icon.paths
+      .filter((path) => filter(path))
+      .flatMap((path) => {
+        const shape = { subpaths: parsePath(path.d), ...iconStyle(css, icon.owner, path.cls) };
+        // Strokes are flattened into polygons here, so what goes to the strip is already the
+        // finished shape: nothing is left for `composeStrip` to style.
+        return styledSubpaths(shape.subpaths, shape);
+      });
+    return {
+      subpaths,
+      fill: true,
+      strokeWidth: 0,
+      centre: layout.controls[slot].centre,
+      size: layout.controls[slot].size,
+    };
+  };
+
+  const rowSpec = (mode, level) => [
+    place('mode', rowIcons.modes.get(modeClassFor[mode])),
+    place('previous', rowIcons.previous),
+    place('playPause', rowIcons.playPause),
+    place('next', rowIcons.next),
+    place('volume', rowIcons.volume, (path) => visibleAt(css, path.cls, level)),
+  ];
+
+  const rows = [
+    ...['playOrder', 'playCycle', 'playOneCycle', 'playRandom'].map((mode) => ({
+      label: `mode=${mode}`,
+      items: rowSpec(mode, 'high'),
+    })),
+    ...['low', 'high', 'mute'].map((level) => ({
+      label: `volume=${level}`,
+      items: rowSpec('playCycle', level),
+    })),
+  ];
+
+  const widthPx = Math.round(100 * args.unit);
+  const rowHeightPx = Math.round(layout.play * args.unit) + 6;
+  console.log(`\n传输控制条（按 ${args.unit}px/u 画；卡片实际约 4.4px/u）：`);
+  rows.forEach((row, index) => {
+    const strip = composeStrip(row.items, { widthPx, unitPx: args.unit, rowHeightPx });
+    const file = `${args.out}/row-${index}-${slug(row.label, 'row')}.png`;
+    writeFileSync(file, encodePng(strip.rgba, strip.width, strip.height));
+    drawn.push({ file, cls: row.label });
+    console.log(`  ${file}   ${row.label}`);
+  });
+  console.log(
+    `  播放键中心 ${layout.controls.playPause.centre.toFixed(2)}u，上一首 ${layout.controls.previous.centre.toFixed(2)}u，` +
+      `下一首 ${layout.controls.next.centre.toFixed(2)}u，模式 ${layout.controls.mode.centre.toFixed(2)}u，音量 ${layout.controls.volume.centre.toFixed(2)}u`,
+  );
 }
 
 console.log(`\n${failures ? `✗ ${failures} 个图标有问题` : '✓ 全部图标都能画出来'}`);

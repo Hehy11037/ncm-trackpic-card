@@ -382,6 +382,8 @@ method on the `AudioPlayer` instance rather than one of these named calls — wh
 | `tools/host-smoke.mjs` | Live end-to-end harness. `--control type=setVolume,volume=0.4` pushes a command through host → bridge → client and prints whether the client was confirmed to change. |
 | `tools/render-icons.mjs` (`npm run icons`) | Draws the card's own SVG icons into PNGs in `.scratch/icons/`, together with the states a stateful icon has. The tooling shell cannot launch a browser, so this is how an icon gets *looked at*. Found the invisible sound waves and the four-diamond mute cross. |
 | `tools/svg-path.mjs` | The path parser and rasteriser behind it, plus the shared fill/stroke resolver. Used by `check-interaction.mjs` for the assertions that can run in `npm run check`. |
+| `tools/transport-layout.mjs` | Where the five transport controls land, computed from the stylesheet (flexbox, two equal side slots, a gapped centre group). Used by the check and by the row pictures. |
+| `npm run icons` (row pictures) | The same numbers drawn: `.scratch/icons/row-*.png` shows the whole transport row - one picture per play mode and per volume state - so the arrangement can be looked at without a browser. |
 | `tools/tap-controls.mjs` | Wrap pipeline functions to capture call arguments. |
 | `tools/host-smoke.mjs` | **Phase-1 end-to-end test**: host + fake overlay client. |
 | `tools/host-run.mjs` | Run the host in the foreground with a live track view. |

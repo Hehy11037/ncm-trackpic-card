@@ -379,6 +379,50 @@ console.log('\n--- 控制条几何（从样式表算出来） ---');
     layout.popover.left > at('playPause') + layout.play / 2,
     `播放键右缘 ${(at('playPause') + layout.play / 2).toFixed(2)}u`,
   );
+
+  /*
+   * The row's height is declared, not derived from its contents.
+   *
+   * The play button used to be `position: absolute`, so it contributed nothing to the row's height;
+   * it is now an ordinary flex child and contributes all 15.74u of itself. If the height were left
+   * to the contents, the row would grow and push the reference's colour band down - and the
+   * reference comparison measures offsets *above* the row, so it would not notice.
+   */
+  const declaredHeight = css.value('.controls', 'height');
+  check('控制条高度是声明出来的', css.declaration('.controls', 'height') !== null, `${declaredHeight}u`);
+  check('最高的控件放得进这一行', layout.play <= declaredHeight + 0.01, `${layout.play}u ≤ ${declaredHeight}u`);
+
+  /*
+   * The four mode names and labels, against the measurement they came from.
+   *
+   * `docs/contracts.md` records what the client's own button said as it cycled, so it is the
+   * authority; the card declares its own copy because `ui/` imports nothing from the host's modules.
+   * Two declarations and a check that compares them - the same arrangement as the card's aspect
+   * ratio, which is written in three languages.
+   */
+  const contracts = readStyle('docs/contracts.md');
+  const sharedModes = [
+    ...(/export const PLAY_MODES = \[([^\]]+)\]/.exec(readStyle('packages/shared/src/types.ts'))?.[1] ?? '').matchAll(
+      /'([a-zA-Z]+)'/g,
+    ),
+  ].map((match) => match[1]);
+  // Scoped to the four mode names: the same file is full of field tables, and a loose pattern
+  // matched `playingState` and friends as if they were modes.
+  const contractModes = sharedModes.map((mode) => {
+    const row = new RegExp('\\|\\s*`?' + mode + '`?\\s*\\|\\s*([^|]+?)\\s*\\|').exec(contracts);
+    return [mode, row?.[1]?.trim() ?? null];
+  });
+  check(
+    '契约里记下了四种模式',
+    contractModes.length === 4 && contractModes.every(([, label]) => label),
+    contractModes.map(([mode, label]) => `${mode}=${label ?? '?'}`).join(' '),
+  );
+  const uiLabels = Object.fromEntries(
+    [...readStyle('ui/src/card.js').matchAll(/(play[A-Za-z]+):\s*'([^']+)'/g)].map((match) => [match[1], match[2]]),
+  );
+  for (const [mode, label] of contractModes) {
+    check(`界面标签与实测一致 ${mode}`, uiLabels[mode] === label, `界面 ${uiLabels[mode] ?? '(缺)'} / 契约 ${label}`);
+  }
 }
 
 
@@ -451,7 +495,35 @@ console.log('\n--- 控制条几何（从样式表算出来） ---');
   check('音量条默认不吃点击', /\.volume-pop\s*\{[^}]*pointer-events:\s*none/.test(cardText));
   check('悬停才显示音量条', /\.controls__volume:hover \.volume-pop/.test(cardText));
   check('拖动时音量条不收起', /data-open='true'/.test(cardText) && /setAttribute\('data-open', 'true'\)/.test(mainJs));
-  check('音量条向上弹出', /\.volume-pop\s*\{[^}]*bottom:\s*calc\(100%/.test(cardText));  /*
+  check('音量条向上弹出', /\.volume-pop\s*\{[^}]*bottom:\s*calc\(100%/.test(cardText));
+
+  /*
+   * A drag may not move the layout.
+   *
+   * The scrubbing state used to thicken the progress track with `height: 2.1u`, and the track is an
+   * ordinary block in the column - so pressing the bar pushed the times, the transport row, the
+   * colour band and the credit down by 0.62u, and released them again on pointer-up. The control
+   * moved out from under the pointer that was using it.
+   *
+   * Asserted generically rather than by naming `height`: any in-flow property set by a drag state is
+   * the same bug, and `box-shadow` / `opacity` / `transform` are the ones that are not.
+   */
+  const IN_FLOW = [
+    'height', 'min-height', 'max-height', 'width', 'min-width', 'max-width',
+    'margin', 'margin-top', 'margin-bottom', 'margin-left', 'margin-right',
+    'padding', 'padding-top', 'padding-bottom',
+    'border-width', 'border-top-width', 'border-bottom-width',
+    'font-size', 'line-height', 'top', 'bottom',
+  ];
+  for (const selector of [".progress[data-scrubbing='true'] .progress-track", ".volume-bar[data-scrubbing='true']"]) {
+    const moved = IN_FLOW.filter((property) => css.declaration(selector, property) !== null);
+    check(`拖动状态不改变布局 ${selector}`, moved.length === 0, moved.join(', '));
+  }
+  // ... and it still has to *show* something, or "no layout change" would be satisfied by nothing.
+  check(
+    '拖动时进度条仍被强调',
+    css.declaration(".progress[data-scrubbing='true'] .progress-track", 'box-shadow') !== null,
+  );  /*
    * Right-aligned, not centred on the button. The volume button is the rightmost element on the
    * card, so a ~20u panel centred on it hangs off the card and over the transparent margin the
    * floating shadow renders in - where it is either clipped or drawn over the shadow.

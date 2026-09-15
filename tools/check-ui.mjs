@@ -14,7 +14,7 @@
 // anybody could see in the code.
 
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -30,21 +30,87 @@ const ROOT = process.cwd();
 /** The host we started, if any. Never kills a host that was already running. */
 let ownedHost = null;
 
-const ASSETS = [
-  ['/', 'text/html'],
-  ['/config.json', 'application/json'],
-  ['/styles/tokens.css', 'text/css'],
-  ['/styles/card.css', 'text/css'],
-  ['/src/main.js', 'text/javascript'],
-  ['/src/card.js', 'text/javascript'],
-  ['/src/clock.js', 'text/javascript'],
-  ['/src/drag.js', 'text/javascript'],
-  ['/src/layout.js', 'text/javascript'],
-  ['/src/lyrics.js', 'text/javascript'],
-  ['/src/palette.js', 'text/javascript'],
-  ['/src/resize-clock.js', 'text/javascript'],
-  ['/src/socket.js', 'text/javascript'],
-];
+/**
+ * What the page loads, derived rather than listed.
+ *
+ * This used to be a hand-written array of paths, and it silently stopped covering the project the
+ * moment a module was added: `ui/src/scrub.js` was served, imported, and needed to boot, and this
+ * check had never heard of it. A list that has to be remembered is a list that will be out of date -
+ * the same lesson as the bridge's hand-written version number.
+ *
+ * So the assets come from the page itself (its `link` and `script` tags, then each module's own
+ * `import` specifiers, transitively), and the expected content type comes from the extension.
+ */
+
+/**
+ * Resolve a relative specifier (`./src/main.js`) against the serving root.
+ *
+ * The page and the modules both use `./`-relative paths, which is what a build step would normally
+ * rewrite; there is no build step here, so they are resolved the way the browser would and turned
+ * into the absolute path the server is asked for.
+ */
+function resolveSpecifier(fromPath, specifier) {
+  if (specifier.startsWith('/')) return specifier;
+  if (specifier.startsWith('http') || specifier.startsWith('//') || specifier.startsWith('data:')) return null;
+  // Strip the leading slash first: splitting `/src/main.js` leaves an empty first segment, which
+  // then reappears in the joined path as `//src/...`.
+  const parts = fromPath.replace(/^\/+/, '').split('/').slice(0, -1).filter(Boolean);
+  for (const segment of specifier.split('/')) {
+    if (segment === '.' || segment === '') continue;
+    if (segment === '..') parts.pop();
+    else parts.push(segment);
+  }
+  return `/${parts.join('/')}`;
+}
+
+/** Every path the page loads, starting from index.html and following the module graph. */
+async function assetPaths() {
+  const paths = new Set(['/', '/config.json']);
+  const html = readFileSync(join(ROOT, 'ui', 'index.html'), 'utf8');
+  const queue = [];
+
+  for (const match of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
+    const resolved = resolveSpecifier('/', match[1]);
+    if (!resolved) continue;
+    paths.add(resolved);
+    if (resolved.endsWith('.js')) queue.push(resolved);
+  }
+
+  const bare = [];
+  const visited = new Set();
+  while (queue.length) {
+    const path = queue.shift();
+    if (visited.has(path)) continue;
+    visited.add(path);
+    let body;
+    try {
+      const res = await fetch(base + path);
+      if (!res.ok) continue;
+      body = await res.text();
+    } catch {
+      continue;
+    }
+    for (const match of body.matchAll(/(?:from|import)\s*\(?\s*'([^']+)'/g)) {
+      const target = resolveSpecifier(path, match[1]);
+      if (!target) {
+        bare.push(`${path} → ${match[1]}`);
+        continue;
+      }
+      paths.add(target);
+      if (target.endsWith('.js')) queue.push(target);
+    }
+  }
+  return { paths: [...paths], bare };
+}
+
+/** The content type the extension implies. */
+function expectedType(path) {
+  if (path === '/' ) return 'text/html';
+  if (path.endsWith('.css')) return 'text/css';
+  if (path.endsWith('.js')) return 'text/javascript';
+  if (path.endsWith('.json')) return 'application/json';
+  return null;
+}
 
 let failures = 0;
 
@@ -100,23 +166,36 @@ async function ensureHost() {
 
 const started = await ensureHost();
 
-for (const [path, expectedType] of ASSETS) {
+const { paths: assets, bare } = started ? await assetPaths() : { paths: [], bare: [] };
+console.log(`\n--- 页面与模块图（${assets.length} 个资源，从 index.html 顺着 import 走出来的） ---`);
+// A walk that finds nothing would pass every check below while covering nothing at all.
+if (started && assets.length < 8) {
+  failures++;
+  console.log(`  FAIL  只找到 ${assets.length} 个资源，模块图没有被走出来`);
+}
+for (const path of assets.sort()) {
+  const wanted = expectedType(path);
   try {
     const res = await fetch(base + path);
-    const contentType = res.headers.get('content-type') ?? '';
+    const contentType = (res.headers.get('content-type') ?? '').split(';')[0];
     const body = await res.text();
-    const typeOk = contentType.includes(expectedType.split(';')[0]);
-    const sizeOk = body.length > 0;
-    if (res.ok && typeOk && sizeOk) {
-      console.log(`  ok    ${path.padEnd(22)} ${res.status}  ${contentType.split(';')[0]}  ${body.length}B`);
-    } else {
-      failures++;
-      console.log(`  FAIL  ${path.padEnd(22)} ${res.status}  ${contentType}  ${body.length}B`);
-    }
+    const ok = res.ok && body.length > 0 && (wanted === null || contentType === wanted);
+    if (!ok) failures++;
+    console.log(
+      `  ${ok ? 'ok  ' : 'FAIL'} ${path.padEnd(26)} ${res.status}  ${contentType}  ${body.length}B` +
+        (wanted !== null && contentType !== wanted ? `  ← 期望 ${wanted}` : ''),
+    );
   } catch (err) {
     failures++;
-    console.log(`  FAIL  ${path.padEnd(22)} ${err.message}`);
+    console.log(`  FAIL  ${path.padEnd(26)} ${err.message}`);
   }
+}
+// The UI is served with no bundler and no import map, so a bare specifier cannot resolve.
+if (bare.length) {
+  failures++;
+  console.log(`  FAIL  有 bare import（无构建步骤，浏览器解析不了）: ${bare.join(', ')}`);
+} else {
+  console.log('  ok   没有 bare import');
 }
 
 console.log('\n--- config.json content ---');

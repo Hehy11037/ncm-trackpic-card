@@ -226,7 +226,13 @@ export type ControlCommand =
   | { type: 'previous' }
   | { type: 'setVolume'; volume: number }
   | { type: 'toggleMute' }
-  | { type: 'setMode'; mode: PlayMode };
+  | { type: 'setMode'; mode: PlayMode }
+  /**
+   * Diagnostics only: report what the client's transport surfaces look like, so a control that
+   * runs without effect can be explained instead of guessed at. Sent by the host itself, never by
+   * the overlay.
+   */
+  | { type: 'diagnoseTransport' };
 
 export interface ControlResult {
   ok: boolean;

@@ -274,12 +274,17 @@ Each of these cost real time. The reason matters more than the rule.
   `pointermove` rather than polling a timer.
 * The tray menu is now just 小 / 中 / 大 and 退出, by the owner's request. Show/hide and recovery
   from a rolled-up card are the tray icon's left-click; the lock is on the card and on `L`.
-* **Play/pause is wired up but its effect on the client is unconfirmed.** The bridge reads
-  `playingState` and calls `setAudioPlayerPlay`/`Pause`; the host reads the state back and reports
-  `成功` / `未确认` / `失败`. If it reports `未确认`, the documented fallbacks are in
-  `docs/contracts.md` §6, media keys first. This needs one test with the client running - it is the
-  one function in the app that calls *into* the client's audio pipeline, and calling it is a
-  different thing from the wrapping that was measured not to work.
+* **Play/pause: the command is wired, the client does not react to it.** The bridge reads
+  `playingState` and calls `setAudioPlayerPlay`/`Pause`; measured, that call runs and changes
+  nothing, and its signature cannot be read from disk because the web bundle is packed
+  (`orpheus.ntpk`). The transport therefore falls back to a **media key**
+  (`tools/media-key.ps1`, the client's own global hotkey) and then to a page-side diagnostic that
+  lists the exports' arity, the dva play actions and the client's own transport buttons. The host
+  reports `成功` / `未确认` / `失败` with the `playingState` transition either way. Whether the media
+  key reaches the client is the open question - it goes quiet if the client's global-hotkey option
+  is off. See `docs/contracts.md` §6.
+* Do **not** trust "the command ran": `ok` means it reached the page, `confirmed` means the client
+  was observed in the state that was asked for. Only the second one is a working control.
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

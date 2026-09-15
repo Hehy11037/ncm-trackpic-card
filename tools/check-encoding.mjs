@@ -77,5 +77,28 @@ check('没有文件带 UTF-8 BOM', withBom.length === 0, withBom.slice(0, 8).joi
 const chineseFiles = files.filter((file) => /[\u4e00-\u9fff]/.test(readFileSync(file, 'utf8')));
 check('确实存在包含中文的源文件', chineseFiles.length >= 10, `${chineseFiles.length} 个文件含中文`);
 
+/*
+ * Every PowerShell script must be ASCII-only.
+ *
+ * Windows PowerShell 5.1 reads a `.ps1` as ANSI unless it carries a UTF-8 BOM, so a non-ASCII
+ * literal in one is silently corrupted at parse time - the script still runs, with the wrong text,
+ * or fails somewhere unrelated. Both scripts in this repository say so in their own headers; this
+ * makes it a check rather than a comment.
+ *
+ * The fix for any violation is to keep the script ASCII and put the localised text in the
+ * TypeScript that calls it, which is what the two existing scripts do.
+ */
+const scripts = files.filter((file) => file.endsWith('.ps1'));
+const nonAscii = scripts.filter((file) => {
+  const bytes = readFileSync(file);
+  return bytes.some((byte) => byte > 0x7f);
+});
+check(
+  'PowerShell 脚本只含 ASCII',
+  nonAscii.length === 0,
+  nonAscii.map((file) => relative(ROOT, file)).join('; '),
+);
+console.log(`    （检查了 ${scripts.length} 个 .ps1）`);
+
 console.log(`\n${failures ? `❌ ${failures} 项失败` : '✅ 编码检查通过'}`);
 process.exit(failures ? 1 : 0);

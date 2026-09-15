@@ -364,6 +364,62 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
         dispatch({ type: 'playing/switchPlayingMode', payload: { playingMode: command.mode, triggerScene: 'unknown', HeartBeatFlage: false } });
         return 'dispatch:playing/switchPlayingMode';
       }
+      case 'diagnoseTransport': {
+        /*
+         * Why did a transport command not move the client?
+         *
+         * "The call ran and nothing happened" is not something that can be reasoned about from
+         * outside, so the page is asked directly: the play/pause exports and their arity (a
+         * mismatch there is the likeliest reason a null-argument call is a no-op), every dva action
+         * whose name mentions playing, and the client's own transport buttons - which are the one
+         * control path already known to work.
+         */
+        const parts = [];
+
+        try {
+          const fns = Object.keys(audio)
+            .filter((k) => /play|pause|stop/i.test(k))
+            .map((k) => k + '/' + (typeof audio[k] === 'function' ? audio[k].length : typeof audio[k]));
+          parts.push('exports[' + fns.join(' ') + ']');
+        } catch (err) {
+          parts.push('exports[读取失败: ' + String(err && err.message || err) + ']');
+        }
+
+        try {
+          const dva = store.getState()['@@dva'] || {};
+          const names = [];
+          for (const model of Object.keys(dva)) {
+            const def = dva[model] || {};
+            for (const bucket of ['reducers', 'effects']) {
+              const group = def[bucket] || {};
+              for (const name of Object.keys(group)) {
+                if (/play|pause/i.test(model + '/' + name)) names.push(model + '/' + name);
+              }
+            }
+          }
+          parts.push('actions[' + names.slice(0, 14).join(' ') + ']');
+        } catch (err) {
+          parts.push('actions[读取失败: ' + String(err && err.message || err) + ']');
+        }
+
+        try {
+          const selector = '[aria-label*="播放"], [aria-label*="暂停"], [title*="播放"], [title*="暂停"], [class*="play" i], [class*="pause" i]';
+          const found = document.querySelectorAll(selector);
+          const seen = [];
+          for (let i = 0; i < found.length && seen.length < 8; i++) {
+            const el = found[i];
+            const cls = String(el.className || '').split(/\s+/).filter(Boolean).slice(0, 2).join('.');
+            const label = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+            const text = el.tagName.toLowerCase() + (cls ? '.' + cls : '') + (label ? '[' + label + ']' : '');
+            if (seen.indexOf(text) < 0) seen.push(text);
+          }
+          parts.push('dom[' + seen.join(' ') + ']');
+        } catch (err) {
+          parts.push('dom[读取失败: ' + String(err && err.message || err) + ']');
+        }
+
+        return 'diagnose:' + parts.join(' ');
+      }
       default:
         throw new Error('unsupported command: ' + String(t));
     }

@@ -373,6 +373,8 @@ console.log('\n--- 拖动进度条与音量条 ---');
   check('拖动时时钟不夺回进度条', /scrubFraction != null/.test(readStyle('ui/src/card.js')));
   check('快照到来前不放掉预览', /Math\.abs\(playheadMs - scrub\.ms\) < 1500/.test(mainJs));
   check('预览有超时兜底', /PLAY_PAUSE_OPTIMISM_MS \* 2/.test(mainJs));
+  // A paused client may publish nothing, so the seek reply's own position places the bar.
+  check('跳转回执用来定位', /typeof result\.positionMs === 'number'\) snapTo\(result\.positionMs\)/.test(mainJs));
   // A single command per gesture: one per preview frame would be dozens of seeks per drag.
   const seekHandler = mainJs.slice(mainJs.indexOf('function installSeekBar'), mainJs.indexOf('function installVolumeBar'));
   check('拖动过程中不发指令', !/control\(/.test(seekHandler.slice(0, seekHandler.indexOf('onCommit'))));

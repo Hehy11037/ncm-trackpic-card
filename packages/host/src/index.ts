@@ -163,7 +163,15 @@ export function createHost(options: HostOptions = {}): Host {
           result.playingState && result.playingState.before !== null
             ? `，playingState ${result.playingState.before} → ${result.playingState.after ?? '?'}`
             : '';
-        log(result.ok && result.confirmed !== false ? 'info' : 'warn', `控制指令 ${message.command.type} → ${verdict} (${result.via})${state}`);
+        const good = result.ok && result.confirmed !== false;
+        log(good ? 'info' : 'warn', `控制指令 ${message.command.type} → ${verdict} (${result.via})${state}`);
+        /*
+         * The message carries the *why*, and on a failure it also carries the page's diagnosis of
+         * the client's transport surfaces. Logging it here means the terminal is enough to explain a
+         * control that ran and did nothing - otherwise the only copy would be in the overlay's
+         * console, one indirection away.
+         */
+        if (!good && result.message) log('warn', `  ${result.message}`);
         broadcast({ kind: 'controlResult', result });
         break;
       }

@@ -36,6 +36,7 @@ import {
 } from './bridge-script.ts';
 import { CdpSession, DEFAULT_CDP_PORT, type CdpTarget } from './cdp.ts';
 import { diagnose, detailFor, toConnectionInfo } from './client-process.ts';
+import { pressMediaKey } from './media-key.ts';
 
 /**
  * How long to wait for the client to show the state a transport command asked for.
@@ -45,6 +46,20 @@ import { diagnose, detailFor, toConnectionInfo } from './client-process.ts';
  * already arriving.
  */
 const CONTROL_CONFIRM_MS = 900;
+
+/** A transport command that worked and was confirmed by the client. */
+function confirmedResult(
+  result: ControlResult,
+  before: number | null,
+  after: number | null,
+): ControlResult {
+  return {
+    ...result,
+    confirmed: true,
+    playingState: { before, after },
+    message: `${result.message ?? result.via}（客户端已确认）`,
+  };
+}
 
 /**
  * The `playingState` a command should end up at, or null when it cannot be judged.
@@ -208,15 +223,88 @@ export class ClientSession extends EventEmitter {
     if (expected === null) return result;
 
     const after = await this.waitForPlayingState(session, expected);
+    if (after === expected) return confirmedResult(result, before, after);
+
+    /* The confirmation window can expire a moment before a slow-but-working call lands. */
+    const recheck = this.rawPlayingState();
+    if (recheck === expected) return confirmedResult(result, before, recheck);
+
+    /*
+     * The client's audio module did not move it, so try the path a keyboard's play button uses.
+     *
+     * Measured: `setAudioPlayerPlay/Pause` runs without throwing and changes nothing. The media key
+     * goes through the client's own global hotkey, which is the one control path already known to
+     * work - and it is version-proof, because it does not depend on the client's internals at all.
+     */
+    const viaKey = await this.fallbackViaMediaKey(session, command, before, expected, after);
+    if (viaKey) return viaKey;
+
+    /*
+     * Both paths failed, so stop guessing and ask the page why: the export arities, the dva action
+     * names, and the client's own transport buttons are returned in the message and land in the
+     * terminal.
+     */
+    const diagnosis = await this.diagnoseTransport(session);
     return {
       ...result,
+      confirmed: false,
+      playingState: { before, after },
+      message:
+        `${result.message ?? result.via}（客户端状态仍为 ${after ?? '未知'}）` +
+        (diagnosis ? `；${diagnosis}` : ''),
+    };
+  }
+
+  /**
+   * Press the media key, if the client is still not where it was asked to be.
+   *
+   * The key *toggles*, so it is only pressed after re-reading the state: a pipeline call that was
+   * merely slow, followed by a toggle, would land the client back where it started.
+   */
+  private async fallbackViaMediaKey(
+    session: CdpSession,
+    command: ControlCommand,
+    before: number | null,
+    expected: number,
+    observed: number | null,
+  ): Promise<ControlResult | null> {
+    if (command.type !== 'playPause' && command.type !== 'play' && command.type !== 'pause') return null;
+    if (this.rawPlayingState() === expected) return null;
+
+    const pressed = pressMediaKey('playpause');
+    if (!pressed.ok) {
+      return {
+        ok: false,
+        command,
+        via: 'none',
+        confirmed: false,
+        playingState: { before, after: observed },
+        message: `音频管线没有生效，媒体键兜底也失败：${pressed.message}`,
+      };
+    }
+
+    const after = await this.waitForPlayingState(session, expected);
+    return {
+      ok: true,
+      command,
+      via: 'media-key',
       confirmed: after === expected,
       playingState: { before, after },
       message:
         after === expected
-          ? `${result.message ?? result.via}（客户端已确认）`
-          : `${result.message ?? result.via}（指令已执行，但客户端状态仍是 ${after ?? '未知'}）`,
+          ? `${pressed.message}，客户端已确认`
+          : `${pressed.message}，但客户端状态仍是 ${after ?? '未知'}`,
     };
+  }
+
+  /** Ask the page what its transport surfaces look like. Diagnostics only. */
+  private async diagnoseTransport(session: CdpSession): Promise<string | null> {
+    try {
+      const result = await this.sendControl(session, { type: 'diagnoseTransport' });
+      return result.ok ? (result.message ?? null) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The client's raw `playingState`, straight from the last snapshot. */

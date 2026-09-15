@@ -384,6 +384,7 @@ method on the `AudioPlayer` instance rather than one of these named calls — wh
 | `tools/svg-path.mjs` | The path parser and rasteriser behind it, plus the shared fill/stroke resolver. Used by `check-interaction.mjs` for the assertions that can run in `npm run check`. |
 | `tools/transport-layout.mjs` | Where the five transport controls land, computed from the stylesheet (flexbox, two equal side slots, a gapped centre group). Used by the check and by the row pictures. |
 | `npm run icons` (row pictures) | The same numbers drawn: `.scratch/icons/row-*.png` shows the whole transport row - one picture per play mode and per volume state - so the arrangement can be looked at without a browser. |
+| `tools/render-controls.mjs` (also `npm run icons`) | Draws the two draggable bars - the progress bar at 0/50/100% and while scrubbing, and the volume panel - from the stylesheet's own numbers, into `.scratch/controls/`. They are ordinary boxes rather than SVG, and this is the only way to see them without a browser. |
 | `tools/tap-controls.mjs` | Wrap pipeline functions to capture call arguments. |
 | `tools/host-smoke.mjs` | **Phase-1 end-to-end test**: host + fake overlay client. |
 | `tools/host-run.mjs` | Run the host in the foreground with a live track view. |

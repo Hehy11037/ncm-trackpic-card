@@ -11,6 +11,7 @@ import { PlayClock, isSampleStale } from './clock.js';
 import { installDragToMove } from './drag.js';
 import { relayout } from './layout.js';
 import { LyricsView } from './lyrics.js';
+import { installResizeClock } from './resize-clock.js';
 import { HostLink } from './socket.js';
 
 const DEFAULT_HOST_PORT = 8787;
@@ -203,6 +204,8 @@ function bindInput() {
   // Move the window by pressing anywhere that is not a control. See ui/src/drag.js for why this
   // is a gesture rather than a `-webkit-app-region` drag region.
   installDragToMove({ shell });
+  // The shell has no frame clock; this side does. See ui/src/resize-clock.js.
+  installResizeClock({ shell });
 
   document.addEventListener('visibilitychange', () => {
     hidden = document.hidden;

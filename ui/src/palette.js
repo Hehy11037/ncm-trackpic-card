@@ -132,10 +132,13 @@ function loadImage(url) {
  * Median-cut quantisation.
  * Splits the colour box with the largest channel range until we have `target`
  * buckets, then averages each bucket.
+ *
+ * Exported with the other stages so the pipeline can be inspected step by step from
+ * tools/… and ui/test/palette.test.mjs, rather than only by its final output.
  * @param {number[][]} pixels
  * @param {number} target
  */
-function medianCut(pixels, target) {
+export function medianCut(pixels, target) {
   /** @type {{pixels: number[][]}[]} */
   let boxes = [{ pixels }];
 
@@ -248,6 +251,9 @@ function isUsable({ r, g, b }) {
   return luma > GREY_RANGE[0] && luma < GREY_RANGE[1];
 }
 
+/** Exported for inspection from tools/ and ui/test/. See `medianCut`. */
+export { isUsable, selectByLuminance, detectExtremes };
+
 /**
  * Choose `count` colours spread across the luminance range, darkest first.
  *
@@ -289,7 +295,20 @@ function selectByLuminance(candidates, count = 5) {
     }
   }
 
-  return chosen.map(boostSaturation);
+  /*
+   * `chosen.map(boostSaturation)` was a bug, and a beautifully specific one.
+   *
+   * `Array.prototype.map` calls its callback with `(element, index, array)`, so the optional
+   * `factor` parameter received the **index**: the first swatch was boosted by 0, which collapses
+   * every channel onto the midpoint of the colour and produces a **pure grey**; the second was
+   * boosted by 1, i.e. left alone; and the third, fourth and fifth were multiplied by 2, 3 and 4,
+   * blowing the darkest blues out to a saturated primary.
+   *
+   * That is exactly what was reported: "第一个颜色是没有明显出现的深灰色，蓝色往往只以较亮的蓝色
+   * 形式出现在第三四个位置". It was subtle on light covers - the midpoint of a light colour is a
+   * light grey, which looks like a plausible neutral - and glaring on dark saturated ones.
+   */
+  return chosen.map((color) => boostSaturation(color));
 }
 
 /**

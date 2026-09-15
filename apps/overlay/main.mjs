@@ -77,8 +77,6 @@ const HOVER_POLL_MS = 40;
 const COLLAPSE_DELAY_MS = 120;
 /** How long the pointer must rest on the rolled-up strip before it expands again. */
 const EXPAND_DELAY_MS = 40;
-/** How often the resize tween steps. One display frame. */
-const TWEEN_FRAME_MS = 16;
 /**
  * How long the roll-up and the unroll take.
  *
@@ -152,6 +150,10 @@ let hoverState = null;
 let saveTimer = null;
 /** Consecutive hover-watch errors, so a repeating failure is reported without flooding. */
 let hoverErrors = 0;
+/** When the pointer was first seen outside the window, for the stuck-collapse diagnostic. */
+let outsideFor = 0;
+/** Whether that diagnostic has already fired for the current absence. */
+let reportedStuck = false;
 /**
  * Offset of the press inside the window while the pointer is dragging it, or null.
  *
@@ -178,9 +180,27 @@ let dragSizeMismatch = false;
 let dragLastAt = 0;
 /** The short tween that animates the roll-up and the unroll. */
 let resizeTimer = null;
+/** The tween's captured endpoints, or null when none is running. */
+let resizeAnim = null;
+/** Bumped per tween, so a stale renderer tick or backstop cannot apply to a newer one. */
+let resizeToken = 0;
 
-/** A drag with no movement for this long is treated as abandoned rather than left open. */
-const DRAG_STALE_MS = 30_000;
+/**
+ * A drag with no movement for this long is treated as abandoned rather than left open.
+ *
+ * Short on purpose. While a drag is open the pointer watcher skips every tick, so a leaked drag -
+ * the renderer never seeing the `pointerup`, say - leaves the card unable to roll up at all until
+ * this fires. Dropping a *live* drag costs nothing, because the renderer re-arms on the next move
+ * with the button held.
+ */
+const DRAG_STALE_MS = 4000;
+/**
+ * Grace period after a drag ends, before the roll-up may trigger.
+ *
+ * Short: the pointer is inside the window at the end of a drag, so the ordinary rule applies
+ * almost immediately. `SUPPRESS_MS` is for the tray, where the pointer really is outside.
+ */
+const DRAG_SETTLE_MS = 350;
 
 /* -------------------------------------------------------------- single instance */
 
@@ -324,12 +344,20 @@ function applyGeometry() {
  * Resize with a short tween.
  *
  * The roll-up used to be a single jump. Even once the delay was cut, it read as slow - because
- * nothing moved, so there was nothing to judge the speed by except the pause. A 140ms tween makes
+ * nothing moved, so there was nothing to judge the speed by except the pause. A short tween makes
  * it read as a deliberate movement and hides the sampling delay inside the motion.
  *
- * `setBounds`'s own `animate` flag is macOS-only, so the tween steps the height itself. It steps
- * from values captured once, never from what `getBounds()` reports mid-flight, for the same reason
- * the drag does: reading the size back and writing it again can compound a rounding drift.
+ * **The tween is stepped by the renderer's animation frames, not by a timer here.** A
+ * `setInterval` fires *near* every frame rather than on it: sometimes twice within one frame,
+ * sometimes not at all. Every step is the same size, but the irregularity is what the eye reads as
+ * 一顿一顿的 - and it is the same lesson the drag learned. The renderer's `requestAnimationFrame`
+ * is the only frame clock either side has, so it sends a tick and this applies one step per tick;
+ * the *values* are still computed here from this process's own clock, so a tick cannot distort the
+ * curve.
+ *
+ * `setBounds`'s own `animate` flag is macOS-only, and the steps come from values captured once
+ * rather than from `getBounds()` mid-flight - reading the size back and writing it again can
+ * compound a rounding drift, which is what made the window grow while it was dragged.
  */
 function animateGeometryTo(target, ms = RESIZE_MS) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -343,34 +371,59 @@ function animateGeometryTo(target, ms = RESIZE_MS) {
     return;
   }
 
-  const startedAt = Date.now();
-  resizeTimer = setInterval(() => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      stopResizeTween();
-      return;
-    }
-    const t = Math.min(1, (Date.now() - startedAt) / ms);
-    const eased = easeOutCubic(t);
-    mainWindow.setBounds(
-      {
-        x: Math.round(from.x + (target.x - from.x) * eased),
-        y: Math.round(from.y + (target.y - from.y) * eased),
-        width: target.width,
-        height: Math.round(from.height + (target.height - from.height) * eased),
-      },
-      false,
-    );
-    if (t >= 1) {
-      stopResizeTween();
-      persistWindowState();
-    }
-  }, TWEEN_FRAME_MS);
+  resizeAnim = { from, target, startedAt: Date.now(), ms };
+  resizeToken += 1;
+  // Ask the renderer to drive us, one tick per frame.
+  mainWindow.webContents.send('overlay:animate-resize', { token: resizeToken, ms });
+  /*
+   * And a timer as a backstop, in case the renderer is gone or its frames are not running. It
+   * only ever *finishes* the animation early; it does not step it, so it cannot reintroduce the
+   * jitter.
+   */
+  resizeTimer = setTimeout(() => finishResizeTween(resizeToken), ms + 120);
+  applyResizeStep();
+}
+
+/** Apply the current step of the tween, if one is running. Called once per rendered frame. */
+function applyResizeStep() {
+  if (!resizeAnim || !mainWindow || mainWindow.isDestroyed()) return;
+  const { from, target, startedAt, ms } = resizeAnim;
+  const t = Math.min(1, (Date.now() - startedAt) / ms);
+  const eased = easeOutCubic(t);
+  mainWindow.setBounds(
+    {
+      x: Math.round(from.x + (target.x - from.x) * eased),
+      y: Math.round(from.y + (target.y - from.y) * eased),
+      width: target.width,
+      height: Math.round(from.height + (target.height - from.height) * eased),
+    },
+    false,
+  );
+  if (t >= 1) {
+    stopResizeTween();
+    persistWindowState();
+  }
 }
 
 function stopResizeTween() {
-  if (!resizeTimer) return;
-  clearInterval(resizeTimer);
-  resizeTimer = null;
+  if (resizeTimer) {
+    clearTimeout(resizeTimer);
+    resizeTimer = null;
+  }
+  resizeAnim = null;
+  // Tell the renderer to stop ticking; a token mismatch makes any in-flight tick a no-op anyway.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('overlay:animate-resize', { token: 0, ms: 0 });
+  }
+}
+
+/** A tween that ran out of time (the renderer stopped ticking) still has to land on the target. */
+function finishResizeTween(token) {
+  if (!resizeAnim || token !== resizeToken) return;
+  const { target } = resizeAnim;
+  stopResizeTween();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBounds(target, false);
+  persistWindowState();
 }
 
 function setCollapsed(next) {
@@ -448,11 +501,13 @@ function startHoverWatch() {
         return;
       }
       // A drag moves the window under the pointer; rolling up mid-drag would be absurd, and the
-      // bounds sampled during one are meaningless. A drag that stops moving is dropped, so this
-      // can never become a permanent "never rolls up again".
+      // bounds sampled during one are meaningless. A drag that stops moving is dropped quickly,
+      // because the renderer re-arms on the next move with the button held - so ending a live
+      // gesture by mistake costs nothing, while leaving a dead one open stops the card rolling up
+      // for as long as the guard lasts.
       if (dragGrab) {
         if (Date.now() - dragLastAt > DRAG_STALE_MS) {
-          console.warn('[shell] 拖动超过 30 秒没有动静，已放弃该手势');
+          console.warn(`[shell] 拖动 ${DRAG_STALE_MS} ms 没有动静，已放弃该手势（期间不会收起）`);
           endDrag('stale');
         }
         hoverState.reset();
@@ -465,6 +520,7 @@ function startHoverWatch() {
         return;
       }
 
+      const now = Date.now();
       const bounds = mainWindow.getBounds();
       const point = screen.getCursorScreenPoint();
       const inside =
@@ -473,21 +529,42 @@ function startHoverWatch() {
         point.y >= bounds.y &&
         point.y < bounds.y + bounds.height;
 
-      if (hoverState.update(Date.now(), inside, locked)) setCollapsed(hoverState.collapsed);
+      if (hoverState.update(now, inside, locked)) setCollapsed(hoverState.collapsed);
       hoverErrors = 0;
+
+      /*
+       * Say so when the pointer has clearly gone and the card has not rolled up.
+       *
+       * Reaching this line means every guard above has already been passed, so a failure here is
+       * the state machine itself - and "it sometimes just does not collapse" is otherwise
+       * impossible to attribute from the outside. Reported once per occurrence.
+       */
+      outsideFor = inside ? 0 : outsideFor || now;
+      if (!inside && !collapsed && !locked && now - outsideFor > COLLAPSE_DELAY_MS + 800) {
+        if (!reportedStuck) {
+          reportedStuck = true;
+          console.warn(
+            `[shell] 指针离开 ${now - outsideFor}ms 仍未收起：状态机 inside=${hoverState.inside}，` +
+              `locked=${locked}，ready=${rendererReady}`,
+          );
+        }
+      } else if (collapsed || inside) {
+        reportedStuck = false;
+      }
     } catch (err) {
       /*
-       * Keep the interval.
+       * Keep the interval, and keep the hover state.
        *
-       * This used to clear it, which turned one transient error into "the card never rolls up or
-       * expands again" - and a card stuck as a strip with no way back is the worst outcome this
-       * feature has. A bad tick is skipped and the next pointer sample re-adopts the position.
+       * Clearing the interval turned one transient error into "the card never rolls up or expands
+       * again", which is the worst outcome this feature has. Resetting the state on every error was
+       * a subtler version of the same problem: it restarts the "pointer has been away" timer, so an
+       * error every other tick could stop the collapse from ever reaching its delay. A bad tick is
+       * now simply skipped - the next good one continues the streak.
        */
       hoverErrors++;
       if (hoverErrors <= 3 || hoverErrors % 100 === 0) {
         console.error(`[shell] 指针监听出错（第 ${hoverErrors} 次，已跳过该次采样）`, err);
       }
-      hoverState.reset();
     }
   }, HOVER_POLL_MS);
 }
@@ -739,6 +816,19 @@ function bindIpc() {
 
   ipcMain.on('overlay:close', () => hideWindow());
 
+  /* ---------------------------------------------------------- resize tween */
+
+  /*
+   * The renderer's animation frame, used as the tween's clock. It sends one tick per rendered
+   * frame while a tween is running; a tick from an older tween is ignored, so a straggler cannot
+   * move the window after a newer one has started.
+   */
+  ipcMain.on('overlay:resize-tick', (event, token) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    if (!resizeAnim || token !== resizeToken) return;
+    applyResizeStep();
+  });
+
   /* --------------------------------------------------------------- dragging */
 
   ipcMain.on('overlay:drag-start', (event, x, y) => {
@@ -789,8 +879,6 @@ function bindIpc() {
     if (target.x === bounds.x && target.y === bounds.y) return;
     dragMoved = true;
     dragLastAt = Date.now();
-    // Never let the card roll up in the middle of being moved.
-    suppressUntil = Date.now() + SUPPRESS_MS;
     mainWindow.setBounds({ x: target.x, y: target.y, ...dragSize }, false);
   });
 
@@ -819,6 +907,9 @@ function endDrag(reason) {
   if (!dragGrab) return;
   dragGrab = null;
   dragWorkArea = null;
+  // The pointer is inside the window at the end of a drag, so only a brief grace period is needed;
+  // the roll-up then follows the ordinary rule.
+  suppressUntil = Date.now() + DRAG_SETTLE_MS;
 
   if (mainWindow && !mainWindow.isDestroyed() && dragSize) {
     const bounds = mainWindow.getBounds();

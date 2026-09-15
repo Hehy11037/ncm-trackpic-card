@@ -39,6 +39,25 @@ contextBridge.exposeInMainWorld('overlayShell', {
   dragEnd: () => ipcRenderer.send('overlay:drag-end'),
 
   /**
+   * Drive the shell's resize tween from this side's animation frames.
+   *
+   * `setInterval` in the main process fires *near* a frame rather than on it, which is what makes a
+   * short window resize look jittery. A renderer has a real frame clock, so the shell asks for a
+   * tick and calls back once per frame for as long as the tween lasts.
+   *
+   * @param {(request: {token: number, ms: number}) => void} handler
+   */
+  onAnimateResize: (handler) => {
+    if (typeof handler !== 'function') return () => {};
+    const listener = (_event, request) => handler(request);
+    ipcRenderer.on('overlay:animate-resize', listener);
+    return () => ipcRenderer.removeListener('overlay:animate-resize', listener);
+  },
+
+  /** One frame of the tween has been drawn. `token` 0 means "no tween is running". */
+  resizeTick: (token) => ipcRenderer.send('overlay:resize-tick', token),
+
+  /**
    * Subscribe to the shell's state (`{ locked }`), and ask for it immediately.
    *
    * The lock state is owned by the shell so that the tray menu and the card button cannot

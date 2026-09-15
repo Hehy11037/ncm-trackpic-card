@@ -11,6 +11,7 @@ import { PlayClock, isSampleStale } from './clock.js';
 import { installDragToMove } from './drag.js';
 import { relayout } from './layout.js';
 import { LyricsView } from './lyrics.js';
+import { createOptimisticHold } from './optimistic.js';
 import { installResizeClock } from './resize-clock.js';
 import { installScrub } from './scrub.js';
 import { HostLink } from './socket.js';
@@ -43,17 +44,12 @@ const clock = new PlayClock();
 // Size the composition to the stage before the first paint.
 relayout(document.getElementById('stage'));
 
-let link = null;
-let connected = false;
+let link = null;let connected = false;
 let lastSnapshot = null;
 let lastLyricsDoc = null;
 let lastFrameAt = performance.now();
 let hidden = false;
 let staleSince = 0;
-/** The optimistic play/pause flip awaiting the host's verdict, or null. */
-let pendingPlayPause = null;
-/** The play mode a click has moved to, awaiting the client's own report, or null. */
-let pendingMode = null;
 /** "Do not auto-collapse". Owned by the shell; this is only the copy the button renders. */
 let locked = true;
 
@@ -84,33 +80,27 @@ function toggleLock() {
 
 /* ---------------------------------------------------------------- transport */
 
-/** How long an optimistic play/pause flip is held before a snapshot may overwrite it. */
+/** How long an optimistic value is held before a snapshot may overwrite it. */
 const PLAY_PAUSE_OPTIMISM_MS = 1200;
 
-/**
- * The status to draw: the client's, unless an unconfirmed optimistic flip is still live.
- *
- * The flip is optimistic because a control that waits for a round trip feels broken. The problem
- * was the *order* the two facts arrived in: the media key takes the client a moment to act on, and
- * the client keeps publishing snapshots in the meantime, so the button flipped, flipped back, and
- * flipped again - which reads as "slow" even though the command was immediate.
- *
- * So the optimistic value wins until one of three things happens: the client confirms it (and the
- * two agree), the host reports a failure (and `handleControlResult` clears it), or it times out.
+/*
+ * The three values the card draws ahead of the client. See ui/src/optimistic.js for the rule and
+ * why it exists; the timeout is shared so a hold is never longer than the host's own confirmation
+ * window by much.
  */
-function displayedStatus(clientStatus) {
-  const pending = pendingPlayPause;
-  if (!pending) return clientStatus;
-  if (clientStatus === pending.expect) {
-    pendingPlayPause = null;
-    return clientStatus;
-  }
-  if (performance.now() - pending.at > PLAY_PAUSE_OPTIMISM_MS) {
-    pendingPlayPause = null;
-    return clientStatus;
-  }
-  return pending.expect;
-}
+const playPauseHold = createOptimisticHold({ timeoutMs: PLAY_PAUSE_OPTIMISM_MS });
+const modeHold = createOptimisticHold({ timeoutMs: PLAY_PAUSE_OPTIMISM_MS });
+/** The client stores a float32, so 0.35 comes back as 0.34999999... - a tolerance, not equality. */
+const volumeHold = createOptimisticHold({
+  timeoutMs: PLAY_PAUSE_OPTIMISM_MS,
+  equals: (client, mine) => typeof client === 'number' && Math.abs(client - mine) < 0.02,
+});
+
+/** The status to draw: the client's, unless an unconfirmed optimistic flip is still live. */
+const displayedStatus = (clientStatus) => playPauseHold.resolve(clientStatus);
+
+/** The mode to draw: the client's, unless a click has moved ahead of it. */
+const displayedMode = (clientMode) => modeHold.resolve(clientMode);
 
 /**
  * Play/pause, with the button's feedback tied to what the client actually did.
@@ -121,19 +111,17 @@ function displayedStatus(clientStatus) {
  * The result was a control that appeared to work for a moment and then undid itself, with the
  * reason visible only in the host's log.
  *
- * The flip is optimistic *and held* (see `displayedStatus`), and it is reverted when the host
- * reports that the client did not follow - with the reason said out loud rather than swallowed.
+ * The flip is optimistic *and held*, and it is reverted when the host reports that the client did
+ * not follow - with the reason said out loud rather than swallowed.
  */
 function sendPlayPause() {
   // Read from the client's last state, adjusted by any flip already in flight: two quick presses
   // must flip twice, not send the same toggle twice while the card shows one.
-  const wasPlaying = (displayedStatus(lastSnapshot?.playback?.status ?? 'paused')) === 'playing';
-  pendingPlayPause = { wasPlaying, expect: wasPlaying ? 'paused' : 'playing', at: performance.now() };
-  clock.onPlayback(
-    { ...(lastSnapshot?.playback ?? {}), status: pendingPlayPause.expect },
-    clock.durationMs,
-  );
-  view.setStatus(pendingPlayPause.expect);
+  const wasPlaying = displayedStatus(lastSnapshot?.playback?.status ?? 'paused') === 'playing';
+  const expect = wasPlaying ? 'paused' : 'playing';
+  playPauseHold.set(expect);
+  clock.onPlayback({ ...(lastSnapshot?.playback ?? {}), status: expect }, clock.durationMs);
+  view.setStatus(expect);
   link.control({ type: 'playPause' });
 }
 
@@ -150,15 +138,17 @@ function handleControlResult(result) {
 
   if (type === 'playPause') {
     if (!failed) {
-      pendingPlayPause = null;
+      // The snapshot is already carrying the client's own state; nothing to hold any more.
+      playPauseHold.clear();
       return;
     }
-    const pending = pendingPlayPause;
-    pendingPlayPause = null;
-    // Put the card back to the last state the client was actually seen in.
+    // The status we were drawing was the opposite of what the client was in, so that is the one to
+    // name in the log - and the card goes back to the last state the client was actually seen in.
+    const wasPlaying = playPauseHold.value === 'paused';
+    playPauseHold.clear();
     clock.onPlayback(lastSnapshot?.playback ?? {}, clock.durationMs);
     view.setStatus(lastSnapshot?.playback?.status ?? 'unknown');
-    if (pending) console.warn(`[overlay] 客户端未从「${pending.wasPlaying ? '播放' : '暂停'}」改变`);
+    console.warn(`[overlay] 客户端未从「${wasPlaying ? '播放' : '暂停'}」改变`);
     return;
   }
 
@@ -180,7 +170,7 @@ function handleControlResult(result) {
   if (type === 'setVolume') {
     // An unconfirmed volume is put back to the client's own value rather than left wrong.
     if (failed) {
-      volumePreview = null;
+      volumeHold.clear();
       view.setVolume(lastSnapshot?.playback?.volume ?? null);
       console.warn(`[overlay] 音量未确认: ${result.message ?? result.via}`);
     }
@@ -189,7 +179,7 @@ function handleControlResult(result) {
 
   if (type === 'setMode' && failed) {
     // Put the icon back to the mode the client is actually in, and stop holding a mode it refused.
-    pendingMode = null;
+    modeHold.clear();
     view.setMode(lastSnapshot?.playback?.mode ?? null);
     console.warn(`[overlay] 播放模式未确认: ${result.message ?? result.via}`);
   }
@@ -256,17 +246,13 @@ function installSeekBar() {
 
 /* ------------------------------------------------------------------- volume */
 
-/** The volume being dragged, held on screen until the client's own value catches up. */
-let volumePreview = null;
-/** When that volume was chosen, so a preview that is never confirmed cannot stick. */
-let volumeAt = 0;
-
 /**
  * The volume bar, revealed on hover.
  *
  * The bar is a preview while dragging and the client's value otherwise, and the commit happens
  * once, on release: `setVolume` reaches the native player, and the client reports the new value
- * back through its own subscription a moment later.
+ * back through its own subscription a moment later - which is why the chosen value is *held*
+ * (`volumeHold`) until it does.
  *
  * The panel is kept open by `data-open` rather than by `:hover` alone, because the pointer has to
  * be able to *reach* it. `:hover` ends the instant the pointer leaves the button's 4.6u box, and
@@ -307,46 +293,20 @@ function installVolumeBar() {
   installScrub(bar, {
     axis: 'x',
     onPreview(fraction, phase) {
-      volumePreview = fraction;
       view.setVolumePreview(fraction);
       if (phase === 'start') open();
     },
     onCancel() {
-      volumePreview = null;
       view.setVolume(lastSnapshot?.playback?.volume ?? null);
       closeSoon();
     },
     onCommit(fraction) {
       const volume = Math.max(0, Math.min(1, fraction));
-      volumePreview = volume;
-      volumeAt = performance.now();
+      volumeHold.set(volume);
       closeSoon();
       link.control({ type: 'setVolume', volume });
     },
   });
-}
-
-/**
- * Which mode to draw: the client's, unless a click has moved ahead of it.
- *
- * Same rule as the play/pause flip, and for the same reason. `cycleMode` read the mode straight out
- * of `lastSnapshot`, which is the client's mode as of the last round trip - so clicking faster than
- * that round trip sent the *same* next mode every time and the button appeared to have only two
- * modes in it. Held here until the client agrees, the host reports a failure, or it times out, the
- * card walks its four modes at whatever speed the user clicks.
- */
-function displayedMode(clientMode) {
-  const pending = pendingMode;
-  if (!pending) return clientMode;
-  if (clientMode === pending.mode) {
-    pendingMode = null;
-    return clientMode;
-  }
-  if (performance.now() - pending.at > PLAY_PAUSE_OPTIMISM_MS) {
-    pendingMode = null;
-    return clientMode;
-  }
-  return pending.mode;
 }
 
 /** Click the mode button: advance to the client's next mode in its own cycle order. */
@@ -359,8 +319,9 @@ function cycleMode() {
   const current = displayedMode(lastSnapshot?.playback?.mode ?? null) ?? MODE_CYCLE[0];
   const at = MODE_CYCLE.indexOf(current);
   const next = MODE_CYCLE[at < 0 ? 0 : (at + 1) % MODE_CYCLE.length];
-  // Drawn immediately, then corrected by the snapshot - or reverted if the host says it failed.
-  pendingMode = { mode: next, at: performance.now() };
+  // Drawn immediately and held, so clicking faster than a round trip still walks all four modes -
+  // and reverted if the host says the client refused it.
+  modeHold.set(next);
   view.setMode(next);
   link.control({ type: 'setMode', mode: next });
 }
@@ -411,15 +372,8 @@ function handleMessage(message) {
        * bar that redrew from them would jump back under the pointer, which is the same class of
        * flicker the play/pause button had.
        */
-      if (volumePreview != null) {
-        if (typeof playback.volume === 'number' && Math.abs(playback.volume - volumePreview) < 0.02) {
-          volumePreview = null;
-        } else if (performance.now() - volumeAt > PLAY_PAUSE_OPTIMISM_MS) {
-          volumePreview = null;
-        } else {
-          view.setVolumePreview(volumePreview);
-        }
-      }
+      const heldVolume = volumeHold.resolve(typeof playback.volume === 'number' ? playback.volume : null);
+      if (heldVolume != null) view.setVolumePreview(heldVolume);
 
       // Keep the lyrics header (title/artist) in step with the current track.
       lyrics.setSongInfo(

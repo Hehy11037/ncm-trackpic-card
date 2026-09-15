@@ -337,6 +337,19 @@ Each of these cost real time. The reason matters more than the rule.
 31. **Anything with `role="slider"` has to update `aria-valuenow`.** The progress bar was born with
     `aria-valuenow="0"` and nothing ever wrote to it, so it announced a position of 0 for the life of
     the window - worse than having no role, because the role is a promise.
+32. **The client defers a seek while paused; so does the bridge.** Measured three ways: with the
+    client paused the progress stream is silent, and dragging the client's *own* progress bar calls
+    neither `AudioPlayer.seek` nor the module's `seekAudioPlayer` - yet playback resumes from where
+    the bar was left. The native player is idle and neither acts on nor answers a seek. A seek that
+    arrives while `playingState !== 2` is therefore stored and applied on the transition to playing,
+    and reported with `deferred: true` and `confirmed` undefined - not as a failure, or the card
+    would undo a jump that is going to happen.
+33. **No browser can be launched from the tooling shell.** Re-confirmed with the exact failure:
+    `msedge`/`chrome --headless=new` (and `--single-process --no-sandbox`) die with
+    `FATAL:mojo\public\cpp\platform\platform_channel.cc:108 Check failed: 拒绝访问` — the sandbox
+    blocks the named pipes Chromium's multi-process IPC needs. `tools/shot.mjs` cannot run either.
+    Everything visual is therefore reconstructed (`npm run icons`, `tools/transport-layout.mjs`) or
+    seen by the owner.
 
 ## 7. Current state
 

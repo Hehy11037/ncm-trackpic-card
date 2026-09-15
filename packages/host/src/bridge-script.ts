@@ -330,6 +330,33 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
    */
   let lastPlayId = null;
   let lastPositionMs = 0;
+  /**
+   * A seek asked for while the client was paused, in seconds, waiting for playback to resume.
+   *
+   * The client does the same thing with its own progress bar: while paused it records where the bar
+   * was dragged to and starts from there. See the 'seek' command for the measurement.
+   */
+  let pendingSeekSeconds = null;
+
+  /** Apply a deferred seek, now that the client says it is playing. */
+  const applyPendingSeek = () => {
+    if (pendingSeekSeconds == null) return;
+    if (playingState() !== 2) return;
+    if (!player || typeof player.seek !== 'function' || !lastPlayId) return;
+    const seconds = pendingSeekSeconds;
+    pendingSeekSeconds = null;
+    try {
+      const songId = String(lastPlayId).split('_')[0];
+      player.seek({
+        playId: lastPlayId,
+        seekId: songId + '|seek|' + Math.random().toString(36).slice(2, 8).toUpperCase(),
+        value: seconds,
+      });
+      send('warn', { where: 'deferred seek', message: '恢复播放，执行暂停时记下的 ' + seconds + 's' });
+    } catch (err) {
+      send('warn', { where: 'deferred seek', message: String((err && err.message) || err) });
+    }
+  };
 
   try {
     const progress = audio.audioPlayerPlayProgress$;
@@ -355,7 +382,10 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
   }
 
   try {
-    subs.push(store.subscribe(() => emitState()));
+    subs.push(store.subscribe(() => {
+      applyPendingSeek();
+      emitState();
+    }));
   } catch (err) {
     send('warn', { where: 'store subscribe', message: String((err && err.message) || err) });
   }
@@ -499,6 +529,26 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
         const songId = String(lastPlayId).split('_')[0];
         const seekId = songId + '|seek|' + Math.random().toString(36).slice(2, 8).toUpperCase();
         const seconds = seekSeconds(ms);
+
+        /*
+         * While the client is paused, the position is *remembered* rather than seeked.
+         *
+         * Measured, and the measurement is the reason: with the client paused, dragging its own
+         * progress bar calls neither AudioPlayer.seek nor the module's seekAudioPlayer - nothing
+         * at all - and yet playback resumes from the place the bar was dragged to. The native
+         * player is idle, ignores a seek, and never answers it (which is also why the host saw "no
+         * receipt" and the progress stream went silent). So the client defers, and so does this:
+         * the target is applied the moment the client reports it is playing again.
+         */
+        if (playingState() !== 2) {
+          pendingSeekSeconds = seconds;
+          return {
+            via: 'pipeline',
+            message: '客户端暂停中，已记下 ' + seconds + 's，恢复播放时执行',
+            positionMs: seconds * 1000,
+            deferred: true,
+          };
+        }
         return Promise.resolve(player.seek({ playId: lastPlayId, seekId, value: seconds })).then((reply) => {
           const code = reply && typeof reply.code === 'number' ? reply.code : null;
           const position = reply && typeof reply.position === 'number' ? reply.position : null;
@@ -587,7 +637,14 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
     if (outcome && outcome.ok === false) {
       result = { id: item.id, ok: false, via: outcome.via || 'none', message: outcome.message };
     } else if (outcome && typeof outcome === 'object' && 'via' in outcome) {
-      result = { id: item.id, ok: true, via: outcome.via, message: outcome.message, positionMs: outcome.positionMs };
+      result = {
+        id: item.id,
+        ok: true,
+        via: outcome.via,
+        message: outcome.message,
+        positionMs: outcome.positionMs,
+        deferred: outcome.deferred === true,
+      };
     } else {
       result = { id: item.id, ok: true, via: outcome };
     }

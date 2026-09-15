@@ -509,6 +509,19 @@ console.log('\n--- 控制条几何（从样式表算出来） ---');
   check('预览有超时兜底', /PLAY_PAUSE_OPTIMISM_MS \* 2/.test(mainJs));
   // A paused client may publish nothing, so the seek reply's own position places the bar.
   check('跳转回执用来定位', /typeof result\.positionMs === 'number'\) snapTo\(result\.positionMs\)/.test(mainJs));
+  /*
+   * A seek asked for while paused is *deferred* by the client, not refused (measured: its own
+   * progress bar calls nothing at all while paused and still resumes from where it was dragged to).
+   * The bridge remembers it and applies it on resume, and the result comes back with `deferred`,
+   * `confirmed` undefined and the planned position - so the card places its bar there and does not
+   * report a failure for a jump that is going to happen.
+   */
+  check(
+    '暂停时的跳转不算失败',
+    /if \(result\.deferred\) \{[\s\S]{0,200}confirmed: undefined/.test(readStyle('packages/host/src/session.ts')),
+  );
+  check('暂停时的跳转带回计划位置', /positionMs: seconds \* 1000/.test(readStyle('packages/host/src/bridge-script.ts')));
+  check('只有失败才警告', /if \(failed\) console\.warn\(`\[overlay\] 跳转未确认/.test(mainJs));
   // A single command per gesture: one per preview frame would be dozens of seeks per drag.
   const seekHandler = mainJs.slice(mainJs.indexOf('function installSeekBar'), mainJs.indexOf('function installVolumeBar'));
   check('拖动过程中不发指令', !/control\(/.test(seekHandler.slice(0, seekHandler.indexOf('onCommit'))));

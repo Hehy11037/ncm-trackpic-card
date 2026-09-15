@@ -273,6 +273,16 @@ export interface ControlResult {
   playingState?: { before: number | null; after: number | null };
   /** Where the client says it actually is after a seek, in milliseconds. */
   positionMs?: number | null;
+  /**
+   * The command was accepted but not performed yet.
+   *
+   * Only seek does this: the client ignores a seek while it is paused (measured - its own progress
+   * bar calls nothing at all in that state and still resumes from where it was dragged to), so the
+   * position is remembered and applied when playback resumes. `confirmed` stays undefined for it,
+   * because there is nothing to observe yet - and the requested position comes back in
+   * `positionMs`, which is where playback will start.
+   */
+  deferred?: boolean;
 }
 
 /** Messages the host pushes to overlay clients. */

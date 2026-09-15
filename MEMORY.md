@@ -95,6 +95,7 @@ These are properties of the machine this was built on. They will bite immediatel
 | `src/card.js` | Front face: cover, text, progress, palette band, window controls. |
 | `src/lyrics.js` | Back face: centred, depth-scaled entries. |
 | `src/palette.js` | Median-cut palette extraction from the cover. |
+| `src/optimistic.js` | The held-value rule behind the play/pause flip, the mode cycle and the volume bar. |
 | `src/scrub.js` | The drag gesture shared by the progress bar and the volume bar. |
 | `src/drag.js` | Pointer gesture that moves the window. |
 | `src/socket.js`, `src/clock.js` | Host link; playback clock. |
@@ -301,15 +302,25 @@ Each of these cost real time. The reason matters more than the rule.
 26. **An optimistic value is held until the client agrees.** Drawing every snapshot verbatim made the
     play/pause button flip, flip back and flip again - the command was immediate, the drawing was
     not, because the client keeps publishing its old state until it acts on the media key. Same for
-    the volume bar. Held until: the client's value matches, the host reports a failure, or it times
-    out. This is why `CardView.setStatus` exists separately from `setSnapshot`: a revert has to redraw
-    one attribute, not rebuild a snapshot.
-27. **A drag target gets its hit area from a `::before` overlay, not from padding.** Padding moves
+    the volume bar, and the same rule again for the play mode: `cycleMode` advanced from the mode in
+    the last snapshot, so clicking faster than a round trip sent the same next mode every time and
+    the button appeared to hold only two modes (the owner reported exactly that). One module now -
+    `ui/src/optimistic.js`, `createOptimisticHold`, with `ui/test/optimistic.test.mjs` - instead of
+    three copies of the rule. It releases when the client agrees, when the host reports a failure, or
+    on a timeout, and what it returns is always either the user's value or the client's own.
+27. **A hover panel has to be reachable, not just adjacent.** The volume panel was right-aligned to
+    the card's edge and sat 0.6u above the button, with `:hover` on the button's 4.6u box deciding
+    everything - so it opened up and to the *left* of the pointer, and the pointer had to cross
+    ground belonging to neither (where `:hover` had already ended) before it could arrive. It is
+    centred on the button now, overlaps the button's box by 0.4u, and `installVolumeBar` holds
+    `data-open` for 280ms after the pointer leaves, cancelling the delay if it arrives. A hover
+    affordance needs a path from the trigger to itself, and that path has to cost nothing.
+28. **A drag target gets its hit area from a `::before` overlay, not from padding.** Padding moves
     everything measured after it (the colour band gets away with it only because nothing is measured
     below the band); a 1.48u progress bar is ~6px tall and a 6px target is not a target. And any new
     draggable element must join `CONTROL_SELECTOR` in `ui/src/drag.js`, or pressing it moves the
     window as well.
-28. **An icon is invisible to every other check, so it needs its own.** Not laid out (the layout
+29. **An icon is invisible to every other check, so it needs its own.** Not laid out (the layout
     check ignores it), no id (the DOM check ignores it), and there is no browser in the tooling shell
     to look at it with. Two icons shipped wrong for exactly that reason: the volume icon's sound
     waves are *strokes* and rendered as nothing under a fill-only reader, and the mute cross was two
@@ -317,13 +328,13 @@ Each of these cost real time. The reason matters more than the rule.
     diamonds. `npm run icons` rasterises them into `.scratch/icons/*.png` so they can actually be
     seen, and `check-interaction.mjs` asserts that every path parses, stays inside its viewBox,
     paints something, and is filled or stroked the way the stylesheet says.
-29. **A state change during an interaction may not touch an in-flow property.** The scrubbing state
+30. **A state change during an interaction may not touch an in-flow property.** The scrubbing state
     thickened the progress track with `height: calc(var(--u) * 2.1)`, and the track is an ordinary
     block in the column - so pressing the bar pushed the times, the transport row, the colour band
     and the credit down 0.62u, and released them on pointer-up. The control moved out from under the
     pointer using it. `box-shadow`, `opacity` and `transform` are the ways to emphasise something
     without occupying space; the check forbids the rest generically rather than naming `height`.
-30. **Anything with `role="slider"` has to update `aria-valuenow`.** The progress bar was born with
+31. **Anything with `role="slider"` has to update `aria-valuenow`.** The progress bar was born with
     `aria-valuenow="0"` and nothing ever wrote to it, so it announced a position of 0 for the life of
     the window - worse than having no role, because the role is a promise.
 
@@ -351,14 +362,14 @@ Each of these cost real time. The reason matters more than the rule.
   the card over the shadow margin.
 * The progress bar is draggable, with a preview that the playback clock does not overwrite while the
   pointer is down, and the command sent once on release. Arrow keys work when it has focus, and it
-  swallows them (§6.27) because the arrows are also the card's skip keys.
+  swallows them (§6.28) because the arrows are also the card's skip keys.
 * Do **not** trust "the command ran": `ok` means it reached the page, `confirmed` means the client
   was observed in the state that was asked for. Only the second one is a working control. The three
   new controls are each confirmed against their own field (volume against `playingVolume`, mode
   against `playingMode`, position against the playhead or the client's own seek reply).
 * The four mode glyphs and the speaker's three states were drawn by hand and then **looked at** for
   the first time (`npm run icons`): one was replaced with the conventional shuffle glyph and one was
-  redrawn as two strokes, because as filled bars it rendered as four diamonds (§6.28). The mode order
+  redrawn as two strokes, because as filled bars it rendered as four diamonds (§6.29). The mode order
   and the Chinese names come from the client's own button, not from a guess.
 * The transport row's geometry is *computed* from the stylesheet rather than eyeballed
   (`tools/transport-layout.mjs`): the play button lands at 50.00u, previous/next at 37.23/62.77, mode

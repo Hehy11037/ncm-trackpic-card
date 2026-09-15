@@ -331,12 +331,12 @@ console.log('\n--- 传输控制条的排布 ---');
    * time, so the button appeared to hold only two modes. The held value (`pendingMode`) is the same
    * rule as the play/pause flip, including the revert when the host says the change did not land.
    */
-  check('模式也有乐观值', /function displayedMode\(/.test(mainJs) && /pendingMode = \{ mode: next/.test(mainJs));
+  check('模式也有乐观值', /const modeHold = createOptimisticHold/.test(mainJs) && /modeHold\.set\(next\)/.test(mainJs));
   check('模式从显示中的值往后走', /displayedMode\(lastSnapshot\?\.playback\?\.mode \?\? null\)/.test(mainJs));
   // `indexOf` is -1 for the client's other modes (`playAi`, `playFm`); `(-1 + 1) % 4` would pin the
   // button to one mode for ever, which is the same symptom from a different cause.
   check('客户端的其它模式不会卡住循环', /at < 0 \? 0 : \(at \+ 1\) % MODE_CYCLE\.length/.test(mainJs));
-  check('模式失败时回退并放开乐观值', /pendingMode = null;[\s\S]{0,120}view\.setMode\(lastSnapshot/.test(mainJs));
+  check('模式失败时回退并放开乐观值', /modeHold\.clear\(\);[\s\S]{0,120}view\.setMode\(lastSnapshot/.test(mainJs));
   check('快照画的是处理过的模式', /const mode = displayedMode\(playback\.mode/.test(mainJs));
 }
 
@@ -522,7 +522,7 @@ console.log('\n--- 控制条几何（从样式表算出来） ---');
   check('预览越过拖动保护', /setVolumePreview\(volume\)\s*\{/.test(readStyle('ui/src/card.js')));
   check('松手才发音量指令', /onCommit[\s\S]{0,300}control\(\{ type: 'setVolume', volume \}\)/.test(mainJs));
   // Held until the client's own value arrives, or the bar jumps back under the pointer.
-  check('音量预览也会被保持', /volumePreview != null[\s\S]{0,400}setVolumePreview\(volumePreview\)/.test(mainJs));
+  check('音量预览也会被保持', /volumeHold = createOptimisticHold/.test(mainJs) && /volumeHold\.resolve\(/.test(mainJs));
   check('点击喇叭键静音', /action === 'mute'\) link\.control\(\{ type: 'toggleMute' \}\)/.test(mainJs));
   // The panel overlaps the card's controls while hidden, so it must not take clicks then.
   check('音量条默认不吃点击', /\.volume-pop\s*\{[^}]*pointer-events:\s*none/.test(cardText));
@@ -670,11 +670,11 @@ console.log('\n--- 播放/暂停的即时反馈 ---');
    * verbatim flipped the button, flipped it back, and flipped it again. The optimistic value is now
    * held until the client agrees, the host reports a failure, or it times out.
    */
-  check('乐观状态会被保持', /function displayedStatus\(/.test(mainJs));
+  check('乐观状态会被保持', /const playPauseHold = createOptimisticHold/.test(mainJs));
   check('保持有超时', /PLAY_PAUSE_OPTIMISM_MS = \d+/.test(mainJs));
-  check('客户端确认后交还', /clientStatus === pending\.expect[\s\S]{0,80}pendingPlayPause = null/.test(mainJs));
+  check('客户端确认后交还', /equals\(clientValue, pending\.value\)[\s\S]{0,80}pending = null/.test(readStyle('ui/src/optimistic.js')));
   check('快照画的是处理过的状态', /view\.setSnapshot\(effective\)/.test(mainJs));
-  check('按钮立刻反映翻转', /view\.setStatus\(pendingPlayPause\.expect\)/.test(mainJs));
+  check('按钮立刻反映翻转', /playPauseHold\.set\(expect\)[\s\S]{0,200}view\.setStatus\(expect\)/.test(mainJs));
   check('失败时回退', /view\.setStatus\(lastSnapshot\?\.playback\?\.status/.test(mainJs));
   // `setStatus` must be its own operation, or the revert would have to rebuild a whole snapshot.
   check('状态可以单独绘制', /setStatus\(status\)\s*\{/.test(readStyle('ui/src/card.js')));

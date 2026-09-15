@@ -592,6 +592,58 @@ captured once, for the same reason.
 **Generalised**: never feed a window's own geometry back into the next `setBounds`. Invariant 13 in
 `MEMORY.md`.
 
+## 2026-09-15 (9) — a timer is not a frame clock, and two luminance measures with one name
+
+### The drag stuttered because the shell polled the cursor on a timer
+
+The window was moved from a `setInterval(16)` in the main process. That fires *near* every frame,
+not on it: sometimes twice within one frame, sometimes not at all. Every individual step was the
+same size, but the irregularity is what the eye reads as 卡顿.
+
+The cursor position now comes from the renderer's `pointermove`, which is delivered in step with
+the compositor and carries the position as of the frame being drawn, and the shell is sent absolute
+screen coordinates at most once per animation frame. Two smaller things went with it:
+
+* the 3px movement threshold before a drag started is gone. It existed to stop a click nudging the
+  window, which the shell already handles - and it cost the first few pixels of every drag, which
+  is felt as lag at exactly the moment responsiveness is being judged;
+* `getDisplayMatching` is no longer called per move. It is a synchronous query, and it was on the
+  cursor path.
+
+**Generalised**: `setInterval` is not a frame clock. Anything that has to look smooth should be
+driven by `pointermove` or an animation frame.
+
+### A dark-blue cover came out with a dark-grey swatch
+
+The user reported it precisely: ロンググッドバイ's cover is mostly deep blue, including broad dark
+blue areas at the edges, and the darkest swatch was dark **grey**.
+
+The cause was a unit mismatch that had been sitting in `palette.js` all along. The "too dark to be
+worth showing" guard in `isUsable` was written against the **WCAG relative luminance** with a 0.06
+cut. That is the measure for *contrast*: it weights blue at 0.0722 and then linearises. A rich dark
+blue like `#203060` measures 0.034 there - below the cut - while the same colour is 48 on the 0-255
+luma. So the guard threw away exactly the swatches the artwork was made of, and the darkest band
+had to be filled with whatever grey survived.
+
+Three things were wrong together, and all three are now fixed:
+
+* the filter uses `luma255`, and judges on *hue* rather than brightness: only a colour that is both
+  extreme **and** colourless is dropped, so a dark saturated blue is kept;
+* `detectExtremes` uses the same threshold. The old pair (luma 32 for "extreme", WCAG 0.06 for
+  "usable") left a band of mid-dark colours that both halves dropped;
+* saturation is HSL saturation, not `(max - min) / max`. The old form divides by `max`, so a colour
+  at 20% brightness could never report more than 0.2 of "saturation" however strong its hue was -
+  which is precisely the case a dark cover presents.
+
+`ui/test/palette.test.mjs` is new and encodes the report: for a mostly-dark-blue cover, the darkest
+swatch must be blue (hue 200-260°, saturation > 0.25) and at least three of the five swatches must
+be blue. It also pins the cases that were already working - a greyscale ramp, a black-and-white
+cover showing both extremes - so the fix cannot be "make everything blue".
+
+**Generalised**: choosing a colour and judging contrast are different jobs with different measures.
+Invariant 16 in `MEMORY.md`.
+
+
 
 
 

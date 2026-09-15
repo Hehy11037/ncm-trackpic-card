@@ -161,20 +161,27 @@ body {
 /*
  * The stage carries the proportions and the shadow margin.
  *
- * Width is the card's width (the window minus one `--shadow-pad` on each side) and the
- * height is whichever of the two modes is active. It is centred in the window, so the
- * shadow margin is distributed evenly and the card lands in the middle of the window.
+ * Width is the card's width (the window minus one `--shadow-pad` on each side) and the height is
+ * whichever of the two modes is active. It is anchored to the **top** of the window, not centred,
+ * and that is what makes the roll-up read as the panel sliding up: the window's bottom edge eats
+ * the card from below while the card's top stays put. In the steady state the two are identical -
+ * the window is exactly the card plus one shadow margin - but during the resize tween they are
+ * not, and centring would instead shrink the card towards its middle from both ends.
  *
- * The heights read `--card-height` / `--mini-height`, which ui/src/layout.js recomputes
- * from the stage's real width (so the two can never disagree). The `:root` values above are
- * the pre-JS fallback.
+ * Horizontal centring uses `left/right: 0` with `margin: 0 auto` rather than a transform, so no
+ * ancestor of the card carries a transform at all.
+ *
+ * The heights read `--card-height` / `--mini-height`, which ui/src/layout.js recomputes from the
+ * stage's real width (so the two can never disagree). The `:root` values above are the pre-JS
+ * fallback.
  */
 .stage {
   width: var(--card-w);
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: var(--shadow-pad);
+  left: 0;
+  right: 0;
+  margin: 0 auto;
 }
 
 .stage[data-mode='expanded'] {

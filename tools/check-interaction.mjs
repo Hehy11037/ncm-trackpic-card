@@ -18,7 +18,16 @@ import { readFileSync } from 'node:fs';
 import { makeCssReader, readStyle, shorthandSides, splitCommas, splitWhitespace, stripComments } from './css-values.mjs';
 
 const tokensText = readStyle('ui/styles/tokens.css');
-const css = makeCssReader({ tokens: tokensText, rules: readStyle('ui/styles/card.css') });
+const cardText = readStyle('ui/styles/card.css');
+/*
+ * Both stylesheets, concatenated in link order.
+ *
+ * A reader given only one of them answers "no such selector" for anything in the other - which is
+ * how `.stage`, which lives in tokens.css, first looked like it had no `top` at all. The order
+ * matters too: the cascade takes the last declaration, and index.html links card.css after
+ * tokens.css, so appending card.css is what a browser would do.
+ */
+const css = makeCssReader({ tokens: tokensText, rules: `${tokensText}\n${cardText}` });
 const html = readStyle('ui/index.html');
 const mainJs = readStyle('ui/src/main.js');
 const cardJs = readStyle('ui/src/card.js');
@@ -156,6 +165,62 @@ console.log('\n--- 窗口拖动 ---');
   // The shell owns the arithmetic now, and it lives with the other window geometry.
   check('拖动算法在壳里', /export function dragTarget/.test(shellUtils));
   check('壳不再引用渲染层的 drag.js', !/ui\/src\/drag\.js/.test(shellJs));
+}
+
+console.log('\n--- 拖动时的窗口尺寸 ---');
+{
+  /*
+   * Feeding `getBounds().width` into the next `setBounds` compounds a DIP rounding drift on a
+   * display whose scale factor is not whole. The user saw the card slowly grow while it was being
+   * dragged, then snap back. The size is captured at the press and never read back.
+   */
+  check('拖动开始时捕获尺寸', /dragSize = \{ width: bounds\.width, height: bounds\.height \}/.test(shellJs));
+  const follow = shellJs.slice(shellJs.indexOf('function startDragFollow'), shellJs.indexOf('function endDrag'));
+  check('跟随循环用捕获的尺寸', /\.\.\.dragSize/.test(follow));
+  check('跟随循环不回读尺寸', !/width: bounds\.width/.test(follow) && !/height: bounds\.height/.test(follow));
+  check('结束时校验尺寸没变', /拖动期间窗口尺寸被改动/.test(shellJs));
+}
+
+console.log('\n--- 舞台锚点与模式阈值 ---');
+{
+  /*
+   * The stage is anchored to the window's TOP, not centred.
+   *
+   * The window's height is tweened during the roll-up and the top edge is what stays put, so the
+   * card is eaten from below by the window's bottom edge - which is the whole look. A centred stage
+   * would shrink the card towards its middle from both ends instead; a transform on an ancestor of
+   * the card is also a compositing hazard the flip work has already been bitten by once.
+   */
+  check('舞台贴窗口顶部', css.declaration('.stage', 'top') === 'var(--shadow-pad)');
+  check('舞台水平居中不用 transform', css.declaration('.stage', 'margin') === '0 auto');
+  check('舞台没有 transform', css.declaration('.stage', 'transform') === null);
+
+  /*
+   * The mode threshold must sit at the *collapsed* height, not between the two: the window passes
+   * through every height in between while it animates, and the card has to stay the card until the
+   * window is essentially the strip, or the roll-up pops instead of rolling.
+   */
+  const layoutJsText = readStyle('ui/src/layout.js');
+  check('模式阈值基于收起高度', /stageModeFor\(window\.innerHeight, collapsedWindowHeight\)/.test(layoutJsText));
+  check('阈值用收起高度计算', /collapsedWindowHeight = Math\.round\(width \* MINI_RATIO\)/.test(layoutJsText));
+  check('阈值有单元测试', /stageModeFor/.test(readStyle('ui/test/layout.test.mjs')));
+}
+
+console.log('\n--- 收起/展开动画 ---');
+{
+  /*
+   * The roll-up used to be a single jump, and it read as slow however short the delay got -
+   * because nothing moved, so there was nothing to judge the speed by except the pause.
+   */
+  check('收起/展开走补间', /function animateGeometryTo/.test(shellJs));
+  const resizeMs = Number(/const RESIZE_MS = (\d+)/.exec(shellJs)?.[1] ?? NaN);
+  check('补间时长很短（<= 250ms）', Number.isFinite(resizeMs) && resizeMs <= 250, `${resizeMs}ms`);
+  check('用缓出曲线', /easeOutCubic/.test(shellJs) && /export function easeOutCubic/.test(shellUtils));
+  // The tween must step from values captured once - see the drag-size check above for why.
+  check('补间起点只读一次', /const from = \{ x: current\.x/.test(shellJs));
+  check('退出时清掉补间定时器', /will-quit[\s\S]{0,240}stopResizeTween\(\)/.test(shellJs));
+  // A drag owns the bounds; a tween underneath it would fight for the same window.
+  check('拖动时不启动补间', /if \(dragGrab\) \{[\s\S]{0,80}applyGeometry\(\)/.test(shellJs));
 }
 
 /* ------------------------------------------------------------ stale assets */

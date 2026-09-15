@@ -124,6 +124,18 @@ export function dragTarget(cursor, grab, size, workArea) {
   return clampToWorkArea({ x: cursor.x - grab.x, y: cursor.y - grab.y }, size, workArea);
 }
 
+/**
+ * Ease-out cubic: moves off quickly, then settles.
+ *
+ * Used for the roll-up tween. Linear reads as mechanical, and an ease-in-out spends its first
+ * frames barely moving - the opposite of what "that felt slow" is asking for. Monotonic,
+ * `f(0) = 0`, `f(1) = 1`, and clamped past the ends so a late timer tick cannot overshoot.
+ */
+export function easeOutCubic(t) {
+  const clamped = t <= 0 ? 0 : t >= 1 ? 1 : t;
+  return 1 - (1 - clamped) ** 3;
+}
+
 /* ------------------------------------------------- pointer -> collapse state */
 
 /**

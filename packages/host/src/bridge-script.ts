@@ -435,11 +435,12 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
         if (!player || typeof player.setVolume !== 'function') {
           throw new Error('找不到客户端的 AudioPlayer.setVolume');
         }
-        const mute = store.getState().playing || {};
-        // Setting a real volume also clears a mute, or the card would look unmuted and stay silent.
-        if (v > 0 && typeof player.setMiniPlayerMute === 'function' && num(mute.playingVolume) === 0) {
-          try { player.setMiniPlayerMute(false); } catch (_) {}
-        }
+        /*
+         * No mute bookkeeping here. A non-zero volume *is* the unmute, and the mini-player's mute
+         * flag is a mirror the client maintains itself from the volume (its own code sets it
+         * whenever playingVolume changes). Poking it as well would be a second writer for a value
+         * the client already owns.
+         */
         return Promise.resolve(player.setVolume(v)).then(() => 'pipeline:AudioPlayer.setVolume(' + v + ')');
       }
       case 'toggleMute': {

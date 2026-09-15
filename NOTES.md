@@ -1012,3 +1012,61 @@ would move the window *and* scrub at the same time.
 One more conflict, and it is the same double-action shape as a media key with a fallback: the arrow
 keys are the card's skip keys, so an arrow pressed while the bar has focus would seek **and** change
 track. The bar stops propagation for the keys it handles.
+
+## 2026-09-15 (15) — the layout moved out from under the pointer
+
+Two things happened in this round, and the first one is a bug that had been sitting in the drag
+feedback since it was written.
+
+### Thickening the bar moved the card
+
+The scrubbing state said `height: calc(var(--u) * 2.1)` on `.progress-track`, up from 1.48u. The
+track is an ordinary block in the face's column, so the moment the pointer went down on the progress
+bar, the times line, the whole transport row, the colour band and the credit all dropped 0.62u - and
+came back up on release. The control you are dragging moves the layout, which is the one thing a
+control must never do.
+
+It was invisible to every check, because no check looks at what a *state* changes; they all look at
+what a rule declares. The fix is `box-shadow` with a spread of 0.31u, which paints the same colour the
+track already uses and occupies nothing. The assertion is generic rather than a test for `height`:
+**no in-flow property may be declared by a drag state** - height, margins, padding, borders, font
+size, top/bottom - because any of them is the same bug. `box-shadow`, `opacity` and `transform` are
+the ones that are not. Verified by putting the height rule back and watching it fail.
+
+The generalisable form: a state change that happens *during* an interaction is not a style question.
+It is a layout question, and it needs to be checked as one.
+
+### Inset lives on the ancestor that has it
+
+Writing `tools/transport-layout.mjs` - which computes where the five controls land, because there is
+no browser here to look at them with - produced two mistakes of my own, and the play button's
+position hid both:
+
+- the horizontal inset comes from `section.face`, not `.card`. Reading only `.card` put the mode and
+  volume buttons 7u further out than they are, with the row flush against the card's edges;
+- `padding: 17.69u 7.04u 8u` is a three-value shorthand: top, left-and-right, bottom. Reading it by
+  index (the way a four-value shorthand works) gave left 8 and right 7.04 - **and that asymmetry is
+  what would have moved the play button half a unit off the centre line.**
+
+Both survived because a symmetric inset puts the play button at 50u either way. So the check now
+asserts the symmetry the centring depends on, not only the result: the two side slots must be the
+same width, the left and right insets must be equal, and the middle must land at 50.00u.
+
+### And then the bars were drawn
+
+`npm run icons` drew the SVG glyphs; it now also draws the progress bar (0%, 50%, 100%, and while
+scrubbing) and the volume panel, using the stylesheet's own numbers - they are ordinary boxes, not
+SVG, and this is the only way to see them. That is how the thumb's behaviour at the ends is known
+rather than assumed: it is centred on the end of the fill, so at 0% and 100% it overhangs the track by
+1.3u, which is inside the card's 7.04u inset and therefore not clipped.
+
+The renderer also measures itself and says plainly what that proves: the numbers it draws come *from*
+the stylesheet, so measuring the pixels back is a check of the rasteriser, not a second opinion about
+the design. The design's assertions live in `check-interaction.mjs`.
+
+### A slider that never moved
+
+Noticed while reading `card.js` for the above: the progress bar has `role="slider"` and was born with
+`aria-valuenow="0"`, and nothing ever wrote to it again. It announced a position of 0 for the life of
+the window - worse than having no role, because the role is a promise. It is updated from the frame
+loop now (only when the whole percent changes), and from the scrub preview.

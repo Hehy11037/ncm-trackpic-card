@@ -16,6 +16,15 @@
 import { readFileSync } from 'node:fs';
 
 import { makeCssReader, readStyle, shorthandSides, splitCommas, splitWhitespace, stripComments } from './css-values.mjs';
+import {
+  extractIcons,
+  iconStyle,
+  parsePath,
+  pathBounds,
+  rasterizeAlpha,
+  styledSubpaths,
+  visibleAt,
+} from './svg-path.mjs';
 
 const tokensText = readStyle('ui/styles/tokens.css');
 const cardText = readStyle('ui/styles/card.css');
@@ -397,6 +406,81 @@ console.log('\n--- 拖动进度条与音量条 ---');
   check('音量条贴右边不出界', /\.volume-pop\s*\{[^}]*right:\s*0/.test(cardText) && css.declaration('.volume-pop', 'left') === null);
 }
 
+console.log('\n--- 图标 ---');
+{
+  /*
+   * The icons are the one part of the card nothing else looks at.
+   *
+   * They are not laid out, so the layout check ignores them; they are not elements with ids, so the
+   * DOM check ignores them; and there is no browser in the tooling shell to look at them with. So
+   * they were written blind, and two of them were wrong: the sound waves rendered as nothing (they
+   * are strokes) and the mute cross rendered as four diamonds (two filled bars crossing cancel under
+   * the nonzero winding rule). `tools/render-icons.mjs` is how they were finally seen; this is the
+   * part of that which can run in `npm run check`.
+   */
+  const icons = extractIcons(html);
+  check('找得到图标', icons.length >= 8, `${icons.length} 个`);
+
+  let paths = 0;
+  for (const icon of icons) {
+    const label = `${icon.owner || '(无宿主)'}${icon.cls ? `.${icon.cls}` : ''}`;
+    for (const path of icon.paths) {
+      paths++;
+      const name = `${label} ${path.cls || '(无类名)'}`;
+      let subpaths;
+      try {
+        subpaths = parsePath(path.d);
+      } catch (err) {
+        check(`${name} 路径可解析`, false, String(err.message));
+        continue;
+      }
+      const bounds = pathBounds(subpaths);
+      check(
+        `${name} 在 viewBox 内`,
+        !!bounds && bounds.minX >= -0.01 && bounds.minY >= -0.01 && bounds.maxX <= 24.01 && bounds.maxY <= 24.01,
+        bounds ? `${bounds.minX.toFixed(1)},${bounds.minY.toFixed(1)} → ${bounds.maxX.toFixed(1)},${bounds.maxY.toFixed(1)}` : '没有点',
+      );
+      // Painted the way the card paints it - filled *or* stroked. A stroke-only path drawn as a
+      // fill is invisible, which is exactly what the sound waves were.
+      const style = iconStyle(css, icon.owner, path.cls);
+      const alpha = rasterizeAlpha(styledSubpaths(subpaths, style), 48);
+      const coverage = [...alpha].reduce((sum, value) => sum + value, 0) / (48 * 48);
+      check(`${name} 画得出东西`, coverage > 0.002, `覆盖 ${(coverage * 100).toFixed(2)}%`);
+    }
+  }
+  check('图标一共这么多条路径', paths >= 10, `${paths} 条`);
+
+  // The four mode glyphs must differ, or two modes look identical on the card.
+  const modeIcons = icons.filter((icon) => icon.cls.includes('mode-icon'));
+  check('四个模式图标各不相同', new Set(modeIcons.map((i) => i.paths.map((p) => p.d).join('|'))).size === modeIcons.length);
+
+  /*
+   * Fill versus stroke, per glyph, from the stylesheet.
+   *
+   * The volume icon's svg is `fill: none; stroke: currentColor`, so anything inside it that is not
+   * explicitly filled is a *line*. The speaker body must be filled (it is a solid shape), and the
+   * waves and the cross must be strokes - a cross drawn as two filled bars cancels at the
+   * intersection and renders as four separate diamonds.
+   */
+  const volume = icons.find((icon) => /ctrl--volume/.test(icon.owner));
+  check('找得到音量图标', !!volume);
+  if (volume) {
+    const styleOf = (cls) => iconStyle(css, volume.owner, cls);
+    check('喇叭主体是填充的', styleOf('speaker').fill === true);
+    check('声波是描边而不是填充', styleOf('wave wave--1').fill === false && styleOf('wave wave--1').strokeWidth > 0);
+    check('静音叉是描边（两条线）', styleOf('cross').fill === false && styleOf('cross').strokeWidth > 0);
+    // Two crossing *filled* bars is the shape that cancels; the cross must not be one path quad pair.
+    const cross = volume.paths.find((path) => path.cls === 'cross');
+    check('静音叉不是交叉的闭合四边形', !!cross && !/z/i.test(cross.d), cross?.d ?? '');
+    check('三个状态各自可见', ['high', 'low', 'mute'].every((state) => !!visibleAt(css, 'speaker', state)));
+    check(
+      '静音时藏起声波',
+      visibleAt(css, 'wave wave--1', 'mute') === false && visibleAt(css, 'wave wave--1', 'high') === true,
+    );
+    check('静音时显示叉', visibleAt(css, 'cross', 'mute') === true && visibleAt(css, 'cross', 'high') === false);
+    check('低音量只留一道声波', visibleAt(css, 'wave wave--2', 'low') === false);
+  }
+}
 console.log('\n--- 播放/暂停的即时反馈 ---');
 {
   /*

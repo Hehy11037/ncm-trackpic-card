@@ -206,7 +206,7 @@ Each of these cost real time. The reason matters more than the rule.
    instead of `cache-control`, so nothing was ever told not to cache. The same thing then happened
    to the injected bridge: the code was correct and the running page held the previous copy, because
    the "already installed" guard compared a hand-written version number that nobody bumped. Print
-   provenance, and let an injected script identify itself by a hash of its own body (§4.21).
+   provenance, and let an injected script identify itself by a hash of its own body (§6.21).
 3. **`Tray` and `BrowserWindow.icon` want a `NativeImage` or a path.** A raw PNG `Buffer` throws
    `Argument must be a file path or a NativeImage`.
 4. **`minHeight` on the window makes the roll-up impossible.** Windows enforces min/max during
@@ -309,6 +309,14 @@ Each of these cost real time. The reason matters more than the rule.
     below the band); a 1.48u progress bar is ~6px tall and a 6px target is not a target. And any new
     draggable element must join `CONTROL_SELECTOR` in `ui/src/drag.js`, or pressing it moves the
     window as well.
+28. **An icon is invisible to every other check, so it needs its own.** Not laid out (the layout
+    check ignores it), no id (the DOM check ignores it), and there is no browser in the tooling shell
+    to look at it with. Two icons shipped wrong for exactly that reason: the volume icon's sound
+    waves are *strokes* and rendered as nothing under a fill-only reader, and the mute cross was two
+    filled bars which cancel at their crossing under the nonzero winding rule, so it drew four
+    diamonds. `npm run icons` rasterises them into `.scratch/icons/*.png` so they can actually be
+    seen, and `check-interaction.mjs` asserts that every path parses, stays inside its viewBox,
+    paints something, and is filled or stroked the way the stylesheet says.
 
 ## 7. Current state
 
@@ -319,7 +327,7 @@ Each of these cost real time. The reason matters more than the rule.
   press instead of reading it back every frame; the smoothness fix was driving the drag from
   `pointermove` rather than polling a timer. One residue remained and is now fixed: a drag begun
   during a size tween captured a mismatched width/height pair (`432x740`, where 432 wide implies 744
-  tall), so the drag now lands the tween before reading the bounds (§4.23).
+  tall), so the drag now lands the tween before reading the bounds (§6.23).
 * The tray menu is now just 小 / 中 / 大 and 退出, by the owner's request. Show/hide and recovery
   from a rolled-up card are the tray icon's left-click; the lock is on the card and on `L`.
 * **All six transport controls work and are confirmed by the client**: play/pause and next/previous
@@ -334,11 +342,15 @@ Each of these cost real time. The reason matters more than the rule.
   the card over the shadow margin.
 * The progress bar is draggable, with a preview that the playback clock does not overwrite while the
   pointer is down, and the command sent once on release. Arrow keys work when it has focus, and it
-  swallows them (§4.27) because the arrows are also the card's skip keys.
+  swallows them (§6.27) because the arrows are also the card's skip keys.
 * Do **not** trust "the command ran": `ok` means it reached the page, `confirmed` means the client
   was observed in the state that was asked for. Only the second one is a working control. The three
   new controls are each confirmed against their own field (volume against `playingVolume`, mode
   against `playingMode`, position against the playhead or the client's own seek reply).
+* The four mode glyphs and the speaker's three states were drawn by hand and then **looked at** for
+  the first time (`npm run icons`): one was replaced with the conventional shuffle glyph and one was
+  redrawn as two strokes, because as filled bars it rendered as four diamonds (§6.28). The mode order
+  and the Chinese names come from the client's own button, not from a guess.
 * Known open items, none urgent:
   * no README on the repository home page;
   * the tray icon is generated in memory, so there is no `.ico` for packaging;

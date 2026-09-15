@@ -342,6 +342,23 @@ seek({ playId: "2102424489_UOH3CY", seekId: "2102424489|seek|46YB26", value: 109
 - The reply is a real receipt (`code` plus where the player ended up), which is what
   `ControlResult.positionMs` carries.
 
+**While the client is paused, a seek is deferred, not performed.** Measured three ways, and it
+matters because the card lets the pointer be dragged while the track is paused:
+
+| Observation, with the client paused | Result |
+| --- | --- |
+| `audioPlayerPlayProgress$` | silent — no samples at all over 1.2s |
+| wrapping `AudioPlayer.seek` and dragging the client's **own** progress bar | **no call recorded** |
+| wrapping the module's `seekAudioPlayer` as well, same drag | still nothing |
+| …and after pressing play | playback starts from where the bar was dragged to |
+
+So the client remembers the position and applies it when playback resumes; the native player is
+idle and neither acts on nor answers a seek while paused (which is why the host's first attempt saw
+"no receipt" and the position never moved). The bridge does the same thing: a seek arriving while
+`playingState !== 2` is stored and applied on the transition to playing, and the result comes back
+with `deferred: true`, `confirmed` undefined (there is nothing to observe yet) and the *planned*
+position in `positionMs`, so the card can put its bar where playback will start.
+
 **The native player's whole vocabulary**, from `call("audioplayer.<name>", ...)` literals:
 `load`, `play`, `pause`, `stop`, `seek`, `getPlayedTime`, `getPlaybackInfo`, `setVolume`,
 `setPlaybackRate`, `getApplicationVolume`, `getSystemMasterVolume`, `isDeviceMute`. Volume is a
@@ -385,6 +402,8 @@ method on the `AudioPlayer` instance rather than one of these named calls — wh
 | `tools/transport-layout.mjs` | Where the five transport controls land, computed from the stylesheet (flexbox, two equal side slots, a gapped centre group). Used by the check and by the row pictures. |
 | `npm run icons` (row pictures) | The same numbers drawn: `.scratch/icons/row-*.png` shows the whole transport row - one picture per play mode and per volume state - so the arrangement can be looked at without a browser. |
 | `tools/render-controls.mjs` (also `npm run icons`) | Draws the two draggable bars - the progress bar at 0/50/100% and while scrubbing, and the volume panel - from the stylesheet's own numbers, into `.scratch/controls/`. They are ordinary boxes rather than SVG, and this is the only way to see them without a browser. |
+| `tools/probe-seek-paused.mjs` | **Mutating**: pauses the client, sends a seek through the host, and reports whether it was accepted, whether the progress stream kept running, and where playback resumed from. Always leaves the client playing. |
+| `tools/probe-seek-paused-direct.mjs` | The same question asked of the page directly, with its own timeout, to separate "no reply" from "no effect". |
 | `tools/tap-controls.mjs` | Wrap pipeline functions to capture call arguments. |
 | `tools/host-smoke.mjs` | **Phase-1 end-to-end test**: host + fake overlay client. |
 | `tools/host-run.mjs` | Run the host in the foreground with a live track view. |

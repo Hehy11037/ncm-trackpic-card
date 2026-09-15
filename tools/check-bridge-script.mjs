@@ -179,4 +179,25 @@ for (const needle of required) {
   );
 }
 
+/*
+ * A seek asked for while the client is paused is *remembered*, not sent.
+ *
+ * Measured, and the measurement is the whole reason: with the client paused, dragging its own
+ * progress bar calls neither `AudioPlayer.seek` nor the module's `seekAudioPlayer` - nothing at all
+ * - and yet playback resumes from where the bar was dragged to. The native player is idle, ignores a
+ * seek and never answers it, which is also why the host saw "no receipt" and the progress stream
+ * went silent. So the client defers, and the bridge has to defer the same way or the card's drag
+ * does nothing at all while paused.
+ */
+{
+  const source = buildBridgeScript({ audioModuleId: '1186' });
+  check('暂停时的跳转会被记下', /if \(playingState\(\) !== 2\) \{[\s\S]{0,120}pendingSeekSeconds = seconds/.test(source));
+  check('记下的跳转带上了计划位置', /pendingSeekSeconds = seconds;[\s\S]{0,400}positionMs: seconds \* 1000/.test(source));
+  check('结果标注为 deferred', /deferred: true/.test(source) && /deferred: outcome\.deferred === true/.test(source));
+  check('恢复播放时才执行', /const applyPendingSeek = \(\) => \{[\s\S]{0,200}playingState\(\) !== 2/.test(source));
+  check('订阅里会去执行它', /store\.subscribe\(\(\) => \{[\s\S]{0,80}applyPendingSeek\(\)/.test(source));
+  // The deferred seek must not be forgotten when the track changes under it.
+  check('记下的是秒而不是整个对象', /pendingSeekSeconds = seconds;/.test(source) && !/pendingSeekSeconds = \{/.test(source));
+}
+
 console.log(process.exitCode ? '\n桥接脚本检查未通过' : '\n桥接脚本检查通过');

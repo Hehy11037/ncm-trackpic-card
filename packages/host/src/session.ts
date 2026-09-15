@@ -370,6 +370,15 @@ export class ClientSession extends EventEmitter {
       return { ...result, confirmed: false, playingState: { before, after: this.rawPlayingState() } };
     }
 
+    /*
+     * A deferred command did not happen yet, so there is nothing to observe: a seek asked for while
+     * the client is paused is applied when playback resumes. Reporting it as unconfirmed would have
+     * the card warn about - and undo - a jump that is going to happen.
+     */
+    if (result.deferred) {
+      return { ...result, confirmed: undefined, playingState: { before, after: this.rawPlayingState() } };
+    }
+
     if (!expectation) {
       // Nothing observable to assert: report the receipt and say so rather than guessing.
       return { ...result, confirmed: undefined, playingState: { before, after: this.rawPlayingState() } };
@@ -508,7 +517,14 @@ export class ClientSession extends EventEmitter {
     const deadline = Date.now() + 1500;
     while (Date.now() < deadline) {
       await delay(60);
-      let results: { id: string; ok: boolean; via: string; message?: string; positionMs?: number | null }[];
+      let results: {
+        id: string;
+        ok: boolean;
+        via: string;
+        message?: string;
+        positionMs?: number | null;
+        deferred?: boolean;
+      }[];
       try {
         results = await session.evaluateJson(commandResultPollExpression());
       } catch {
@@ -522,6 +538,7 @@ export class ClientSession extends EventEmitter {
           via: (hit.via?.split(':')[0] as ControlResult['via']) ?? 'none',
           message: hit.message ?? hit.via,
           positionMs: hit.positionMs ?? null,
+          deferred: hit.deferred === true,
         };
       }
     }

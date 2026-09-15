@@ -504,12 +504,12 @@ export function commandResultPollExpression(): string {
   })()`;
 }
 
-/** Pageside helper that reports whether the bridge is alive. */
+/** Pageside helper that reports whether the bridge is alive, and which build it is. */
 export function bridgeHealthExpression(): string {
   return `(() => {
     const b = window.__moBridge;
     return b
-      ? { alive: !b.disposed, version: b.version, audioModuleId: b.audioModuleId }
+      ? { alive: !b.disposed, id: b.id, audioModuleId: b.audioModuleId }
       : { alive: false };
   })()`;
 }

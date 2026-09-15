@@ -5,9 +5,14 @@
 // The bridge is assembled from template strings, so a stray edit can produce a
 // script that only fails once injected into the live client. This catches that.
 
+import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-import { buildBridgeScript, hashScript } from '../packages/host/src/bridge-script.ts';
+import {
+  bridgeHealthExpression,
+  buildBridgeScript,
+  hashScript,
+} from '../packages/host/src/bridge-script.ts';
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -68,8 +73,6 @@ for (const needle of required) {
  * legal, the button looked wired up, and the only trace was a line in the host's log.
  */
 {
-  const { readFileSync } = await import('node:fs');
-
   /** Command types the shared contract allows. */
   // Anchored on the newline: the union's own members contain `;` (`{ type: 'setVolume'; volume }`),
   // so a naive "up to the first semicolon" stops two members early.
@@ -141,6 +144,26 @@ for (const needle of required) {
   check('会替换过期的桥接', /window\.__moBridge\.dispose\(\)/.test(source));
   check('不再有手写版本号守卫', !/__moBridge\.version === 2/.test(source));
   check('遗留占位符已替换', !source.includes('__MO_BRIDGE_ID__'));
+
+  /*
+   * The build id has to be *observable*, not merely present.
+   *
+   * The stale-bridge failure was invisible for exactly this reason: the host had no way to print
+   * which copy had answered, so a page running month-old code looked identical to a page running
+   * the current one. The ready message carries the id and the host logs it, and the health probe
+   * reports it, so the next log says which build replied.
+   */
+  check('ready 消息带上桥接 id', /send\('ready', \{[^}]*bridgeId: BRIDGE_ID/.test(source));
+  const health = bridgeHealthExpression();
+  check('健康探针报告 id 而不是手写版本', /alive: !b\.disposed, id: b\.id/.test(health));
+  check('健康探针里没有 version', !/version/.test(health));
+  check('桥接对象里没有 version 字段', !/window\.__moBridge = \{[\s\S]{0,200}?version:/.test(source));
+  check(
+    '宿主把桥接 id 打进日志',
+    /桥接就绪（音频模块 \$\{[^}]*\}，桥接 \$\{/.test(
+      readFileSync('packages/host/src/session.ts', 'utf8'),
+    ),
+  );
 }
 
 console.log(process.exitCode ? '\n桥接脚本检查未通过' : '\n桥接脚本检查通过');

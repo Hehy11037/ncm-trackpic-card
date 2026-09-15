@@ -811,6 +811,74 @@ inside a string. Worth remembering: when a generated script breaks, the error is
 wrong level.
 
 
+## 2026-09-15 (13) — the handler was there and the page was running the old one
+
+The user tested the transport and pasted the host log. Every line still read
+`unsupported command: playPause`, for a case that had been added and verified in the source. The
+bridge had `case 'playPause'`; the client was executing a script that did not.
+
+The guard meant to prevent exactly this compared a hand-written `version: 2`:
+
+```js
+if (window.__moBridge && window.__moBridge.version === 2) return;   // "already installed"
+```
+
+Nobody had bumped it when the switch gained a case, so the stale bridge - with its subscriptions and
+its command timer - was kept and the new one never installed. **A hand-maintained version number is a
+promise to remember; a hash of the script is a fact.** It is now:
+
+* `hashScript(source)` (FNV-1a) over the script body, substituted at `__MO_BRIDGE_ID__`;
+* an installed bridge whose id differs is `dispose()`d before the new one starts, so there is never a
+  moment with two command timers running;
+* `tools/check-bridge-script.mjs` asserts the id is an 8-hex hash **of the script's own body**, that
+  different content yields a different id, that the dispose path exists, and that no placeholder
+  survives. The last one matters because a silently unsubstituted placeholder would ship a bridge
+  that never replaces itself again.
+
+The lesson under the lesson: the previous round's diagnosis ("the client ignores the audio-module
+call") was drawn from a log produced by code that was never running. Measuring is not enough if what
+is being measured is not what was built.
+
+### A fallback ladder was the wrong shape
+
+The ladder from the previous round - audio module, then media key, then diagnostic - was rebuilt as
+**media key primary**. A media key is the client's own global hotkey, so it does not depend on
+internals that a client update can rebuild; the bridge route stays for `setVolume`, `toggleMute` and
+`setMode`, which have no media-key equivalent.
+
+The important part is what was *removed*: a ladder implies trying the next rung when the current one
+is unconfirmed, and for a toggling key that is a double action. Press play, watch for 900 ms, decide
+it did not take, press again - and the user's music starts and stops. So there is now exactly one
+`pressMediaKey` call and exactly one entry into `controlViaBridge`, from the `!key` branch. Both are
+asserted in `tools/check-interaction.mjs`, next to the mapping table, because that is the kind of
+invariant that a well-meaning "and if that fails, also try…" edit would quietly destroy.
+
+### `432x740` instead of `432x744`
+
+The same log had a line the size check had been printing all along:
+
+```
+拖动中窗口尺寸被系统改动: 请求 432x740，实际 432x741
+```
+
+One pixel, from DIP rounding - but the requested pair was not a card at all. 432 wide implies 744
+tall; 740 is 4 short. `animateGeometryTo` writes the target width immediately and interpolates the
+height, so a drag that began mid-tween captured a width from one size and a height from another, and
+then held that mismatched pair for the whole drag. The fix is to land the tween *before* reading the
+bounds, and the order is the entire fix, so the check compares the two offsets in the `drag-start`
+handler rather than just looking for the lines.
+
+### Assertions verified by breaking them
+
+Three of the new checks were run against deliberately mutated sources in a throwaway
+`.scratch/mutate.mjs` (gitignored) - delete the `playPause` mapping, add a bridge call after a failed
+media key, read the size before landing the tween - and each one failed the corresponding check. A
+check that has never failed is not known to be a check, and one of these rounds already produced a
+palette test that passed for the wrong reason. The mutation script restates a couple of the
+predicates to do that, so it is a scratch artefact rather than a second check: what it proves is that
+the *shape* being asserted is capable of going red, not that the shipped check is complete.
+
+
 
 
 

@@ -811,6 +811,19 @@ function bindIpc() {
 
   ipcMain.on('overlay:drag-start', (event, x, y) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    /*
+     * Land the resize tween first, so the size captured below is a real one.
+     *
+     * `animateGeometryTo` interpolates the height while setting the target width immediately, so a
+     * drag that begins mid-tween would capture a mismatched pair - the log showed `432x740`
+     * requested, where 432 of width implies a height of 744. The drag then holds that pair for its
+     * whole duration, which is a window with the wrong proportions until it ends.
+     */
+    if (resizeAnim) {
+      const target = resizeAnim.target;
+      stopResizeTween();
+      mainWindow.setBounds(target, false);
+    }
     const bounds = mainWindow.getBounds();
     /*
      * The cursor position comes from the renderer's `pointermove`, not from polling.

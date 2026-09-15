@@ -186,6 +186,71 @@ console.log('\n--- 拖动时的窗口尺寸 ---');
   // read-back size being written straight back out, which is what the growth was.
   check('移动时不把读回的尺寸写回去', !/setBounds\(\{ \.\.\.bounds/.test(dragHandlers));
   check('结束时校验尺寸没变', /拖动期间窗口尺寸被改动/.test(shellJs));
+
+  /*
+   * A drag that starts in the middle of a resize tween.
+   *
+   * `animateGeometryTo` writes the target width immediately and interpolates the height towards it.
+   * Capturing the size at that instant therefore records a pair that belongs to no window the user
+   * ever saw - the log had `请求 432x740`, and 432 of width implies 744 of height, so the drag held a
+   * card with the wrong proportions for as long as it lasted. Landing the tween first is the fix,
+   * and the order is the whole point: the target must be applied *before* the size is read.
+   */
+  const startHandler = shellJs.slice(
+    shellJs.indexOf("ipcMain.on('overlay:drag-start'"),
+    shellJs.indexOf("ipcMain.on('overlay:drag-move'"),
+  );
+  check('拖动前先落定尺寸动画', startHandler.indexOf('resizeAnim.target') < startHandler.indexOf('dragSize = {'));
+  check('落定时使用目标尺寸', /setBounds\(target, false\)/.test(startHandler));
+  check('落定后停掉动画时钟', /stopResizeTween\(\)/.test(startHandler));
+}
+
+console.log('\n--- 播放控制的发送路径 ---');
+{
+  /*
+   * How a transport command leaves the overlay, and how many times.
+   *
+   * The media key is the primary route: it is the client's own global hotkey, so it cannot break
+   * when the client's internals are rebuilt. The bridge stays for the commands with no media-key
+   * equivalent. The dangerous shape is a *fallback* - press the key, decide it did not work, then
+   * also dispatch through the bridge - because the key may well have worked and the confirmation
+   * simply arrived late, which skips two tracks per press. So `controlViaBridge` must be reachable
+   * exactly once, from the `!key` branch, and a media key must be pressed exactly once.
+   */
+  const sessionTs = readStyle('packages/host/src/session.ts');
+
+  const mapStart = sessionTs.indexOf('const MEDIA_KEY_FOR');
+  const mapBody = sessionTs.slice(mapStart, sessionTs.indexOf('};', mapStart));
+  for (const [type, key] of [
+    ['playPause', 'playpause'],
+    ['play', 'playpause'],
+    ['pause', 'playpause'],
+    ['next', 'next'],
+    ['previous', 'prev'],
+  ]) {
+    check(`${type} → ${key}`, new RegExp(`${type}:\\s*'${key}'`).test(mapBody));
+  }
+
+  check(
+    '没有媒体键才走桥接',
+    /const key = MEDIA_KEY_FOR\[command\.type\];\s*\n\s*if \(!key\) return this\.controlViaBridge\(session, command\)/.test(
+      sessionTs,
+    ),
+  );
+  const bridgeCalls = [...sessionTs.matchAll(/this\.controlViaBridge\(/g)].length;
+  check('桥接只从这一个分支进入（失败后不重试）', bridgeCalls === 1, `${bridgeCalls} 处调用`);
+  const keyPresses = [...sessionTs.matchAll(/pressMediaKey\(/g)].length;
+  check('每次指令只按一次媒体键', keyPresses === 1, `${keyPresses} 处`);
+
+  const controlBody = sessionTs.slice(
+    sessionTs.indexOf('async control(command'),
+    sessionTs.indexOf('/** The bridge route'),
+  );
+  check('媒体键路径不再发桥接指令', !/sendControl\(/.test(controlBody));
+  check('结果标注发送方式', /via: 'media-key'/.test(controlBody));
+  check('客户端没变化时不算成功', /confirmed: false/.test(controlBody) && /ok: false/.test(controlBody));
+  // A skip in repeat-one changes neither the state nor the song, so the playhead is a signal too.
+  check('跳过以换歌或播放头回退确认', /currentSongId\(\) !== beforeSongId/.test(sessionTs) && /position < beforePositionMs - 1000/.test(sessionTs));
 }
 
 console.log('\n--- 托盘菜单 ---');

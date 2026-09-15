@@ -7,7 +7,16 @@
 
 import vm from 'node:vm';
 
-import { buildBridgeScript } from '../packages/host/src/bridge-script.ts';
+import { buildBridgeScript, hashScript } from '../packages/host/src/bridge-script.ts';
+
+let failures = 0;
+const check = (name, ok, detail = '') => {
+  if (!ok) {
+    failures++;
+    process.exitCode = 1;
+  }
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  ${detail}` : ''}`);
+};
 
 for (const audioModuleId of ['1186', '9999']) {
   const source = buildBridgeScript({ audioModuleId });
@@ -101,6 +110,37 @@ for (const needle of required) {
     if (!ok) process.exitCode = 1;
     console.log(`  ${ok ? 'ok  ' : 'FAIL'} 界面发送的 ${type} 有实现`);
   }
+}
+
+/*
+ * The bridge must be able to tell that an installed copy is out of date.
+ *
+ * This is a bug that already happened, and the log was unmistakable: after the command switch gained
+ * a `playPause` case, every press still came back `unsupported command: playPause`. The client's page
+ * was still running the previous injection, and the guard that was supposed to replace it compared a
+ * hand-written version number - which nobody had bumped. A hand-maintained version is a promise to
+ * remember; a hash of the script is the fact.
+ */
+{
+  const source = buildBridgeScript({ audioModuleId: '1186' });
+  const id = /const BRIDGE_ID = "([0-9a-f]+)"/.exec(source)?.[1] ?? '';
+  check('桥接带 id', /^[0-9a-f]{8}$/.test(id), id);
+
+  // Recompute the hash over the body with the placeholder restored: it must be the script's own.
+  const body = source.replaceAll(id, '__MO_BRIDGE_ID__');
+  const recomputed = hashScript(body);
+  check('id 就是脚本自身的哈希', recomputed === id, `${recomputed} vs ${id}`);
+
+  // Different content must produce a different id, or an edited script would still be "already installed".
+  const other = buildBridgeScript({ audioModuleId: '9999' });
+  const otherId = /const BRIDGE_ID = "([0-9a-f]+)"/.exec(other)?.[1] ?? '';
+  check('内容不同则 id 不同', otherId !== id, `${id} vs ${otherId}`);
+
+  // A stale bridge has to be disposed, not abandoned: its subscriptions and command timer would
+  // otherwise keep running alongside the new one.
+  check('会替换过期的桥接', /window\.__moBridge\.dispose\(\)/.test(source));
+  check('不再有手写版本号守卫', !/__moBridge\.version === 2/.test(source));
+  check('遗留占位符已替换', !source.includes('__MO_BRIDGE_ID__'));
 }
 
 console.log(process.exitCode ? '\n桥接脚本检查未通过' : '\n桥接脚本检查通过');

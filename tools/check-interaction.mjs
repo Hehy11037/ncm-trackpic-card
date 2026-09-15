@@ -323,6 +323,21 @@ console.log('\n--- 传输控制条的排布 ---');
   check('界面与契约的模式列表一致', uiModes.join(',') === sharedModes.join(','), `${uiModes} vs ${sharedModes}`);
   check('模式循环里有四个', uiModes.length === 4);
   check('按钮有四种状态', new RegExp(`data-mode="playOrder"`).test(html));
+
+  /*
+   * The mode button advances from what the card is *showing*, not from the last snapshot.
+   *
+   * Reading `lastSnapshot` meant clicking faster than a round trip sent the same next mode every
+   * time, so the button appeared to hold only two modes. The held value (`pendingMode`) is the same
+   * rule as the play/pause flip, including the revert when the host says the change did not land.
+   */
+  check('模式也有乐观值', /function displayedMode\(/.test(mainJs) && /pendingMode = \{ mode: next/.test(mainJs));
+  check('模式从显示中的值往后走', /displayedMode\(lastSnapshot\?\.playback\?\.mode \?\? null\)/.test(mainJs));
+  // `indexOf` is -1 for the client's other modes (`playAi`, `playFm`); `(-1 + 1) % 4` would pin the
+  // button to one mode for ever, which is the same symptom from a different cause.
+  check('客户端的其它模式不会卡住循环', /at < 0 \? 0 : \(at \+ 1\) % MODE_CYCLE\.length/.test(mainJs));
+  check('模式失败时回退并放开乐观值', /pendingMode = null;[\s\S]{0,120}view\.setMode\(lastSnapshot/.test(mainJs));
+  check('快照画的是处理过的模式', /const mode = displayedMode\(playback\.mode/.test(mainJs));
 }
 
 console.log('\n--- 控制条几何（从样式表算出来） ---');
@@ -373,12 +388,19 @@ console.log('\n--- 控制条几何（从样式表算出来） ---');
   check('上一首/播放/下一首不贴在一起', layout.gap >= 1, `${layout.gap}u`);
   // The row has to fit: two slots, the centre group, and the two gaps.
   check('一行放得下', layout.between * 2 + layout.centre + layout.side * 2 <= layout.rowWidth + 0.01);
-  check('音量条不伸出卡片', layout.popover.left > 0, `左边缘 ${layout.popover.left.toFixed(2)}u`);
+  /*
+   * The volume panel: centred on the button, and narrow enough that the half sticking out to the
+   * right still lands inside the card. It used to be right-aligned to the card's edge, which put it
+   * up and to the *left* of the pointer - and, with a 0.6u gap above the button, the pointer could
+   * not reach it before it faded out.
+   */
   check(
-    '音量条不压到播放键',
-    layout.popover.left > at('playPause') + layout.play / 2,
-    `播放键右缘 ${(at('playPause') + layout.play / 2).toFixed(2)}u`,
+    '音量条以音量键为中心',
+    Math.abs(layout.popover.centre - at('volume')) < 0.05,
+    `面板中心 ${layout.popover.centre.toFixed(2)}u / 按键中心 ${at('volume').toFixed(2)}u`,
   );
+  check('音量条向左不压到播放键', layout.popover.left > at('playPause') + layout.play / 2, `面板左缘 ${layout.popover.left.toFixed(2)}u`);
+  check('音量条向右不出卡片', layout.popover.right <= 100.01, `面板右缘 ${layout.popover.right.toFixed(2)}u`);
 
   /*
    * The row's height is declared, not derived from its contents.
@@ -545,7 +567,22 @@ console.log('\n--- 控制条几何（从样式表算出来） ---');
     /muted: volume == null \? null : volume <= 0\.001/.test(sessionSource) &&
       !/muted: raw\.muteVolume/.test(sessionSource),
   );
-  check('音量条贴右边不出界', /\.volume-pop\s*\{[^}]*right:\s*0/.test(cardText) && css.declaration('.volume-pop', 'left') === null);
+  /*
+   * A gap between the button and the panel is a dead zone the pointer has to cross; the panel
+   * overlaps the button's box instead, and the JS holds it open for a moment besides. (The panel's
+   * own geometry - centred, inside the card - is asserted with the row's, above.)
+   */
+  check(
+    '音量条与按键之间没有缝',
+    /\.volume-pop\s*\{[^}]*bottom:\s*calc\(100% - var\(--u\)/.test(cardText),
+  );
+  check(
+    '离开后有延迟关闭',
+    /CLOSE_DELAY_MS = \d+/.test(mainJs) &&
+      /addEventListener\('pointerenter', open\)/.test(mainJs) &&
+      /addEventListener\('pointerleave', closeSoon\)/.test(mainJs),
+  );
+  check('键盘聚焦也会打开', /addEventListener\('focus', open\)/.test(mainJs));
 }
 
 console.log('\n--- 图标 ---');

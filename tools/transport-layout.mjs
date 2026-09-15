@@ -81,7 +81,12 @@ export function transportRowLayout(css) {
     volume: { centre: centreOf(volumeLeft, side), size: side },
   };
 
-  // The volume panel: bar, the gap, the readout, its padding, and the two 1px borders.
+  /*
+   * The volume panel: bar, the gap, the readout, its padding, and the two 1px borders. It is
+   * *centred* on the volume button, so it has to be narrow enough that the half that sticks out to
+   * the right still lands inside the card - the button's centre is only 2.3u from the card's
+   * content edge.
+   */
   const popoverWidth =
     css.value('.volume-bar', 'width') +
     css.value('.volume-pop', 'gap') +
@@ -116,9 +121,10 @@ export function transportRowLayout(css) {
     controls,
     popover: {
       width: popoverWidth,
-      // Right-aligned to the volume slot, which is the card's right content edge.
-      right: 100 - padding.right,
-      left: 100 - padding.right - popoverWidth,
+      /** Centred on the volume button - what the pointer expects - and clamped by the card. */
+      centre: centreOf(volumeLeft, side),
+      left: centreOf(volumeLeft, side) - popoverWidth / 2,
+      right: centreOf(volumeLeft, side) + popoverWidth / 2,
     },
   };
 }

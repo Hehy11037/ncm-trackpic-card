@@ -52,6 +52,8 @@ let hidden = false;
 let staleSince = 0;
 /** The optimistic play/pause flip awaiting the host's verdict, or null. */
 let pendingPlayPause = null;
+/** The play mode a click has moved to, awaiting the client's own report, or null. */
+let pendingMode = null;
 /** "Do not auto-collapse". Owned by the shell; this is only the copy the button renders. */
 let locked = true;
 
@@ -186,6 +188,8 @@ function handleControlResult(result) {
   }
 
   if (type === 'setMode' && failed) {
+    // Put the icon back to the mode the client is actually in, and stop holding a mode it refused.
+    pendingMode = null;
     view.setMode(lastSnapshot?.playback?.mode ?? null);
     console.warn(`[overlay] 播放模式未确认: ${result.message ?? result.via}`);
   }
@@ -263,38 +267,100 @@ let volumeAt = 0;
  * The bar is a preview while dragging and the client's value otherwise, and the commit happens
  * once, on release: `setVolume` reaches the native player, and the client reports the new value
  * back through its own subscription a moment later.
+ *
+ * The panel is kept open by `data-open` rather than by `:hover` alone, because the pointer has to
+ * be able to *reach* it. `:hover` ends the instant the pointer leaves the button's 4.6u box, and
+ * the panel is 17.65u wide and sits above it - so a pointer travelling up and to the left crosses
+ * ground that belongs to neither. Closing is therefore delayed, and any movement onto the panel
+ * cancels the delay; without this the panel vanishes just before the pointer arrives at it, which
+ * is exactly what the owner reported.
  */
 function installVolumeBar() {
   const bar = document.getElementById('volume-bar');
+  const wrap = document.getElementById('volume-wrap');
+  const pop = document.getElementById('volume-pop');
+  /** How long the panel waits after the pointer leaves before hiding. */
+  const CLOSE_DELAY_MS = 280;
+  let closeTimer = 0;
+
+  const open = () => {
+    clearTimeout(closeTimer);
+    pop?.setAttribute('data-open', 'true');
+  };
+  const closeSoon = () => {
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => pop?.removeAttribute('data-open'), CLOSE_DELAY_MS);
+  };
+
+  // Entering the wrapper opens; leaving it *or the panel* starts the delay. The panel is a child of
+  // the wrapper, so moving onto it does not leave the wrapper at all - the panel's own handlers
+  // matter only for the case where the pointer enters from outside it.
+  for (const element of [wrap, pop]) {
+    element?.addEventListener('pointerenter', open);
+    element?.addEventListener('pointerleave', closeSoon);
+  }
+  // A keyboard user gets the panel too: focusing the bar opens it, leaving closes it.
+  bar?.addEventListener('focus', open);
+  bar?.addEventListener('blur', closeSoon);
+
   if (!bar) return;
   installScrub(bar, {
     axis: 'x',
     onPreview(fraction, phase) {
       volumePreview = fraction;
       view.setVolumePreview(fraction);
-      if (phase === 'start') document.getElementById('volume-pop')?.setAttribute('data-open', 'true');
+      if (phase === 'start') open();
     },
     onCancel() {
       volumePreview = null;
       view.setVolume(lastSnapshot?.playback?.volume ?? null);
-      document.getElementById('volume-pop')?.removeAttribute('data-open');
+      closeSoon();
     },
     onCommit(fraction) {
       const volume = Math.max(0, Math.min(1, fraction));
       volumePreview = volume;
       volumeAt = performance.now();
-      document.getElementById('volume-pop')?.removeAttribute('data-open');
+      closeSoon();
       link.control({ type: 'setVolume', volume });
     },
   });
 }
 
-/** Click the mode button: advance to the client's next mode. */
+/**
+ * Which mode to draw: the client's, unless a click has moved ahead of it.
+ *
+ * Same rule as the play/pause flip, and for the same reason. `cycleMode` read the mode straight out
+ * of `lastSnapshot`, which is the client's mode as of the last round trip - so clicking faster than
+ * that round trip sent the *same* next mode every time and the button appeared to have only two
+ * modes in it. Held here until the client agrees, the host reports a failure, or it times out, the
+ * card walks its four modes at whatever speed the user clicks.
+ */
+function displayedMode(clientMode) {
+  const pending = pendingMode;
+  if (!pending) return clientMode;
+  if (clientMode === pending.mode) {
+    pendingMode = null;
+    return clientMode;
+  }
+  if (performance.now() - pending.at > PLAY_PAUSE_OPTIMISM_MS) {
+    pendingMode = null;
+    return clientMode;
+  }
+  return pending.mode;
+}
+
+/** Click the mode button: advance to the client's next mode in its own cycle order. */
 function cycleMode() {
-  const current = lastSnapshot?.playback?.mode ?? MODE_CYCLE[0];
+  /*
+   * Advance from what the card is *showing*, falling back to the first mode when the client is in
+   * one the card does not offer (`playAi`, `playFm`) - `indexOf` returns -1 there, and `(-1 + 1) % 4`
+   * would then always land on the same mode, which looks exactly like a button with two modes.
+   */
+  const current = displayedMode(lastSnapshot?.playback?.mode ?? null) ?? MODE_CYCLE[0];
   const at = MODE_CYCLE.indexOf(current);
-  const next = MODE_CYCLE[(at + 1) % MODE_CYCLE.length];
+  const next = MODE_CYCLE[at < 0 ? 0 : (at + 1) % MODE_CYCLE.length];
   // Drawn immediately, then corrected by the snapshot - or reverted if the host says it failed.
+  pendingMode = { mode: next, at: performance.now() };
   view.setMode(next);
   link.control({ type: 'setMode', mode: next });
 }
@@ -319,8 +385,11 @@ function handleMessage(message) {
        */
       const playback = message.snapshot.playback ?? {};
       const status = displayedStatus(playback.status ?? 'unknown');
+      const mode = displayedMode(playback.mode ?? null);
       const effective =
-        status === playback.status ? message.snapshot : { ...message.snapshot, playback: { ...playback, status } };
+        status === playback.status && mode === playback.mode
+          ? message.snapshot
+          : { ...message.snapshot, playback: { ...playback, status, mode } };
       const trackChanged = view.setSnapshot(effective);
       clock.onPlayback(effective.playback ?? {}, message.snapshot.song?.durationMs ?? 0);
 

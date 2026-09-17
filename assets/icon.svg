@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="256" height="256">
+  <title>NCM Trackpic Card</title>
+  <path fill="#3a3e4e" d="M6.1 1.5H17.9A4.6 4.6 0 0 1 22.5 6.1V17.9A4.6 4.6 0 0 1 17.9 22.5H6.1A4.6 4.6 0 0 1 1.5 17.9V6.1A4.6 4.6 0 0 1 6.1 1.5z" />
+  <path fill="#f5f5f7" d="M5 12A7 7 0 1 1 19 12A7 7 0 1 1 5 12z" />
+  <path fill="#3a3e4e" d="M10.0 8.1L16.4 12L10.0 15.9z" />
+</svg>

@@ -1138,3 +1138,40 @@ and the readout is what the whole geometry then hangs on:
 
 The arithmetic is checked rather than eyeballed: the bar is 10u centred at 90.66u, and the 3u readout
 following the thumb reaches 84.16u at 0% and 97.16u at 100% - inside the card at both ends.
+
+## 2026-09-18 (2) — an icon, chosen by looking at it at 16 pixels
+
+The owner asked for an app icon, inspired by records/CDs, with no fixed idea. There is no browser in
+the tooling shell, so "design an icon" could easily have meant "write some paths and hope" - which is
+how two wrong icons shipped earlier in this project. Instead the paths went through the same
+rasteriser the rest of the tooling uses, and the candidates were *looked at*.
+
+Two things made the decision, and neither is visible in a normal icon preview:
+
+**The 16px view, at pixel level.** A 16px rendering dropped into a large canvas is a flattering
+picture: it is surrounded by white space. Blowing the *actual* 16 pixels up by copying whole pixels
+shows what the tray will paint - and at that size the record grooves are moiré, the CD's highlight
+becomes a broken notch, and the music note is a smudge.
+
+**Three backgrounds, not one.** Windows draws tray icons on whatever the taskbar happens to be. On a
+dark taskbar a bare black disc disappears into the background (only the white triangle survives) and
+a black note vanishes completely. The design that survived all three - light, dark and mid - was a
+rounded card holding a record and a play triangle: the card gives the mark its own background, the
+triangle is still legible at 16px, and it depicts *this* app rather than music in general. Eight
+candidates were drawn; the owner picked that one.
+
+So `assets/` now holds `icon.svg` (the source), `icon.ico` with nine sizes from 16 to 256, and a
+256px PNG for a README. `npm run icon` regenerates them; the tray loads the .ico **unresized**, so
+Windows can pick the 16px frame instead of resampling the 256px one down. The in-memory drawing stays
+as the fallback, because a missing file must not cost the tray again - that is how "the card never
+rolls up" started.
+
+`check-shell.mjs` parses the .ico: header, per-frame PNG signature, IEND, no frame running past the
+end of the file, and - the one that matters - the pixel size *inside* each frame against the size the
+directory claims. A truncated or mislabelled .ico would otherwise surface for the first time during
+packaging.
+
+One small trap worth recording: the icon was first written to `build/`, which is gitignored here
+(that is where build *output* goes). The tray would have worked on the machine that generated it and
+failed on every other checkout. It lives in `assets/` for that reason, and when `electron-builder` is
+added its `buildResources` has to point there.

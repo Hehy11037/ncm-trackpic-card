@@ -430,6 +430,43 @@ export function composeStrip(items, { widthPx, unitPx, rowHeightPx, padding = 6,
   return { rgba, width: widthPx, height };
 }
 
+/** A blank canvas to draw into. A plain object so callers can pass it around. */
+export function blankCanvas(width, height, background = 255) {
+  const rgba = Buffer.alloc(width * height * 4, background);
+  for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+  return { rgba, width, height };
+}
+
+/**
+ * Draw one icon's paths into an existing canvas at a given position and size.
+ *
+ * `renderSheet` lays icons out in a uniform grid, which is the wrong shape for the question an icon
+ * actually has to answer: "does this still read at 16px?" - that needs the *same* mark at several
+ * sizes side by side. `tools/icon-candidates.mjs` builds that sheet with this.
+ */
+export function blitIcon(canvas, paths, { size, x, y, ink = [24, 24, 26] }) {
+  for (const entry of paths) {
+    const alpha = rasterizeAlpha(styledSubpaths(entry.subpaths, entry), size);
+    const color = entry.ink ?? ink;
+    for (let py = 0; py < size; py++) {
+      const targetY = Math.round(y) + py;
+      if (targetY < 0 || targetY >= canvas.height) continue;
+      for (let px = 0; px < size; px++) {
+        const a = alpha[py * size + px];
+        if (a <= 0) continue;
+        const targetX = Math.round(x) + px;
+        if (targetX < 0 || targetX >= canvas.width) continue;
+        const at = (targetY * canvas.width + targetX) * 4;
+        for (let channel = 0; channel < 3; channel++) {
+          canvas.rgba[at + channel] = Math.round(canvas.rgba[at + channel] * (1 - a) + color[channel] * a);
+        }
+        canvas.rgba[at + 3] = 255;
+      }
+    }
+  }
+  return canvas;
+}
+
 /** Render a set of icons (each `{ paths: [{ subpaths, fill, strokeWidth }] }`) onto a white sheet. */
 export function renderSheet(icons, { size = 96, gap = 12, columns = 4 } = {}) {
   const cell = size + gap;

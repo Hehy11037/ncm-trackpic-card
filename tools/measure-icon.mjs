@@ -48,6 +48,25 @@ function classify(rgb) {
   return 'other';
 }
 
+/**
+ * Read a pixel as it would appear on a white page.
+ *
+ * A rendered icon has a transparent background; without this, its corners read as (0,0,0) and every
+ * "dark" measurement - the navy circle above all - comes back as the whole canvas. The reference was
+ * saved on white, so this puts both images on the same footing.
+ */
+const readPixel = (image, x, y) => {
+  const p = pixelAt(image, x, y);
+  if (p[3] === 255) return p;
+  const a = p[3] / 255;
+  return [
+    Math.round(p[0] * a + 255 * (1 - a)),
+    Math.round(p[1] * a + 255 * (1 - a)),
+    Math.round(p[2] * a + 255 * (1 - a)),
+    p[3],
+  ];
+};
+
 /** The bounding box of every pixel of a class, or null. The predicate gets (pixel, x, y). */
 function boundsOf(image, predicate) {
   let minX = Infinity;
@@ -57,7 +76,7 @@ function boundsOf(image, predicate) {
   let count = 0;
   for (let y = 0; y < image.height; y++) {
     for (let x = 0; x < image.width; x++) {
-      if (!predicate(pixelAt(image, x, y), x, y)) continue;
+      if (!predicate(readPixel(image, x, y), x, y)) continue;
       count++;
       if (x < minX) minX = x;
       if (y < minY) minY = y;
@@ -147,7 +166,7 @@ for (let x = navy.minX; x <= navy.maxX; x++) {
   let bottom = -Infinity;
   let count = 0;
   for (let y = navy.minY; y <= navy.maxY; y++) {
-    if (!navyInside(pixelAt(image, x, y), x, y)) continue;
+    if (!navyInside(readPixel(image, x, y), x, y)) continue;
     count++;
     if (y < top) top = y;
     if (y > bottom) bottom = y;
@@ -197,7 +216,7 @@ if (leftRun) {
     if (!navyInside(pixelAt(image, x, probeY), x, probeY)) continue;
     thickness++;
     // Stop at the first gap: that is the inside of the triangle.
-    if (!navyInside(pixelAt(image, x + 1, probeY), x + 1, probeY)) break;
+    if (!navyInside(readPixel(image, x + 1, probeY), x + 1, probeY)) break;
   }
   console.log(`  左侧描边厚度 ≈ ${to24(thickness).toFixed(2)} 单位（在 y=${to24(probeY - red.minY).toFixed(2)} 处横向量得）`);
 }
@@ -209,7 +228,7 @@ if (leftRun) {
 for (const [index, run] of runs.slice(1).entries()) {
   const widthAt = (y) => {
     let count = 0;
-    for (let x = run.from; x <= run.to; x++) if (navyInside(pixelAt(image, x, y), x, y)) count++;
+    for (let x = run.from; x <= run.to; x++) if (navyInside(readPixel(image, x, y), x, y)) count++;
     return count;
   };
   const middle = Math.round((run.top + run.bottom) / 2);
@@ -267,7 +286,7 @@ if (compareFile) {
       const mineX = Math.round(mineRed.minX + x * scale);
       const mineY = Math.round(mineRed.minY + y * scale);
       if (mineX >= mine.width || mineY >= mine.height) continue;
-      const a = classify(pixelAt(image, px, py));
+      const a = classify(readPixel(image, px, py));
       const b = classify(mineAt(mineX, mineY));
       total++;
       if (a === b) same++;

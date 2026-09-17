@@ -40,16 +40,27 @@ const OUT = at >= 0 ? argv[at + 1] : 'assets';
  *   white outline   outer box x 7.34→12.43, y 8.49→15.49, stroke 1.29  ->  an inset path plus a
  *                   1.29 stroke with round joins reproduces that box exactly
  *   pause bars      x 13.03→14.31 and 15.37→16.63, y 8.66→15.31, rounded ends of half the width
- *   red at the tip  a flat rounded triangle from x 9.00 to its apex at 13.60, 2.00 tall at the left
+ *   red inside      a small rounded triangle, x 9.06 → apex 10.80, 2.09 tall
+ *   red at the tip  a disc of radius 1.05 centred at (12.50, 12.00)
  *
- * The one structural thing the measurements made clear, and that the eye does not: the red triangle
- * is painted **under** the white outline, not inside it. Its apex reaches 13.60 while the white
- * outline stops at 12.43, so what you see is red, then the outline crossing over it, then red again
- * past the apex - three pieces that look like two separate shapes until you see the order.
+ * **Two red pieces, not one** - which is what a scan along the centre line showed, after the eye had
+ * been happy with a single shape for two rounds. The tip piece is a *disc*, and the navy halo around
+ * it is what cuts into the first pause bar: at y=12 the reference reads
+ * `red 12.49–13.57 | navy 13.63–13.94 | white 13.97–14.34`, and 12.50+1.05 and 12.50+1.40 land on
+ * those two boundaries exactly. So the paint order is: bars, then the tip disc with its halo, then the
+ * white outline (which covers the disc's left part), then the inner red triangle.
  *
- * Its corners are genuinely rounded in the reference, which a filled path cannot express; filling the
- * triangle *and* stroking it with the same colour at 0.45 with round joins does (the joins bulge the
- * corners by exactly that much).
+ * The rounded corners the reference has, and a filled path cannot express, are made by filling each
+ * red shape *and* stroking it with the same colour: the round joins bulge the corners by exactly that
+ * much.
+ *
+ * **Known remaining difference** (measured, not glossed over): across the centre line my white
+ * outline's apex band reads 10.97→12.19 where the reference's is 11.46→12.43, so the apex sits about
+ * half a unit thicker. Everything else lands within roughly a pixel: the tip disc and its halo on
+ * 12.38→13.59 and 13.59→13.88 against the reference's 12.49→13.57 and 13.63→13.94, bar 1's remnant on
+ * 13.97→14.25 against 13.97→14.34, and the inner red triangle's left edge on 9.06 exactly.
+ * `tools/measure-icon.mjs --compare` puts the whole icon at 4.09% of pixels, spread along the edges as
+ * antialiasing.
  */
 const RED = [0xd0, 0x27, 0x22];
 const NAVY = [0x0d, 0x19, 0x27];
@@ -75,14 +86,52 @@ function roundedRect(x, y, width, height, radius) {
   );
 }
 
+/**
+ * A triangle whose corners are rounded by `radius` along each edge.
+ *
+ * Unused, and kept because it was tried and *measured*: rounding the play triangle's corners by 0.3 or
+ * 0.75 units moved the white apex to 12.19 or 11.72 (the reference's is at 12.43) and pushed the
+ * overall disagreement up from 4.09% to 4.59%. The reference's apex is a sharp path after all. If
+ * someone tries this again, measure it rather than trusting that rounder looks closer.
+ */
+function roundedTriangle(points, radius) {
+  const [a, b, c] = points;
+  const corner = (from, vertex, to) => {
+    const length = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+    const start = [
+      vertex[0] + ((from[0] - vertex[0]) / length(vertex, from)) * radius,
+      vertex[1] + ((from[1] - vertex[1]) / length(vertex, from)) * radius,
+    ];
+    const end = [
+      vertex[0] + ((to[0] - vertex[0]) / length(vertex, to)) * radius,
+      vertex[1] + ((to[1] - vertex[1]) / length(vertex, to)) * radius,
+    ];
+    return { start, end };
+  };
+  const first = corner(c, a, b);
+  const second = corner(a, b, c);
+  const third = corner(b, c, a);
+  return (
+    `M${first.start[0].toFixed(3)} ${first.start[1].toFixed(3)}` +
+    `L${first.end[0].toFixed(3)} ${first.end[1].toFixed(3)}` +
+    `Q${second.start[0].toFixed(3)} ${second.start[1].toFixed(3)} ${second.end[0].toFixed(3)} ${second.end[1].toFixed(3)}` +
+    `L${third.end[0].toFixed(3)} ${third.end[1].toFixed(3)}` +
+    `Q${third.start[0].toFixed(3)} ${third.start[1].toFixed(3)} ${first.start[0].toFixed(3)} ${first.start[1].toFixed(3)}` +
+    `z`
+  );
+}
+
 const DESIGN = [
   { name: 'disc', d: circle(12, 12, 12), ink: RED },
   { name: 'screen', d: circle(12, 12, 7.06), ink: NAVY },
-  // Under the outline, and reaching past its apex: the red is one shape, seen in two pieces.
-  { name: 'tip', d: 'M9.0 11.0L13.6 12L9.0 13.0z', ink: RED, strokeWidth: 0.45 },
-  { name: 'play', d: 'M7.99 9.14L11.79 12L7.99 14.85z', ink: WHITE, fill: false, strokeWidth: 1.29 },
   { name: 'bar-1', d: roundedRect(13.03, 8.66, 1.29, 6.66, 0.645), ink: WHITE },
   { name: 'bar-2', d: roundedRect(15.37, 8.66, 1.26, 6.66, 0.63), ink: WHITE },
+  // The tip disc and its halo go *over* the bars - that navy ring is what notches the first bar.
+  { name: 'tip-halo', d: circle(12.5, 12, 1.4), ink: NAVY },
+  { name: 'tip', d: circle(12.5, 12, 1.05), ink: RED },
+  // The white outline covers the tip disc's left part, so only its right side shows.
+  { name: 'play', d: 'M7.99 9.14L11.79 12L7.99 14.85z', ink: WHITE, fill: false, strokeWidth: 1.29 },
+  { name: 'inner', d: 'M9.06 10.96L10.8 12L9.06 13.04z', ink: RED, strokeWidth: 0.25 },
 ];
 
 /* --------------------------------------------------------------------- files */

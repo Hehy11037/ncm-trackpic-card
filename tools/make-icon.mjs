@@ -91,9 +91,24 @@ const APEX_X = 11.9;
  * `tools/measure-icon.mjs --compare` puts the whole icon at 4.09% of pixels, spread along the edges as
  * antialiasing.
  */
-const RED = [0xd0, 0x27, 0x22];
+/*
+ * The red is the NetEase Cloud Music client's own, not a colour picked to match it by eye.
+ *
+ * It was read out of the client's shipped icon - `C:\Program Files\Netease\CloudMusic\resource\
+ * format.ico`, whose 256px frame is a PNG - and measured: the mark is a gradient between
+ * `#fc3c49` (252,60,73 - 61% of its coloured pixels) and `#fe245b` (254,36,91), with a mean of
+ * **`#fd364e`** (253,54,78). The mean is the single code used here, because the owner asked for all
+ * the reds to be *one* colour; `.scratch/read-ncm-icon.mjs` re-measures it from the .ico if the client
+ * ever changes its branding.
+ *
+ * The exported art (`assets/icon-source.png`) carries its own red, `#e51600`, under a gradient. It is
+ * re-mapped to this one too - see `recolourRed` - so large frames and small ones agree.
+ */
+const RED = [0xfd, 0x36, 0x4e];
 const NAVY = [0x0d, 0x19, 0x27];
 const WHITE = [0xff, 0xff, 0xff];
+/** The red the owner's export used, measured from it. */
+const SOURCE_RED = [0xe5, 0x16, 0x00];
 
 const hex = ([r, g, b]) => `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 
@@ -266,6 +281,55 @@ const SOURCE_PATH = (() => {
 })();
 const SOURCE_MIN = 48;
 const source = existsSync(SOURCE_PATH) ? decodePng(readFileSync(SOURCE_PATH)) : null;
+if (source) recolourRed(source, SOURCE_RED, RED);
+
+/**
+ * Re-map the exported art's red onto the client's red, in place.
+ *
+ * A pixel of the export is either the art's red (`#e51600`), that red darkened by the gradient, or
+ * that red blended with whatever is behind it (the navy circle, the white outline, the checkerboard).
+ * `t` measures how much of the pixel is the pure red, from the gap between its red channel and its
+ * strongest other channel - `(r - max(g,b)) / (sourceRed.r - max(sourceRed.g, sourceRed.b))`, which is
+ * exactly 1 for the art's body red and falls off through the antialiased edges.
+ *
+ * With `t` known, the background behind the pixel can be estimated and the pixel rebuilt with the new
+ * red at the same coverage - so edges stay antialiased against whatever they were against, and no halo
+ * of the old red survives. Where that estimate comes out negative the pixel was a *darker* red rather
+ * than a blend, so it is scaled instead, which keeps the gradient's depth without inventing a colour.
+ */
+function recolourRed(image, from, to) {
+  const spread = from[0] - Math.max(from[1], from[2]);
+  let touched = 0;
+  for (let i = 0; i < image.width * image.height; i++) {
+    const at = i * 4;
+    const r = image.pixels[at];
+    const g = image.pixels[at + 1];
+    const b = image.pixels[at + 2];
+    const t = Math.min(1, Math.max(0, (r - Math.max(g, b)) / spread));
+    if (t <= 0.02) continue;
+    let pixel;
+    if (t >= 0.9) {
+      // The body (and anything within a hair of it) becomes exactly the target code, so the icon has
+      // one red rather than a family of near-reds. Below this, the pixel is a genuine blend.
+      pixel = to;
+    } else {
+      const behind = [r, g, b].map((value, channel) => (value - from[channel] * t) / (1 - t));
+      if (Math.min(...behind) < -4) {
+        const scale = Math.min(1, r / from[0]);
+        pixel = to.map((value) => Math.round(value * scale));
+      } else {
+        pixel = to.map((value, channel) =>
+          Math.round(value * t + Math.min(255, Math.max(0, behind[channel])) * (1 - t)),
+        );
+      }
+    }
+    image.pixels[at] = pixel[0];
+    image.pixels[at + 1] = pixel[1];
+    image.pixels[at + 2] = pixel[2];
+    touched++;
+  }
+  return touched;
+}
 
 /**
  * Cut the mark out of the export by flood fill, not with a circle.

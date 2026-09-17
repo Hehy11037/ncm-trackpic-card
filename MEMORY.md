@@ -426,10 +426,17 @@ Each of these cost real time. The reason matters more than the rule.
   button off centre).
 * Known open items, none urgent:
   * no README on the repository home page;
-  * the tray icon is generated in memory, so there is no `.ico` for packaging;
-  * `electron-builder` packaging was offered and not done;
+  * `electron-builder` packaging was offered and not done. When it is: point
+    `directories.buildResources` at `assets/` (that is where `icon.ico` lives; electron-builder's
+    default is `build/`, which is gitignored in this repo);
   * the CSP warning Electron prints in development is real: a strict policy needs the inline boot
     script moved out of `index.html` first.
+* The app icon is part of the repo now: `assets/icon.svg` (source), `assets/icon.ico` (nine sizes,
+  16 → 256) and `assets/icon-256.png`. `npm run icon` regenerates them from `tools/make-icon.mjs`,
+  and the tray loads the .ico unharmed - letting Windows pick the frame is sharper than resizing the
+  256 one. It is checked by `check-shell.mjs` (directory, per-frame PNG signature, IEND, and the pixel
+  size *inside* each frame against the size the directory claims - a truncated .ico would otherwise
+  only surface at packaging time).
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.
 

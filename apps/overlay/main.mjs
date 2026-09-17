@@ -111,14 +111,28 @@ const STARTUP_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
 const ICON_COLOR = { r: 0x98, g: 0xb6, b: 0xbe };
 
 /**
- * The generated icon, as a `NativeImage`.
+ * The app icon, as a `NativeImage`.
  *
  * `Tray` and `BrowserWindow.icon` want a NativeImage or a file path - handing them the raw PNG
  * buffer throws `Argument must be a file path or a NativeImage`. That throw happened inside
  * `createTray()`, which ran in the middle of startup and therefore silently skipped everything
  * after it, including `startHoverWatch()`. Hence "the card never rolls up".
+ *
+ * It now loads the *shipped* icon - `assets/icon.ico`, written by `tools/make-icon.mjs` - so the tray,
+ * the taskbar and a future installer all show the same mark. The in-memory drawing stays as the
+ * fallback: a missing file must not cost the tray again.
+ *
+ * The .ico is handed over *unresized*: it carries 16/20/24/32/40/48/64/128/256 pixel art, and letting
+ * Windows pick the frame it wants is sharper than resampling the 256 one down. `size` is therefore
+ * only used by the fallback path.
  */
 function iconImage(size) {
+  const icoPath = join(ROOT, 'assets', 'icon.ico');
+  if (existsSync(icoPath)) {
+    const image = nativeImage.createFromPath(icoPath);
+    if (!image.isEmpty()) return image;
+    console.warn(`[shell] 读不出 ${icoPath}，改用内存绘制的图标`);
+  }
   const image = nativeImage.createFromBuffer(makeIconPng(ICON_COLOR, size));
   if (image.isEmpty()) console.warn(`[shell] ${size}px 图标解码失败（托盘与任务栏图标会缺失）`);
   return image;

@@ -444,6 +444,8 @@ method on the `AudioPlayer` instance rather than one of these named calls — wh
 | `tools/probe-seek-paused.mjs` | **Mutating**: pauses the client, sends a seek through the host, and reports whether it was accepted, whether the progress stream kept running, and where playback resumed from. Always leaves the client playing. |
 | `tools/probe-seek-paused-direct.mjs` | The same question asked of the page directly, with its own timeout, to separate "no reply" from "no effect". |
 | `tools/probe-mode-action.mjs` | **Checks that the mode command means what the mode means**: sends `setMode` through the host and the bridge, then reads the play queue's `randomOrder` values, because a mode change that does not re-draw them is not a shuffle. Puts the mode back. |
+| `tools/make-icon.mjs` (`npm run icon`) | Writes `assets/icon.svg`, a nine-size `assets/icon.ico` and `assets/icon-256.png` from one design. The .ico is parsed by `check-shell.mjs`. |
+| `tools/icon-candidates.mjs` (`npm run icon:candidates`) | Draws candidate icons at 128/48/32/16px **and at 16px blown up by whole pixels on light, dark and mid backgrounds** - which is how the design was chosen: several candidates vanish on a dark taskbar, and that is invisible in a single-size preview. |
 | `tools/tap-controls.mjs` | Wrap pipeline functions to capture call arguments. |
 | `tools/host-smoke.mjs` | **Phase-1 end-to-end test**: host + fake overlay client. |
 | `tools/host-run.mjs` | Run the host in the foreground with a live track view. |

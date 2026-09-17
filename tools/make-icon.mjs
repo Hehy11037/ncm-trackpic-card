@@ -31,20 +31,28 @@ const OUT = at >= 0 ? argv[at + 1] : 'assets';
 /* ------------------------------------------------------------------- design */
 
 /*
- * The owner sent a red play/pause mark and asked for it with a circular outside instead of the
- * rounded square. So: a red disc, a dark navy disc on it, and a white play triangle *outlined*
- * rather than filled - with a sliver of the red showing at its tip - beside two white pause bars.
+ * The owner sent a finished mark and said not to change the inner pattern or the colours. So these
+ * numbers are not a design - they are `tools/measure-icon.mjs`'s output over that image, converted to
+ * a 24-unit box with the red disc's diameter set to 24:
  *
- * Two measurements decided the details, both from `tools/icon-candidates.mjs`:
+ *   red disc        radius 12.00, colour #d02722 (208,39,34)
+ *   navy circle     radius  7.06, colour #0d1927 (13,25,39)   (measured ratio 0.5881 of the disc)
+ *   white outline   outer box x 7.34→12.43, y 8.49→15.49, stroke 1.29  ->  an inset path plus a
+ *                   1.29 stroke with round joins reproduces that box exactly
+ *   pause bars      x 13.03→14.31 and 15.37→16.63, y 8.66→15.31, rounded ends of half the width
+ *   red at the tip  a flat rounded triangle from x 9.00 to its apex at 13.60, 2.00 tall at the left
  *
- *   * a 1.2-unit outline is beautiful at 256px and mush at 16px, where the tray lives. At 1.4 the
- *     outline survives the round trip through nine sizes without becoming a filled triangle, which
- *     would throw away the character of the reference;
- *   * the navy disc is 15.4 units across rather than the reference's proportion (13.9), because at
- *     16px every unit of glyph is worth more than any amount of red margin.
+ * The one structural thing the measurements made clear, and that the eye does not: the red triangle
+ * is painted **under** the white outline, not inside it. Its apex reaches 13.60 while the white
+ * outline stops at 12.43, so what you see is red, then the outline crossing over it, then red again
+ * past the apex - three pieces that look like two separate shapes until you see the order.
+ *
+ * Its corners are genuinely rounded in the reference, which a filled path cannot express; filling the
+ * triangle *and* stroking it with the same colour at 0.45 with round joins does (the joins bulge the
+ * corners by exactly that much).
  */
-const RED = [0xd1, 0x2a, 0x22];
-const NAVY = [0x0c, 0x20, 0x30];
+const RED = [0xd0, 0x27, 0x22];
+const NAVY = [0x0d, 0x19, 0x27];
 const WHITE = [0xff, 0xff, 0xff];
 
 const hex = ([r, g, b]) => `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
@@ -68,19 +76,13 @@ function roundedRect(x, y, width, height, radius) {
 }
 
 const DESIGN = [
-  { name: 'disc', d: circle(12, 12, 11.6), ink: RED },
-  { name: 'screen', d: circle(12, 12, 7.7), ink: NAVY },
-  // Painted before the triangle, so the outline covers all but a sliver of it - the red tip.
-  { name: 'tip', d: circle(12.35, 12, 1.3), ink: RED },
-  {
-    name: 'play',
-    d: 'M7.3 8.7L12.7 12L7.3 15.3z',
-    ink: WHITE,
-    fill: false,
-    strokeWidth: 1.4,
-  },
-  { name: 'bar-1', d: roundedRect(13.8, 8.8, 1.4, 6.4, 0.7), ink: WHITE },
-  { name: 'bar-2', d: roundedRect(16.0, 8.8, 1.4, 6.4, 0.7), ink: WHITE },
+  { name: 'disc', d: circle(12, 12, 12), ink: RED },
+  { name: 'screen', d: circle(12, 12, 7.06), ink: NAVY },
+  // Under the outline, and reaching past its apex: the red is one shape, seen in two pieces.
+  { name: 'tip', d: 'M9.0 11.0L13.6 12L9.0 13.0z', ink: RED, strokeWidth: 0.45 },
+  { name: 'play', d: 'M7.99 9.14L11.79 12L7.99 14.85z', ink: WHITE, fill: false, strokeWidth: 1.29 },
+  { name: 'bar-1', d: roundedRect(13.03, 8.66, 1.29, 6.66, 0.645), ink: WHITE },
+  { name: 'bar-2', d: roundedRect(15.37, 8.66, 1.26, 6.66, 0.63), ink: WHITE },
 ];
 
 /* --------------------------------------------------------------------- files */

@@ -437,16 +437,17 @@ Each of these cost real time. The reason matters more than the rule.
   256 one. It is checked by `check-shell.mjs` (directory, per-frame PNG signature, IEND, and the pixel
   size *inside* each frame against the size the directory claims - a truncated .ico would otherwise
   only surface at packaging time).
-* **The icon is the owner's red play/pause mark, with a circular outside.** Two designs were offered
-  and rejected (an all-black card, then a teal player), so the shipped one is the third reference they
-  sent: a red disc, a dark navy disc, a white **outlined** play triangle with a sliver of red at its
-  tip, and two white pause bars. `npm run icon:candidates` holds the family it was chosen from,
-  including the two rejected ones' families in git history, drawn at **16px blown up by whole pixels
-  on light, dark and mid backgrounds** - the only view in which the differences that matter are
-  visible (a black mark vanishing on a dark taskbar; an outline turning to mush at 16px; a rounded
-  square reading as a blob). The outline is 1.4 units rather than the reference's 1.2 for exactly that
-  reason, and the navy disc is slightly larger than the reference's proportion - at 16px a unit of
-  glyph is worth more than a unit of margin.
+* **The icon is a measured reproduction of the owner's own mark, not a design of mine.** They sent a
+  finished image and said not to change the inner pattern or colours, so `tools/measure-icon.mjs`
+  reads it and the numbers go straight into `tools/make-icon.mjs`: red disc radius 12 (`#d02722`),
+  navy circle radius **7.06** (`#0d1927`, measured ratio 0.5881 of the disc), white outline as a path
+  inset 0.645 with a **1.29** stroke, pause bars 1.29×6.66 with rounded ends, and the red tip as a
+  flat rounded triangle from x 9.0 to an apex at 13.6. `--compare` reports **4.6%** of pixels
+  disagreeing, all of it antialiasing along edges.
+* **The one structural fact the measurements gave that the eye did not:** the red triangle is painted
+  *under* the white outline, not inside it. Its apex reaches 13.6 while the outline stops at 12.43, so
+  it reads as two shapes (inner triangle, tip crescent) but is one - the outline simply crosses over
+  it. `tools/icon-candidates.mjs` and the two rejected designs are in git history.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.
 

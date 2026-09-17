@@ -1,12 +1,22 @@
 # Verified contracts — NetEase Cloud Music client 3.1.39.205426
 
 > **The client updated itself to `3.1.40.205461` on 2026-09-18 at 01:45:33** — the same day, and
-> during the session. Every measurement below was taken against `3.1.39.205426`, so **none of it is
-> confirmed for the new build**. The next thing to do, once the debug channel is reachable again, is
-> to re-run the measurements this file describes: the module discovery (it finds things by shape, so
-> it may simply fail), `audioplayer.seek`'s signature, the `playing/onUpdate` mode write, and the
-> `AudioPlayer` wrapper's volume method. `npm run relaunch` prints the version on every run, which is
-> how the update was noticed at all — the client applies a downloaded update when it next exits.
+> during the session. Every measurement below was taken against `3.1.39.205426`. What has been
+> re-checked on the new build so far, with the debug channel up again:
+>
+> | Thing | 3.1.40 result |
+> | --- | --- |
+> | Discovery by shape | **works** — store module `8`, audio module `1191`, 1830 modules |
+> | The page target | unchanged (`orpheus://orpheus/pub/app.html`) |
+> | Client lyrics | works (source `client`, validated) |
+> | The `AudioPlayer` wrapper | still module `4`, same methods, `seek`/`setVolume` source identical |
+> | Mode enum | still module `6`, same six members |
+> | `setMode` (client's own action) | **confirmed**, and the shuffle is re-drawn |
+> | `setVolume` | **confirmed** (set to its current value, so nothing audible changed) |
+> | `seek` | **not yet re-checked while playing** — the wrapper's source is byte-identical, but the call itself needs a playing track to answer |
+>
+> Module ids that moved: audio pipeline `1186 → 1191`, the dva `playing` model `225 → 228`, the store
+> `11 → 8`. Nothing is hardcoded, which is why only these numbers changed and no code did.
 
 Everything below was **measured on this machine**, not inferred from
 documentation. Each item says how it was verified so a future client update can
@@ -16,8 +26,8 @@ Client under test:
 
 ```
 ProductName    : NetEase Cloud Music
-ProductVersion : 3.1.39.205426   (contracts measured here)
-                 3.1.40.205461   (installed 2026-09-18, NOT yet re-verified)
+ProductVersion : 3.1.39.205426   (all contracts measured here)
+                 3.1.40.205461   (installed 2026-09-18; partly re-verified, see above)
 Engine         : CEF (libcef.dll), not Electron
 Install path   : C:\Program Files\Netease\CloudMusic
 Profile data   : %LOCALAPPDATA%\Netease\CloudMusic  (CEF dir: webapp91x64)
@@ -302,16 +312,36 @@ mode button four times and reading `playing.playingMode` plus the button's own t
 (`playAi` and `playFm` are in the client's enum — module `6`, export `i` — but switching into them
 rewrites the play queue, so the card does not offer them.)
 
-Setting it is a plain store write, with the mode we came *from* passed along:
+Setting it is the client's own action, which is what its tray shortcut dispatches:
 
 ```js
-store.dispatch({ type: 'playing/onUpdate', payload: { playingMode: next, lastPlayingMode: current } });
+store.dispatch({
+  type: 'playing/switchPlayingMode',
+  payload: { playingMode: next, triggerScene: 'sysTray', HeartBeatFlage: false },
+});
 ```
 
-That is the last thing the client's own mode effect does, and the client's own footer icon follows
-it. A `store.dispatch` tap records **nothing** while clicking that button, because the models hold
-their own reference to dispatch — so none of the slider or mode paths are observable that way, and
-the action had to be found by trying it.
+`triggerScene: 'sysTray'` is the value the client's own code passes when the *app* changes the mode
+rather than a click inside its own window (module 10's scene enum, whose every member is its own
+name). The effect reads `playingMode` and `HeartBeatFlage`; it does not read `triggerScene`, but it
+is the value the client itself would send, so it is the one to send.
+
+**`playing/onUpdate {playingMode, lastPlayingMode}` is not enough, and the difference is not
+visible in the state.** That is the last line of the client's own effect, and dispatching it changes
+`playingMode`, updates the icon, and confirms - everything looks right. What it skips is the rest of
+the effect, which walks the play queue and re-draws every entry's `randomOrder`. That re-draw *is*
+the shuffle, so "random" through `onUpdate` replays the previous random order. Measured by
+dispatching both and reading the queue (`tools/probe-mode-action.mjs` prints exactly this):
+
+```
+起始        playOrder   randomOrder: 2909531100 9988764600 3739323500 …
+onUpdate→随机 playRandom randomOrder: 2909531100 9988764600 3739323500 …   ← 没变，没洗牌
+switch→随机  playRandom randomOrder: 3920112200 639482800 3866834100 …    ← 变了，洗牌了
+```
+
+The generalisable form: **the state agreeing is not the meaning agreeing.** A command that changes
+the field the card reads, and nothing else, is indistinguishable from a working one until you ask
+what the mode is *for*.
 
 **Volume.** `playing.playingVolume` is the store's copy, but writing it does not change the sound:
 dispatching `playing/setVolume {volume: 0.35}` moved the store to 0.35 and left
@@ -413,6 +443,7 @@ method on the `AudioPlayer` instance rather than one of these named calls — wh
 | `tools/render-controls.mjs` (also `npm run icons`) | Draws the two draggable bars - the progress bar at 0/50/100% and while scrubbing, and the volume panel - from the stylesheet's own numbers, into `.scratch/controls/`. They are ordinary boxes rather than SVG, and this is the only way to see them without a browser. |
 | `tools/probe-seek-paused.mjs` | **Mutating**: pauses the client, sends a seek through the host, and reports whether it was accepted, whether the progress stream kept running, and where playback resumed from. Always leaves the client playing. |
 | `tools/probe-seek-paused-direct.mjs` | The same question asked of the page directly, with its own timeout, to separate "no reply" from "no effect". |
+| `tools/probe-mode-action.mjs` | **Checks that the mode command means what the mode means**: sends `setMode` through the host and the bridge, then reads the play queue's `randomOrder` values, because a mode change that does not re-draw them is not a shuffle. Puts the mode back. |
 | `tools/tap-controls.mjs` | Wrap pipeline functions to capture call arguments. |
 | `tools/host-smoke.mjs` | **Phase-1 end-to-end test**: host + fake overlay client. |
 | `tools/host-run.mjs` | Run the host in the foreground with a live track view. |

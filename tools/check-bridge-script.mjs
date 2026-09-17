@@ -200,4 +200,21 @@ for (const needle of required) {
   check('记下的是秒而不是整个对象', /pendingSeekSeconds = seconds;/.test(source) && !/pendingSeekSeconds = \{/.test(source));
 }
 
+/*
+ * The mode command must go through the client's own action.
+ *
+ * It used to dispatch `playing/onUpdate {playingMode, lastPlayingMode}` - the last line of the
+ * client's own mode effect - and it *worked*, in the sense that everything observable changed: the
+ * mode, the client's own icon, the confirmation. What it skipped is the shuffle: entering 随机播放
+ * through the effect re-draws every queue entry's `randomOrder`, and the hand-rolled write did not,
+ * so "random" replayed the previous random order. The state agreeing is not the meaning agreeing.
+ */
+{
+  const source = buildBridgeScript({ audioModuleId: '1186' });
+  check('模式用客户端自己的动作', /type: 'playing\/switchPlayingMode'/.test(source));
+  check('不再手写 store 写入模式', !/onUpdate', payload: \{ playingMode/.test(source));
+  check('带上客户端自己的 triggerScene', /triggerScene: 'sysTray'/.test(source));
+  check('带上效果会读的 HeartBeatFlage', /HeartBeatFlage: false/.test(source));
+}
+
 console.log(process.exitCode ? '\n桥接脚本检查未通过' : '\n桥接脚本检查通过');

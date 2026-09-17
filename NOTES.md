@@ -1462,3 +1462,55 @@ is now the single value `#fd364e`**, and the rest is the antialiasing that has t
 `check-shell.mjs` asserts the code in both families - the 256px frame from the export and the 16px
 frame from the vector - so "all the reds are the same red" is a checked property rather than a claim
 about a constant someone remembered to change.
+
+## 2026-09-18 (10) — a cover of your own, and the flag that could not see a second picture
+
+The owner asked for a feature rather than a fix: choose an image and let it stand in for the song's
+cover, switchable. Three decisions had to be made, and each has a reason:
+
+**The image is not the host's business.** The client's cover is still mirrored faithfully; this is a
+*presentation* override, so it lives in the shell, which already owns the things that have to survive a
+restart. The host does not learn about it at all.
+
+**The image is a file, the choice is a flag.** `userData/custom-cover.png` beside the state file, and
+only `coverEnabled` in the JSON - a data URL in there would make the state file megabytes. A chosen
+photo is downscaled to 1600px before it is kept, because the card draws it at ~880 and a 4000px
+original would be a ~12MB string in the renderer.
+
+**The renderer asks for it.** The page is served over http and cannot read a local file, so it fetches
+the image as a data URL through one invoke - not through the state broadcast, which fires on every
+lock toggle and every collapse. `has`/`enabled` travel on the broadcast; the bytes are fetched once.
+
+### The bug that the three flags could not express
+
+The obvious state is `{ has, enabled }`: draw the custom cover when both are true. Then the owner picks
+a *second* picture. `has` is still true. `enabled` is still true. The broadcast is byte-for-byte the
+same as the last one, so the renderer - quite reasonably - decides nothing has changed and goes on
+drawing the first picture. Forever.
+
+The fix is a revision counter the shell bumps whenever the image is replaced or cleared, and a pure
+function that compares it:
+
+```js
+shouldRefetchCover(previous, incoming)
+  incoming.has !== true            -> false   (nothing chosen)
+  previous.has !== true            -> true    (first sight of a cover)
+  previous.rev !== incoming.rev    -> true    (a different picture)
+```
+
+It is unit-tested, including the case that matters: same flags, different revision, fetch again. That
+class of bug - state that looks unchanged but is not - has now appeared in this project four times
+(the mode command that changed the field without shuffling, the volume command that wrote the store
+without changing the sound, the deferred seek that reported nothing, and this), which is why the rule
+is written down rather than re-derived each time.
+
+### The button
+
+Left click does the obvious thing for the state it is in - pick a file, switch on, switch off - and
+right click clears the picture and hands the cover back to the song. Right-click is the only way back,
+so the tooltip names it in all three states. `cover-choice.js` decides both the state and the tooltip,
+so the button cannot describe an action different from the one it performs.
+
+The glyph is drawn with *filled* paths like every other icon on the card: a stroked rectangle was the
+obvious way to draw a picture frame and rendered as a solid black block in `tools/render-icons.mjs`,
+which only draws fills. A preview that lies is worse than no preview.

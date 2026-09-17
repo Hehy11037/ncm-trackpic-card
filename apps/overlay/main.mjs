@@ -16,9 +16,9 @@
 // The renderer is told the lock state and reports when it has drawn; everything else it works
 // out from the window size it is given.
 
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, screen, shell } from 'electron';
 import { spawn } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -468,7 +468,118 @@ function persistWindowState() {
     x: bounds.x,
     y: bounds.y,
     locked,
+    coverEnabled: cover.enabled,
   });
+}
+
+/* -------------------------------------------------------------- custom cover */
+
+/*
+ * The user's own cover: a picture kept beside the state file, which temporarily stands in for whatever
+ * the client says the song's cover is.
+ *
+ * Held here rather than in the host because it is a *presentation* choice - the client's cover is still
+ * mirrored faithfully, and switching this off puts it straight back. The image is stored as a file plus
+ * an enabled flag, so a restart remembers the choice without the state file growing by megabytes; the
+ * renderer gets it as a data URL, on request, because it cannot read a local file from an http page.
+ */
+const cover = { url: null, enabled: true, rev: 0 };
+const COVER_MAX_WIDTH = 1600;
+
+/** The kept image's path, beside the window state. */
+function coverFilePath() {
+  return join(app.getPath('userData'), 'custom-cover.png');
+}
+
+/** Read the kept image into memory as a data URL, if there is one. */
+function loadCoverImage() {
+  const file = coverFilePath();
+  try {
+    if (!existsSync(file)) {
+      cover.url = null;
+      return;
+    }
+    const bytes = readFileSync(file);
+    cover.url = `data:image/png;base64,${bytes.toString('base64')}`;
+  } catch (err) {
+    console.warn('[shell] 自选封面读取失败，按没有处理', err);
+    cover.url = null;
+  }
+}
+
+/** Tell the renderer what it needs to know; the image itself is fetched separately. */
+function sendState() {
+  mainWindow?.webContents.send('overlay:state', {
+    locked,
+    /*
+     * `rev` counts replaces and clears. `has`/`enabled` are both still true when a *second* picture is
+     * picked, so the renderer cannot tell "same image" from "new image" without this - and would keep
+     * drawing the first one.
+     */
+    cover: { has: cover.url !== null, enabled: cover.enabled, rev: cover.rev },
+  });
+}
+
+/**
+ * Ask for a picture and keep a downscaled copy of it.
+ *
+ * Downscaled because a 4000px photograph is a ~12MB data URL that the card draws at ~880px: resizing
+ * once here costs nothing and keeps the renderer's copy small. PNG rather than JPEG so a chosen image
+ * with transparency keeps it.
+ */
+async function pickCover() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择一张图片作为封面',
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'ico'] }],
+  });
+  if (result.canceled || !result.filePaths?.length) return;
+
+  const source = nativeImage.createFromPath(result.filePaths[0]);
+  if (source.isEmpty()) {
+    console.warn(`[shell] 自选封面：这不是能解码的图片 ${result.filePaths[0]}`);
+    return;
+  }
+  const size = source.getSize();
+  const chosen = size.width > COVER_MAX_WIDTH ? source.resize({ width: COVER_MAX_WIDTH, quality: 'best' }) : source;
+  try {
+    const png = chosen.toPNG();
+    writeFileSync(coverFilePath(), png);
+    cover.url = `data:image/png;base64,${png.toString('base64')}`;
+    cover.enabled = true;
+    cover.rev += 1;
+  } catch (err) {
+    console.warn('[shell] 自选封面保存失败', err);
+    return;
+  }
+  console.info(`[shell] 自选封面已设置：${result.filePaths[0]}（${size.width}x${size.height} → ${chosen.getSize().width}px）`);
+  sendState();
+  persistWindowState();
+}
+
+/** Switch the chosen cover on or off. Nothing chosen yet means nothing to switch. */
+function toggleCover() {
+  if (!cover.url) return;
+  cover.enabled = !cover.enabled;
+  console.info(`[shell] 自选封面: ${cover.enabled ? '开' : '关'}`);
+  sendState();
+  persistWindowState();
+}
+
+/** Forget the chosen cover and go back to the song's own art. */
+function clearCover() {
+  try {
+    rmSync(coverFilePath(), { force: true });
+  } catch {
+    // Losing the delete only means the file is reloaded next launch; the state is cleared anyway.
+  }
+  cover.url = null;
+  cover.enabled = true;
+  cover.rev += 1;
+  console.info('[shell] 自选封面已清除');
+  sendState();
+  persistWindowState();
 }
 
 /**
@@ -478,7 +589,7 @@ function persistWindowState() {
 function setLocked(next) {
   locked = next === true;
   if (locked && collapsed) setCollapsed(false);
-  mainWindow?.webContents.send('overlay:state', { locked });
+  sendState();
   persistWindowState();
   console.info(`[shell] 锁定: ${locked ? '开（不再自动收起）' : '关（鼠标离开会收起）'}`);
 }
@@ -601,7 +712,7 @@ async function loadUi() {
     rendererReady = true;
     suppressUntil = Date.now() + SUPPRESS_MS;
     // The renderer may have asked for the state before we could answer; a duplicate is harmless.
-    mainWindow?.webContents.send('overlay:state', { locked });
+    sendState();
     console.info('[shell] 界面已加载，自动收起开始工作');
   });
   try {
@@ -620,6 +731,8 @@ function createWindow() {
   const fit = fitWindow(state.cardWidth, workArea);
   cardWidth = fit.cardWidth;
   locked = state.locked;
+  cover.enabled = state.coverEnabled;
+  loadCoverImage();
   collapsed = false;
   // A fresh window has not drawn yet, and the pointer is wherever the user launched from - so
   // neither the roll-up nor the first sample can be trusted until the page is up.
@@ -793,10 +906,20 @@ function createTray() {
 function bindIpc() {
   ipcMain.on('overlay:toggle-lock', () => setLocked(!locked));
 
+  /*
+   * The custom cover's three verbs. `pick-cover` is `handle` rather than `on` so the renderer can be
+   * told when the dialog closed and the image is ready, which keeps the button's state honest; the
+   * other two just change state and broadcast.
+   */
+  ipcMain.handle('overlay:pick-cover', () => pickCover());
+  ipcMain.handle('overlay:cover-url', () => cover.url);
+  ipcMain.on('overlay:toggle-cover', () => toggleCover());
+  ipcMain.on('overlay:clear-cover', () => clearCover());
+
   ipcMain.on('overlay:request-state', (event) => {
     // Answer only the window that asked, so a stale sender cannot be trusted with it.
     if (mainWindow && event.sender === mainWindow.webContents) {
-      event.sender.send('overlay:state', { locked });
+      event.sender.send('overlay:state', { locked, cover: { has: cover.url !== null, enabled: cover.enabled, rev: cover.rev } });
     }
   });
 

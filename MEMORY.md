@@ -489,6 +489,16 @@ Each of these cost real time. The reason matters more than the rule.
   (not a shrunken disc) and full bleed, and both the 256px frame and the 16px one must carry
   `#fd364e` as their modal red. Prefer a check like this to re-measuring by eye.
 * `tools/icon-candidates.mjs` and the two rejected designs are in git history.
+* **A custom cover is a shell feature, not a host one.** The user picks an image with a file dialog; the
+  shell keeps a downscaled PNG at `userData/custom-cover.png` and only the *enabled flag* in the window
+  state (a data URL in that JSON would make it megabytes). The renderer cannot read a local file from an
+  http page, so it fetches the image as a data URL **on request** rather than receiving it in every state
+  broadcast. `ui/src/cover-choice.js` holds the decision (`chooseCover`) and the button's three states;
+  left click picks then toggles, right click clears and puts the song's cover back.
+* **A replacement image is invisible to `has`/`enabled`.** Picking a second picture leaves both flags
+  exactly as they were - still chosen, still on - so the renderer needs a **revision counter**
+  (`cover.rev`, bumped on pick and clear) to know the bytes changed; without it the card keeps drawing
+  the first image forever. `shouldRefetchCover` is that rule, and it is unit-tested.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.
 

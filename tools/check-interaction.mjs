@@ -973,6 +973,34 @@ console.log('\n--- 顶栏按钮 ---');
   check('未悬停时按钮不拦截鼠标', css.declaration('.icon-btn', 'pointer-events') === 'none');
   const hoverRule = /\.card:hover \.icon-btn[^{]*\{([^}]*)\}/.exec(css.rules);
   check('悬停后按钮可点击', !!hoverRule && /pointer-events:\s*auto/.test(hoverRule[1]));
+
+  /*
+   * The custom-cover button: a second control on the left, next to the flip.
+   *
+   * Its three states come from `ui/src/cover-choice.js` and are written onto the element, so what is
+   * checked here is that the button carries them, that both gestures are bound (a right-click is the
+   * only way back to the song's own cover) and that the card says so in the tooltip.
+   */
+  const coverAt = html.indexOf('id="cover-pick"');
+  check('自选封面键在左边、翻面键之后', coverAt > flipAt && coverAt < lockAt);
+  check('按钮带三态（data-state 与 aria-pressed）', /id="cover-pick"[\s\S]{0,400}?data-state="empty"/.test(html) && /id="cover-pick"[\s\S]{0,400}?aria-pressed="false"/.test(html));
+  check('按钮有 tooltip 与无障碍名', /id="cover-pick"[\s\S]{0,400}?title="[^"]+"/.test(html) && /id="cover-pick"[\s\S]{0,400}?aria-label="自选封面"/.test(html));
+  check('图标是填充路径（预览器只画填充）', !/id="cover-pick"[\s\S]{0,600}?stroke-width/.test(html));
+  const coverJs = readStyle('ui/src/main.js');
+  check('点击与右键都绑定到同一个处理函数', /coverButton\?\.addEventListener\('click', onCoverButton\)/.test(coverJs) && /coverButton\?\.addEventListener\('contextmenu', onCoverButton\)/.test(coverJs));
+  check('右键会阻止默认菜单', /event\.type === 'contextmenu'[\s\S]{0,120}?preventDefault\(\)/.test(coverJs));
+  check('没选过图时点击是选图', /if \(!customCover\.has\) \{\s*\n\s*bridge\?\.pickCover\?\.\(\);/.test(coverJs));
+  check('选过之后点击是开关', /bridge\?\.toggleCover\?\.\(\)/.test(coverJs));
+  check('右键是清除', /bridge\?\.clearCover\?\.\(\)/.test(coverJs));
+  check('状态来自 cover-choice（不在 UI 里重写规则）', /from '\.\/cover-choice\.js'/.test(coverJs) && /coverButtonTitle\(state\)/.test(coverJs));
+  check(
+    '切歌后仍会重新套用自选封面',
+    /if \(trackChanged \|\| customCover\.enabled\) applyCoverChoice\(\);/.test(coverJs),
+  );
+  // A second picture must be fetched again even though `has`/`enabled` have not moved.
+  check('换第二张图会重新取图（靠 rev 而不是开关）', /shouldRefetchCover\(previous, customCover\)/.test(coverJs));
+  // No shell at all in a plain browser: every verb is optional-chained, so the button cannot throw.
+  check('没有外壳时不会报错（浏览器里也要能跑）', (coverJs.match(/bridge\?\.\w+\?\.\(\)/g) ?? []).length >= 3 && /globalThis\.overlayShell \?\? null/.test(coverJs));
 }
 
 /* -------------------------------------------------------------- roll-up */

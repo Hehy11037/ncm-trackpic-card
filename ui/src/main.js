@@ -8,6 +8,7 @@
 
 import { CardView, MODE_CYCLE } from './card.js';
 import { PlayClock, isSampleStale } from './clock.js';
+import { chooseCover, coverButtonState, coverButtonTitle, shouldRefetchCover } from './cover-choice.js';
 import { installDragToMove } from './drag.js';
 import { relayout } from './layout.js';
 import { LyricsView } from './lyrics.js';
@@ -76,6 +77,63 @@ function toggleLock() {
     return;
   }
   bridge.toggleLock();
+}
+
+/* ------------------------------------------------------------ custom cover */
+
+/*
+ * A cover of the user's own, which temporarily stands in for the song's.
+ *
+ * The shell owns it: it holds the file dialog, keeps the image, and persists whether it is switched on,
+ * so the choice survives a restart and there is one source of truth. What arrives here is only
+ * `{ has, enabled }` - the image itself is fetched once, because it is a data URL and re-sending it on
+ * every state broadcast would be silly. `chooseCover` decides which URL the card draws.
+ */
+let customCover = { has: false, enabled: false, url: null, rev: 0 };
+
+/** Draw whatever the state says should be drawn, and match the button to it. */
+function applyCoverChoice() {
+  const trackUrl = lastSnapshot?.song?.coverUrl ?? null;
+  const state = coverButtonState(customCover);
+  view.setCoverState(state, coverButtonTitle(state));
+  // `applyCover` returns early when the URL has not changed, so this is cheap to call often.
+  view.applyCover(chooseCover({ trackUrl, custom: customCover }));
+}
+
+/** Pull the image itself, once per change, and then draw. */
+async function refreshCustomCoverImage() {
+  const bridge = shell();
+  if (!customCover.has || !bridge?.coverUrl) {
+    applyCoverChoice();
+    return;
+  }
+  try {
+    const url = await bridge.coverUrl();
+    customCover = { ...customCover, url: typeof url === 'string' && url ? url : null };
+  } catch {
+    // A failed fetch just means no custom cover; the song's own is still drawn.
+  }
+  applyCoverChoice();
+}
+
+/**
+ * The button's three jobs, from its own state: pick a file, switch the cover on, or switch it off.
+ *
+ * A right-click clears it - which is the only way back to the song's own cover once an image is
+ * chosen, so it is named in the tooltip rather than hidden.
+ */
+function onCoverButton(event) {
+  const bridge = shell();
+  if (event.type === 'contextmenu') {
+    event.preventDefault();
+    if (customCover.has) bridge?.clearCover?.();
+    return;
+  }
+  if (!customCover.has) {
+    bridge?.pickCover?.();
+    return;
+  }
+  bridge?.toggleCover?.();
 }
 
 /* ---------------------------------------------------------------- transport */
@@ -352,6 +410,12 @@ function handleMessage(message) {
           ? message.snapshot
           : { ...message.snapshot, playback: { ...playback, status, mode } };
       const trackChanged = view.setSnapshot(effective);
+      /*
+       * Every new track carries a new cover URL, and `setSnapshot` draws it. If the user's own cover is
+       * on, put it back - otherwise the card would quietly revert to the song's art on the next song,
+       * which is exactly the bug this one line prevents.
+       */
+      if (trackChanged || customCover.enabled) applyCoverChoice();
       clock.onPlayback(effective.playback ?? {}, message.snapshot.song?.durationMs ?? 0);
 
       /*
@@ -460,6 +524,14 @@ function bindInput() {
   });
   on('lock', () => toggleLock());
   on('mini-expand', () => shell()?.setCollapsed?.(false));
+
+  /*
+   * The cover button is the one control with two gestures, so it is bound directly rather than
+   * through the `on(id, handler)` shorthand above: left clicks pick or toggle, right clicks clear.
+   */
+  const coverButton = document.getElementById('cover-pick');
+  coverButton?.addEventListener('click', onCoverButton);
+  coverButton?.addEventListener('contextmenu', onCoverButton);
 
   for (const button of document.querySelectorAll('.ctrl[data-action]')) {
     button.addEventListener('click', () => {
@@ -597,7 +669,25 @@ async function boot() {
    * installed, so no separate "ready" handshake is needed.
    */
   view.setLocked(locked);
-  shell()?.watchState?.((state) => applyLocked(state?.locked));
+  shell()?.watchState?.((state) => {
+    applyLocked(state?.locked);
+    /*
+     * The custom cover travels on the same channel. `has`/`enabled` say whether to draw it; `rev` says
+     * whether the *bytes* changed, which is the only way to notice a second picture being picked -
+     * see `shouldRefetchCover`.
+     */
+    const cover = state?.cover ?? null;
+    const previous = customCover;
+    customCover = { has: cover?.has === true, enabled: cover?.enabled === true, url: previous.url, rev: cover?.rev ?? 0 };
+    if (shouldRefetchCover(previous, customCover)) void refreshCustomCoverImage();
+    else {
+      // The image is gone (cleared): drop the copy too, so nothing can draw a stale picture.
+      if (!customCover.has && customCover.url) customCover = { ...customCover, url: null };
+      applyCoverChoice();
+    }
+  });
+  // Draw the button in its "nothing chosen" state before the shell has answered.
+  applyCoverChoice();
 
   globalThis.__overlay = {
     view,
@@ -614,6 +704,11 @@ async function boot() {
     get snapshot() {
       return lastSnapshot;
     },
+    /** The custom cover's state, for a console or a test to inspect. */
+    get customCover() {
+      return { ...customCover, showing: chooseCover({ trackUrl: lastSnapshot?.song?.coverUrl ?? null, custom: customCover }) };
+    },
+    applyCoverChoice,
   };
 
   // Tell the page-level watchdog that rendering succeeded, which hides the banner.

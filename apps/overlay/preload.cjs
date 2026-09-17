@@ -26,6 +26,19 @@ contextBridge.exposeInMainWorld('overlayShell', {
   close: () => ipcRenderer.send('overlay:close'),
 
   /*
+   * The user's own cover: pick a file, switch it on/off, or clear it and go back to the song's art.
+   *
+   * The shell owns all three, because it also persists the choice - and `coverUrl` is a separate call
+   * rather than part of the state broadcast, since the image is a data URL and re-sending it on every
+   * state change would be wasteful. Everything about the cover is optional: a plain browser has no
+   * `overlayShell` at all, and the card's button then does nothing.
+   */
+  pickCover: () => ipcRenderer.invoke('overlay:pick-cover'),
+  toggleCover: () => ipcRenderer.send('overlay:toggle-cover'),
+  clearCover: () => ipcRenderer.send('overlay:clear-cover'),
+  coverUrl: () => ipcRenderer.invoke('overlay:cover-url'),
+
+  /*
    * Moving the window, as a plain pointer gesture rather than a `-webkit-app-region` drag region.
    * See ui/src/drag.js for why.
    *

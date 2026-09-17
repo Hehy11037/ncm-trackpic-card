@@ -437,13 +437,16 @@ Each of these cost real time. The reason matters more than the rule.
   256 one. It is checked by `check-shell.mjs` (directory, per-frame PNG signature, IEND, and the pixel
   size *inside* each frame against the size the directory claims - a truncated .ico would otherwise
   only surface at packaging time).
-* **The icon is teal, not black.** The owner rejected an all-black mark and sent a photograph of a
-  teal player with a round screen, a magenta play key and two pale pill keys. That device, seen
-  face-on, is the mark: teal body, deep-navy screen, one saturated magenta key, and a darker body a
-  fraction lower to suggest the slab's thickness. `npm run icon:candidates` holds the family it was
-  chosen from, drawn at **16px blown up by whole pixels, on light, dark and mid backgrounds** - the
-  only view in which the differences that matter are visible at all (a black mark vanishing on a dark
-  taskbar; pill keys reading as a face; a record's grooves turning into moiré).
+* **The icon is the owner's red play/pause mark, with a circular outside.** Two designs were offered
+  and rejected (an all-black card, then a teal player), so the shipped one is the third reference they
+  sent: a red disc, a dark navy disc, a white **outlined** play triangle with a sliver of red at its
+  tip, and two white pause bars. `npm run icon:candidates` holds the family it was chosen from,
+  including the two rejected ones' families in git history, drawn at **16px blown up by whole pixels
+  on light, dark and mid backgrounds** - the only view in which the differences that matter are
+  visible (a black mark vanishing on a dark taskbar; an outline turning to mush at 16px; a rounded
+  square reading as a blob). The outline is 1.4 units rather than the reference's 1.2 for exactly that
+  reason, and the navy disc is slightly larger than the reference's proportion - at 16px a unit of
+  glyph is worth more than a unit of margin.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.
 

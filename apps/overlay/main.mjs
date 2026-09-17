@@ -107,8 +107,8 @@ const STARTUP_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
     '</style><body>正在启动…</body>',
 )}`;
 
-/** Fallback icon colour: the shipped icon's body teal, so a missing file still looks like the app. */
-const ICON_COLOR = { r: 0x9a, g: 0xdd, b: 0xe0 };
+/** Fallback icon colour: the shipped icon's red, so a missing file still looks like the app. */
+const ICON_COLOR = { r: 0xd1, g: 0x2a, b: 0x22 };
 
 /**
  * The app icon, as a `NativeImage`.

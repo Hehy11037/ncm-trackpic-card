@@ -31,26 +31,21 @@ const OUT = at >= 0 ? argv[at + 1] : 'assets';
 /* ------------------------------------------------------------------- design */
 
 /*
- * The owner sent a photograph of a teal machined player - a rounded slab with a round screen, a
- * magenta play key and two pale pill keys beside it - and asked for that, without black. So the mark
- * is that device, seen face-on:
+ * The owner sent a red play/pause mark and asked for it with a circular outside instead of the
+ * rounded square. So: a red disc, a dark navy disc on it, and a white play triangle *outlined*
+ * rather than filled - with a sliver of the red showing at its tip - beside two white pause bars.
  *
- *   * the body is teal, the screen is deep navy (not black), and the only saturated colour is the
- *     play key, which is where the eye should land;
- *   * the slab's thickness is suggested by drawing the body once in a darker teal, a fraction lower,
- *     so it peeks out along the bottom edge - no isometric view, which would be mud at 16px;
- *   * the pill keys are kept because they are what makes it read as a *player* rather than a play
- *     button, and they survive at 16px as two small marks beside the magenta key.
+ * Two measurements decided the details, both from `tools/icon-candidates.mjs`:
  *
- * `tools/icon-candidates.mjs` holds the seven other versions this was chosen from, drawn at 16px on
- * light, dark and mid backgrounds - the test that eliminated the earlier all-black design.
+ *   * a 1.2-unit outline is beautiful at 256px and mush at 16px, where the tray lives. At 1.4 the
+ *     outline survives the round trip through nine sizes without becoming a filled triangle, which
+ *     would throw away the character of the reference;
+ *   * the navy disc is 15.4 units across rather than the reference's proportion (13.9), because at
+ *     16px every unit of glyph is worth more than any amount of red margin.
  */
-const TEAL_LIGHT = [0x9a, 0xdd, 0xe0];
-const TEAL_DARK = [0x46, 0x9c, 0xa6];
-const SCREEN = [0x13, 0x21, 0x36];
-const PILL = [0xc9, 0xe6, 0xe9];
-const MAGENTA = [0xe0, 0x3a, 0x8e];
-const PAPER = [0xf4, 0xf8, 0xfa];
+const RED = [0xd1, 0x2a, 0x22];
+const NAVY = [0x0c, 0x20, 0x30];
+const WHITE = [0xff, 0xff, 0xff];
 
 const hex = ([r, g, b]) => `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 
@@ -60,9 +55,10 @@ function circle(cx, cy, r, clockwise = true) {
   return `M${cx - r} ${cy}A${r} ${r} 0 1 ${sweep} ${cx + r} ${cy}A${r} ${r} 0 1 ${sweep} ${cx - r} ${cy}z`;
 }
 
-function roundedSquare(x, y, size, radius) {
-  const right = x + size;
-  const bottom = y + size;
+/** A rounded rectangle with independent width and height - the pause bars are not square. */
+function roundedRect(x, y, width, height, radius) {
+  const right = x + width;
+  const bottom = y + height;
   return (
     `M${x + radius} ${y}H${right - radius}A${radius} ${radius} 0 0 1 ${right} ${y + radius}` +
     `V${bottom - radius}A${radius} ${radius} 0 0 1 ${right - radius} ${bottom}` +
@@ -72,13 +68,19 @@ function roundedSquare(x, y, size, radius) {
 }
 
 const DESIGN = [
-  { name: 'slab', d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: TEAL_DARK },
-  { name: 'body', d: roundedSquare(1.6, 1.6, 20.8, 4.8), ink: TEAL_LIGHT },
-  { name: 'screen', d: circle(12, 12, 7.9), ink: SCREEN },
-  { name: 'pill-left', d: roundedSquare(5.0, 11.2, 3.6, 1.8), ink: PILL },
-  { name: 'pill-right', d: roundedSquare(15.4, 11.2, 3.6, 1.8), ink: PILL },
-  { name: 'key', d: circle(12, 12, 3.9), ink: MAGENTA },
-  { name: 'play', d: 'M10.6 9.6L14.6 12L10.6 14.4z', ink: PAPER },
+  { name: 'disc', d: circle(12, 12, 11.6), ink: RED },
+  { name: 'screen', d: circle(12, 12, 7.7), ink: NAVY },
+  // Painted before the triangle, so the outline covers all but a sliver of it - the red tip.
+  { name: 'tip', d: circle(12.35, 12, 1.3), ink: RED },
+  {
+    name: 'play',
+    d: 'M7.3 8.7L12.7 12L7.3 15.3z',
+    ink: WHITE,
+    fill: false,
+    strokeWidth: 1.4,
+  },
+  { name: 'bar-1', d: roundedRect(13.8, 8.8, 1.4, 6.4, 0.7), ink: WHITE },
+  { name: 'bar-2', d: roundedRect(16.0, 8.8, 1.4, 6.4, 0.7), ink: WHITE },
 ];
 
 /* --------------------------------------------------------------------- files */
@@ -87,7 +89,15 @@ const DESIGN = [
 function renderRgba(design, size) {
   const layers = design.map((entry) => ({
     ink: entry.ink,
-    alpha: rasterizeAlpha(styledSubpaths(parsePath(entry.d), { fill: true }), size),
+    // `fill: false` + a stroke width is how the outlined play triangle is drawn; everything else is
+    // a filled shape.
+    alpha: rasterizeAlpha(
+      styledSubpaths(parsePath(entry.d), {
+        fill: entry.fill ?? true,
+        strokeWidth: entry.strokeWidth ?? 0,
+      }),
+      size,
+    ),
   }));
   const out = Buffer.alloc(size * size * 4, 0);
   for (let i = 0; i < size * size; i++) {

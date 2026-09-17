@@ -1175,3 +1175,37 @@ One small trap worth recording: the icon was first written to `build/`, which is
 (that is where build *output* goes). The tray would have worked on the machine that generated it and
 failed on every other checkout. It lives in `assets/` for that reason, and when `electron-builder` is
 added its `buildResources` has to point there.
+
+## 2026-09-18 (3) — the third icon, and why the first two were wrong
+
+Two designs were drawn and rejected before this one. That is not a failure of the rasteriser - which
+is what made each rejection *specific* - but it is worth writing down what the rejections were, because
+neither was about taste alone.
+
+**The first mark was an all-black card with a disc.** It was chosen because it survived all three
+backgrounds, and that was true. What it was not is *liked*: the owner's answer was "颜色也不要用黑色"
+- and looking again at the 16px zoom, the black version was legible but joyless, a silhouette rather
+than a thing. Legibility is a floor, not a target.
+
+**The second was built from a photograph they sent** of a teal player - rounded slab, round screen,
+magenta play key, two pale pill keys - and it reproduced those features faithfully: sampled colours,
+the slab's thickness suggested by a darker body peeking out at the bottom, the pill keys kept because
+they are what makes it read as a *player*. Rejected too. The lesson there is narrower and more useful:
+"reproduce the reference" and "the reference is what they want" are different claims, and only the
+owner can settle the second.
+
+**The third is the second reference they sent, with one change of their own** - the rounded square
+outside made into a circle. A red disc, a dark navy disc, a white *outlined* play triangle with a
+sliver of red at its tip, two white pause bars.
+
+The outline is the part worth recording. The reference's stroke is about 1.2 units at 24; at 256px
+that is beautiful, and at 16px - the size the tray actually paints - the triangle's interior closes up
+and it reads as a filled triangle with a hole. The measurement that settled it was the same one used
+for everything else here: draw it at 16 pixels, blow the pixels up eightfold, put it on a light, a dark
+and a mid-grey strip, and look. At 1.4 the outline survives nine sizes without becoming a solid
+triangle, which would have thrown away the one feature that makes the mark the owner's rather than a
+generic play button. The navy disc is also a little larger than the reference's proportion, for the
+same reason: at 16px, a unit of glyph is worth more than a unit of margin.
+
+So the tooling earned its keep three times, and the commits hold all three families:
+`npm run icon:candidates` redraws whichever family is current, and the rejected ones are in history.

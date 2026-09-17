@@ -1422,3 +1422,43 @@ That is the real lesson of this round, and it is the same one as the apex before
 what the measurements did not, because I had chosen the instrument (a circle, a side-by-side) before
 asking what could go wrong. The cheap general fix is a **structural assertion** - "there is nothing
 outside the disc" - which does not care how the cut is implemented.
+
+## 2026-09-18 (9) — the red is the client's own, read out of the client
+
+"Change every red in this icon to the same code as the NetEase client's icon." That is a measurement
+request, not a taste one, so nothing here came from memory or from a palette:
+
+```
+C:\Program Files\Netease\CloudMusic\resource\format.ico
+  → 4 frames (16/32/48 as BMP, 256 as PNG)
+  → its coloured pixels:  #fc3c49 (252,60,73)  61.1%
+                          #fe245b (254,36,91)  13.3%      <- the gradient's two ends
+                          mean #fd364e (253,54,78)
+```
+
+The client's mark is itself a gradient, so "the same colour code" needed a decision: the mean `#fd364e`
+is the one code that represents it, and it is what the icon now uses - in the vector (so the 16-40px
+frames, the inner triangle and the tip disc are all that red) *and* in the large frames cut from the
+owner's export, which had been `#e51600`.
+
+### Re-mapping a gradient onto one colour without wrecking the edges
+
+The export's red had to be replaced, and a naive "pixels that look red become the new red" turns every
+antialiased edge into a hard one - the disc's rim against the page, the tip disc against the navy, the
+triangle against the white. So a pixel is first asked *how much* of it is the art's red:
+
+```
+t = (r - max(g, b)) / (sourceRed.r - max(sourceRed.g, sourceRed.b))
+```
+
+which is exactly 1 for the export's body red and falls away through the blends. With `t` known, the
+colour behind the pixel can be recovered - `(value - sourceRed * t) / (1 - t)` - and the pixel rebuilt as
+`newRed * t + behind * (1 - t)`. Edges keep whatever they were blending into, and no halo of the old red
+survives. Where that recovery goes negative the pixel was a *darker red* rather than a blend (the
+export's disc has a subtle gradient), so it is scaled instead, which keeps the depth without inventing
+a colour. Body pixels, `t >= 0.9`, are set to the code exactly: **91.5% of the red in the shipped frames
+is now the single value `#fd364e`**, and the rest is the antialiasing that has to vary.
+
+`check-shell.mjs` asserts the code in both families - the 256px frame from the export and the 16px
+frame from the vector - so "all the reds are the same red" is a checked property rather than a claim
+about a constant someone remembered to change.

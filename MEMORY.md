@@ -474,9 +474,20 @@ Each of these cost real time. The reason matters more than the rule.
   width reached ~13px past the disc and carried a strip of checkerboard into the icon - which is what
   the owner saw and reported. Colour is averaged from the mask's *core* (pixels not touching the
   background) so the export's own antialiasing against the checkerboard cannot leave a pale rim.
+* **The icon's red is the client's own, measured - not matched by eye.** It comes from the client's
+  shipped icon, `C:\Program Files\Netease\CloudMusic\resource\format.ico` (whose 256px frame is a PNG):
+  a gradient between `#fc3c49` (61% of its coloured pixels) and `#fe245b`, mean **`#fd364e`** - the
+  single code the icon now uses everywhere, small vector frames included.
+  `.scratch/read-ncm-icon.mjs` re-reads it if the client ever rebrands. The owner's export used
+  `#e51600`, so its pixels are re-mapped rather than left alone (`recolourRed` in
+  `tools/make-icon.mjs`): the coverage `t = (r - max(g,b)) / spread` says how much of a pixel is the
+  art's red, the background behind it is estimated from that, and the pixel is rebuilt with the new red
+  at the same coverage - which keeps every antialiased edge and leaves no halo of the old red. Body
+  pixels (t >= 0.9) become the exact code, so 91.5% of the red is one hex value.
 * `check-shell.mjs` now guards the whole class of failure: the 256px frame must have **nothing opaque
   outside the disc's radius** (which is where that strip sat), transparent corners, an opaque interior
-  (not a shrunken disc) and full bleed. Prefer a check like this to re-measuring by eye.
+  (not a shrunken disc) and full bleed, and both the 256px frame and the 16px one must carry
+  `#fd364e` as their modal red. Prefer a check like this to re-measuring by eye.
 * `tools/icon-candidates.mjs` and the two rejected designs are in git history.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.

@@ -491,6 +491,48 @@ console.log('\n--- 应用图标（assets/icon.ico）---');
         if (image.pixels[(y * image.width + Math.floor(image.width / 2)) * 4 + 3] > 8) lowest = y;
       }
       check('256 帧是满幅的（圆盘贴到边缘）', lowest >= image.height - 4, `中线最低不透明像素 y=${lowest}`);
+
+      /*
+       * The owner asked for the client's own red, so the shipped frames have to *carry* it - both the
+       * large ones taken from the export and the small vector ones. The code comes from measuring the
+       * client's icon (`resources\format.ico`), not from a palette: `#fd364e` is the mean of that
+       * mark's gradient (`#fc3c49` is its most common stop, `#fe245b` its other end).
+       */
+      const modalRed = (png, label) => {
+        const frame = decodePng(png);
+        const counts = new Map();
+        for (let i = 0; i < frame.width * frame.height; i++) {
+          const r = frame.pixels[i * 4];
+          const g = frame.pixels[i * 4 + 1];
+          const b = frame.pixels[i * 4 + 2];
+          if (frame.pixels[i * 4 + 3] < 250) continue;
+          if (!(r > 120 && r - Math.max(g, b) > 40)) continue;
+          const key = `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+        let best = null;
+        for (const [key, value] of counts) if (!best || value > best[1]) best = [key, value];
+        void label;
+        return best ? best[0] : null;
+      };
+      const fromArt = frame256 ? modalRed(frame256) : null;
+      check('256 帧（导出图）的红是网易云客户端的红', fromArt === '#fd364e', `${fromArt}`);
+      const ico16 = (() => {
+        for (let i = 0; i < count; i++) {
+          const entry = 6 + i * 16;
+          if ((ico[entry] === 0 ? 256 : ico[entry]) !== 16) continue;
+          const length = ico.readUInt32LE(entry + 8);
+          const offset = ico.readUInt32LE(entry + 12);
+          return ico.subarray(offset, offset + length);
+        }
+        return null;
+      })();
+      const fromVector = ico16 ? modalRed(ico16) : null;
+      check('16 帧（矢量）的红也是同一个色号', fromVector === '#fd364e', `${fromVector}`);
+      check(
+        '矢量定义里写的就是这个色号',
+        /const RED = \[0xfd, 0x36, 0x4e\]/.test(readStyle('tools/make-icon.mjs')),
+      );
     }
   }
   // The shell must actually use it, with the in-memory drawing left as the fallback.

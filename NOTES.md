@@ -1388,3 +1388,37 @@ gradient and no reason not to have it.
 Both halves are the same design, so they agree: the vector reproduces the export to 3.17% of pixels,
 which at 40px is invisible. `npm run icon` prints which sizes came from where, so the split cannot
 quietly change.
+
+## 2026-09-18 (8) — the checkerboard was real, and my circle was the wrong instrument
+
+The owner looked at the shipped icon and said there was still a little grey-white checker left below
+the circle. There was, and the cause is a neat illustration of assuming a shape:
+
+I had cut the mark out of their export **with a circle**, derived from the red pixels' bounding box -
+844px across, so radius 422, centre from the top edge. But the disc measures 844px across and only
+*833px* down: its bottom edge is darkened, so the red ends early. A circle taken from the width
+therefore reached about 13px past the real bottom, and that strip - y=925 to 935, which the sampling
+showed is **white and 207-grey** - went into every large frame with it.
+
+And the background really is a checkerboard: alternate squares of grey (207) and white (254), baked
+into the pixels, with every pixel at alpha 255. The viewer was honest; the file was not transparent.
+
+So the cut is now made **by flood fill**, not by geometry: everything reachable from the border through
+"neutral and light" pixels is background, everything else is the mark. That needs no assumption about
+the shape at all, and it copes with the darkened bottom edge, with the shadow, and with a checkerboard
+of any square size. The white glyph cannot be swallowed by it, because the disc surrounds it. Colour is
+then averaged from the mask's *core* - pixels that do not touch the background - so the export's own
+antialiasing against the checkerboard cannot leave a pale ring at the rim. The crop is the mask's
+square bounding box, so scaling to a square frame cannot squash a mark that is not perfectly round.
+
+### The check that should have existed first
+
+`check-shell.mjs` now asserts four things about the 256px frame: nothing opaque outside the disc's
+radius, transparent corners, an opaque interior (a shrunken disc would pass "reaches the edge" but not
+this), and full bleed. The first of those is precisely where the strip sat - the failing build would
+have been caught by it, because the residue lay at radius ~132 in a 128px frame.
+
+That is the real lesson of this round, and it is the same one as the apex before it: the eye found
+what the measurements did not, because I had chosen the instrument (a circle, a side-by-side) before
+asking what could go wrong. The cheap general fix is a **structural assertion** - "there is nothing
+outside the disc" - which does not care how the cut is implemented.

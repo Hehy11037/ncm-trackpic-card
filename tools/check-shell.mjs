@@ -14,6 +14,8 @@
 // duplicated here, and exercises the hover state machine through its awkward cases.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+
+import { decodePng } from './lib/png.mjs';
 import { join } from 'node:path';
 import { inflateSync } from 'node:zlib';
 
@@ -424,6 +426,7 @@ console.log('\n--- 应用图标（assets/icon.ico）---');
     let bad = 0;
     const sizes = [];
     let end = 0;
+    let frame256 = null;
     for (let i = 0; i < count; i++) {
       const entry = 6 + i * 16;
       const size = ico[entry] === 0 ? 256 : ico[entry];
@@ -434,12 +437,61 @@ console.log('\n--- 应用图标（assets/icon.ico）---');
       const pixelWidth = ico.readUInt32BE(offset + 16);
       const pixelHeight = ico.readUInt32BE(offset + 20);
       if (!signature || !iend || pixelWidth !== size || pixelHeight !== size) bad++;
+      if (size === 256) frame256 = ico.subarray(offset, offset + length);
       sizes.push(size);
       end = Math.max(end, offset + length);
     }
     check('每一帧都是完整的 PNG 且尺寸与目录一致', bad === 0, bad ? `${bad} 帧有问题` : sizes.join(' '));
     check('帧不越出文件', end === ico.length, `结束 ${end} / 文件 ${ico.length}`);
     check('包含 16px（托盘）与 256px（安装包）', sizes.includes(16) && sizes.includes(256));
+
+    /*
+     * The frames at 48px and up are cut out of the owner's export, whose "transparent" background is
+     * a grey/white **checkerboard baked into the pixels**. A cut that assumes a perfect circle leaves a
+     * strip of that checkerboard below the disc - which is exactly what shipped once, and the owner
+     * caught it by eye before any check did. So the disc is checked for residue: nothing opaque
+     * outside its radius, and empty corners.
+     */
+    if (frame256) {
+      const image = decodePng(frame256);
+      const centre = (image.width - 1) / 2;
+      let outside = 0;
+      let corners = 0;
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          if (image.pixels[(y * image.width + x) * 4 + 3] < 8) continue;
+          const distance = Math.hypot(x - centre, y - centre);
+          if (distance > image.width / 2 + 2) outside++;
+        }
+      }
+      for (const [x, y] of [[1, 1], [image.width - 2, 1], [1, image.height - 2], [image.width - 2, image.height - 2]]) {
+        if (image.pixels[(y * image.width + x) * 4 + 3] > 8) corners++;
+      }
+      check('256 帧盘外没有残留（导出图的棋盘格不能漏进来）', outside === 0, outside ? `${outside} 个不透明像素在盘外` : '');
+      check('256 帧四角透明', corners === 0, corners ? `${corners} 个角不透明` : '');
+      /*
+       * And the disc has to *fill* the frame: a cut that comes out too small leaves the icon looking
+       * shrunken beside its neighbours in the taskbar. Counting the opaque pixels well inside the
+       * radius and comparing with that circle's area catches a uniform shrinkage, which the
+       * "reaches the bottom edge" test below would not.
+       */
+      let inner = 0;
+      const innerRadius = (image.width / 2) * 0.95;
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          if (Math.hypot(x - centre, y - centre) > innerRadius) continue;
+          if (image.pixels[(y * image.width + x) * 4 + 3] > 8) inner++;
+        }
+      }
+      const expected = Math.PI * innerRadius * innerRadius;
+      check('256 帧没有缩小（该实的地方是实的）', inner > expected * 0.98, `${inner} / 期望约 ${Math.round(expected)}`);
+      // And the disc must still reach the frame's edge, or the icon looks shrunken next to others.
+      let lowest = -1;
+      for (let y = 0; y < image.height; y++) {
+        if (image.pixels[(y * image.width + Math.floor(image.width / 2)) * 4 + 3] > 8) lowest = y;
+      }
+      check('256 帧是满幅的（圆盘贴到边缘）', lowest >= image.height - 4, `中线最低不透明像素 y=${lowest}`);
+    }
   }
   // The shell must actually use it, with the in-memory drawing left as the fallback.
   const shellJs = readStyle('apps/overlay/main.mjs');

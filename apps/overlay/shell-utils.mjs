@@ -259,9 +259,12 @@ export function loadWindowState(file, displayBounds) {
       x: onScreen ? x : undefined,
       y: onScreen ? y : undefined,
       locked: typeof raw.locked === 'boolean' ? raw.locked : true,
+      // Whether the user's own cover was switched on. The image itself is a file beside this one, so
+      // only the flag is stored - a data URL in here would make the state file megabytes.
+      coverEnabled: typeof raw.coverEnabled === 'boolean' ? raw.coverEnabled : true,
     };
   } catch {
-    return { cardWidth: CARD_WIDTH_DEFAULT, x: undefined, y: undefined, locked: true };
+    return { cardWidth: CARD_WIDTH_DEFAULT, x: undefined, y: undefined, locked: true, coverEnabled: true };
   }
 }
 
@@ -270,14 +273,20 @@ export function saveWindowState(file, state) {
     writeFileSync(
       file,
       JSON.stringify(
-        { cardWidth: state.cardWidth, x: state.x, y: state.y, locked: state.locked === true },
+        {
+          cardWidth: state.cardWidth,
+          x: state.x,
+          y: state.y,
+          locked: state.locked === true,
+          coverEnabled: state.coverEnabled !== false,
+        },
         null,
         2,
       ),
       'utf8',
     );
   } catch {
-    // A failed write only costs the remembered position and lock state.
+    // A failed write only costs the remembered position, lock state and cover choice.
   }
 }
 

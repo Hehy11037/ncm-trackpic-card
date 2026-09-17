@@ -80,6 +80,7 @@ export class CardView {
       miniArtist: $('mini-artist'),
       miniFill: $('mini-fill'),
       lock: $('lock'),
+      coverPick: $('cover-pick'),
       mode: $('mode'),
       volume: $('volume'),
       volumeWrap: $('volume-wrap'),
@@ -312,6 +313,22 @@ export class CardView {
   }
 
   /* ----------------------------------------------------------------- cover */
+
+  /**
+   * Reflect the custom cover's state on its button.
+   *
+   * `empty` and `off` are both "not showing your picture", but a click does different things, so the
+   * state is on the element (`data-state`) rather than inferred from `aria-pressed`, and the tooltip
+   * comes from the same function that decides it - see ui/src/cover-choice.js.
+   */
+  setCoverState(state, title) {
+    const button = this.el.coverPick;
+    if (!button) return;
+    if (button.dataset.state !== state) button.dataset.state = state;
+    const pressed = state === 'on' ? 'true' : 'false';
+    if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
+    if (title && button.title !== title) button.title = title;
+  }
 
   applyCover(url) {
     if (url === this.currentCoverUrl) return;

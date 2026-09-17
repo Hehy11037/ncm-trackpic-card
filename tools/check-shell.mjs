@@ -320,6 +320,20 @@ console.log('\n--- 窗口位置持久化 ---');
    */
   check('旧存档没有锁定时默认锁定', loadWindowState(file, bounds).locked === true);
 
+  /*
+   * The custom cover's on/off flag lives in the same file, and only the flag does: the image itself is
+   * a file beside it, because a data URL in the state JSON would make it megabytes. A default of ON
+   * means "if there is a picture, show it" - with no picture the flag changes nothing.
+   */
+  saveWindowState(file, { cardWidth: 400, x: 120, y: 240, locked: true, coverEnabled: false });
+  check('自选封面的开关能存回（关）', loadWindowState(file, bounds).coverEnabled === false);
+  saveWindowState(file, { cardWidth: 400, x: 120, y: 240, locked: true, coverEnabled: true });
+  check('自选封面的开关能存回（开）', loadWindowState(file, bounds).coverEnabled === true);
+  writeFileSync(file, JSON.stringify({ cardWidth: 400, x: 1, y: 2, locked: true }), 'utf8');
+  check('旧存档没有这个字段时默认开', loadWindowState(file, bounds).coverEnabled === true);
+  const stateText = readFileSync(file, 'utf8');
+  check('状态文件里不存图片本身', stateText.length < 400 && !stateText.includes('base64'), `${stateText.length} 字节`);
+
   // A missing or corrupt file must fall back to a default rather than throwing.
   const missing = loadWindowState(join(dir, 'nope.json'), bounds);
   check('文件缺失时用默认值', missing.cardWidth === CARD_WIDTH_DEFAULT && missing.locked === true, JSON.stringify(missing));
@@ -540,6 +554,37 @@ console.log('\n--- 应用图标（assets/icon.ico）---');
   check('托盘用上了这个图标', /join\(ROOT, 'assets', 'icon\.ico'\)/.test(shellJs));
   check('读不到时退回内存绘制', /makeIconPng\(ICON_COLOR/.test(shellJs));
   check('矢量源也在仓库里', existsSync('assets/icon.svg'));
+}
+
+/* ------------------------------------------------------------------ custom cover */
+
+console.log('\n--- 自选封面（外壳这一侧）---');
+{
+  /*
+   * The user's own cover: chosen through a file dialog, kept as a file beside the state, and fetched
+   * by the renderer as a data URL - it cannot read a local file from an http page, and re-sending the
+   * image on every state broadcast would be wasteful. All three verbs live on the preload bridge; the
+   * UI must survive their absence, which is what the `?.` calls are for.
+   */
+  const shellJs = readStyle('apps/overlay/main.mjs');
+  const preload = readStyle('apps/overlay/preload.cjs');
+  check('preload 暴露了选图', /pickCover: \(\) => ipcRenderer\.invoke\('overlay:pick-cover'\)/.test(preload));
+  check('preload 暴露了开关', /toggleCover: \(\) => ipcRenderer\.send\('overlay:toggle-cover'\)/.test(preload));
+  check('preload 暴露了清除', /clearCover: \(\) => ipcRenderer\.send\('overlay:clear-cover'\)/.test(preload));
+  check('preload 暴露了取图（数据 URL）', /coverUrl: \(\) => ipcRenderer\.invoke\('overlay:cover-url'\)/.test(preload));
+
+  check('外壳注册了这三个动词', /ipcMain\.handle\('overlay:pick-cover'/.test(shellJs) && /ipcMain\.on\('overlay:toggle-cover'/.test(shellJs) && /ipcMain\.on\('overlay:clear-cover'/.test(shellJs));
+  check('选图只收图片类型', /extensions: \['png', 'jpg'/.test(shellJs));
+  check('选图会先解码，避免把坏文件存下来', /nativeImage\.createFromPath\(result\.filePaths\[0\]\)/.test(shellJs) && /isEmpty\(\)/.test(shellJs));
+  check('大图会先缩小再保存', /resize\(\{ width: COVER_MAX_WIDTH/.test(shellJs) && /COVER_MAX_WIDTH = \d+/.test(shellJs));
+  check('图片存成独立文件', /join\(app\.getPath\('userData'\), 'custom-cover\.png'\)/.test(shellJs));
+  check('状态广播带上封面的有无、开关与版本号', /cover: \{ has: cover\.url !== null, enabled: cover\.enabled, rev: cover\.rev \}/.test(shellJs));
+  // Only a revision can distinguish a second picture from the same one, so it has to be bumped.
+  check('选图与清除都会推进版本号', (shellJs.match(/cover\.rev \+= 1;/g) ?? []).length >= 2);
+  check('清除时删掉文件', /rmSync\(coverFilePath\(\), \{ force: true \}\)/.test(shellJs));
+  check('开关与清除都会持久化', (shellJs.match(/persistWindowState\(\)/g) ?? []).length >= 4);
+  // The tray menu is fixed at 小/中/大 + 退出; the cover belongs to the card, not the tray.
+  check('没有往托盘菜单里加东西', !/自选封面/.test(readStyle('apps/overlay/main.mjs').slice(readStyle('apps/overlay/main.mjs').indexOf('trayTemplate'))));
 }
 
 /* ----------------------------------------------------------- startup wiring */

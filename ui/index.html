@@ -202,6 +202,34 @@
               <path d="M12 5V2L7 6l5 4V7a5 5 0 0 1 4.6 7h2.1A7 7 0 0 0 12 5zm0 12a5 5 0 0 1-4.6-7H5.3A7 7 0 0 0 12 19v3l5-4-5-4z" />
             </svg>
           </button>
+          <!--
+            A cover of the user's own, which temporarily replaces the song's. Left click picks a file
+            the first time and toggles it afterwards; right click clears it and puts the song's cover
+            back. The state lives in the shell (see apps/overlay/main.mjs) so a restart remembers it.
+          -->
+          <button
+            class="icon-btn icon-btn--cover"
+            id="cover-pick"
+            title="自选封面（点击选一张图片，暂时替代歌曲封面）"
+            aria-label="自选封面"
+            aria-pressed="false"
+            data-state="empty"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <!--
+                A picture: frame, hills, sun - and *filled* paths, like every other icon on the card.
+                The frame is two subpaths wound in opposite directions, so the nonzero rule leaves the
+                middle open; a stroked rect would be simpler to write and would render as a solid block
+                in tools/render-icons.mjs, which only draws fills.
+              -->
+              <path
+                d="M5.4 5H18.4A2.2 2.2 0 0 1 20.6 7.2V16.8A2.2 2.2 0 0 1 18.4 19H5.4A2.2 2.2 0 0 1 3.2 16.8V7.2A2.2 2.2 0 0 1 5.4 5z
+                   M6.1 6.7V16.1A1.2 1.2 0 0 0 7.3 17.3H17.7A1.2 1.2 0 0 0 18.9 16.1V7.9A1.2 1.2 0 0 0 17.7 6.7H6.1z"
+              />
+              <path d="M6.4 15.7L9.9 11.5L12.4 14.6L14.4 12.6L17.2 15.7z" />
+              <path d="M7.2 9.3A1.4 1.4 0 1 1 10 9.3A1.4 1.4 0 1 1 7.2 9.3z" />
+            </svg>
+          </button>
           <div class="top-bar__right">
             <button class="icon-btn" id="lock" title="锁定：不自动收起（L）" aria-label="锁定" aria-pressed="false">
               <svg class="icon-unlocked" viewBox="0 0 24 24" aria-hidden="true">

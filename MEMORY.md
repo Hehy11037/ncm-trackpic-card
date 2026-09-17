@@ -344,14 +344,30 @@ Each of these cost real time. The reason matters more than the rule.
     arrives while `playingState !== 2` is therefore stored and applied on the transition to playing,
     and reported with `deferred: true` and `confirmed` undefined - not as a failure, or the card
     would undo a jump that is going to happen.
-34. **The client auto-updates, and the version is part of every contract.** On 2026-09-18 it went
+33. **No browser can be launched from the tooling shell.** Re-confirmed with the exact failure:
+    `msedge`/`chrome --headless=new` (and `--single-process --no-sandbox`) die with
+    `FATAL:mojo\public\cpp\platform\platform_channel.cc:108 Check failed: 拒绝访问` - the sandbox
+    blocks the named pipes Chromium's multi-process IPC needs, and the NetEase client dies the same
+    way (`platform_channel.cc(85)`) when it is started from here because it cannot write its profile
+    under `%LOCALAPPDATA%\Netease`. `tools/shot.mjs` cannot run either. Everything visual is therefore
+    reconstructed (`npm run icons`, `tools/transport-layout.mjs`) or seen by the owner - and the
+    client must be started by the owner from a normal shell.
+34. **A command that changes the field the card reads is not the same as a command that means
+    something.** `setMode` dispatched `playing/onUpdate {playingMode, lastPlayingMode}` - the last
+    line of the client's own mode effect - and it changed the mode, moved the client's icon and came
+    back confirmed. It also skipped the rest of the effect, which re-draws every queue entry's
+    `randomOrder`: that re-draw *is* the shuffle, so 随机播放 replayed the previous random order. The
+    client's own action is `playing/switchPlayingMode {playingMode, triggerScene: 'sysTray',
+    HeartBeatFlage: false}`, and `tools/probe-mode-action.mjs` is how the two are told apart (it reads
+    the queue, not the mode). Ask what a control is *for*, not whether its state changed.
+35. **The client auto-updates, and the version is part of every contract.** On 2026-09-18 it went
     from `3.1.39.205426` (the build every measurement in `docs/contracts.md` was taken on) to
     `3.1.40.205461`, applying an update it had already downloaded when it next exited - during the
     session, unnoticed until `relaunch-ncm.ps1` started printing the version. Treat a version change
     as "every contract is unverified": the discovery is by shape, so it may simply fail, and the seek
     signature, the mode action and the volume method all have to be re-measured. Nothing else in this
     file is worth as much as knowing which build answered.
-35. **`relaunch-ncm.ps1` writes a log to `.scratch/relaunch.log`.** The owner reported "I restarted
+36. **`relaunch-ncm.ps1` writes a log to `.scratch/relaunch.log`.** The owner reported "I restarted
     the client many times and it still says no debug channel", and from outside there was no way to
     tell three different stories apart: the launch never carried the flags, the client ignored them,
     or the client died on startup (a sandboxed shell does this - it cannot write its profile under

@@ -494,20 +494,29 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
       case 'setMode': {
         const mode = typeof command.mode === 'string' ? command.mode : null;
         if (!mode) throw new Error('setMode requires a mode');
-        const playing = store.getState().playing || {};
-        const previous = str(playing.playingMode);
         /*
-         * Exactly what the client's own mode button ends up doing.
+         * The client's own action, not a hand-rolled store write.
          *
-         * Tapping 'store.dispatch' while clicking that button recorded no 'playing/*' action at all,
-         * so the action could not be read off; it was found by trying it. This is the last thing the
-         * client's own effect does - 'put({type:'onUpdate', payload:{playingMode, lastPlayingMode}})'
-         * - and the mode icon in the client's own footer follows it, which is the receipt.
-         * 'lastPlayingMode' is the mode we came *from*: dispatch 'playCycle' while in 'playRandom'
-         * and the client shows 'playingMode: playCycle, lastPlayingMode: playRandom'.
+         * This used to dispatch 'playing/onUpdate {playingMode, lastPlayingMode}' - the last line of
+         * the client's own mode effect, which was as far as the bundle could be read at the time. It
+         * worked as far as the *state* went: the mode changed, and the client's own icon followed it.
+         *
+         * What it skipped is the rest of that effect, and the difference is observable. Switching to
+         * 随机播放 through the effect re-draws every queue entry's 'randomOrder' - that is the shuffle
+         * - and through 'onUpdate' it does not, so "shuffle" would replay the previous random order
+         * instead of shuffling. Measured by dispatching both and reading the queue
+         * (.scratch/try-mode-actions.mjs): the randomOrder values all changed under
+         * 'switchPlayingMode' and were untouched under 'onUpdate'.
+         *
+         * 'triggerScene' is the value the client's own code passes when the *app* changes the mode
+         * rather than a click inside its own window (module 10's scene enum, 'sysTray'), which is
+         * exactly this situation.
          */
-        dispatch({ type: 'playing/onUpdate', payload: { playingMode: mode, lastPlayingMode: previous } });
-        return 'dispatch:playing/onUpdate(' + (previous || '?') + ' -> ' + mode + ')';
+        dispatch({
+          type: 'playing/switchPlayingMode',
+          payload: { playingMode: mode, triggerScene: 'sysTray', HeartBeatFlage: false },
+        });
+        return 'dispatch:playing/switchPlayingMode(' + mode + ')';
       }
       case 'seek': {
         const ms = num(command.positionMs);

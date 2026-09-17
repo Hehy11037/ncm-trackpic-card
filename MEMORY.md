@@ -311,10 +311,18 @@ Each of these cost real time. The reason matters more than the rule.
 27. **A hover panel has to be reachable, not just adjacent.** The volume panel was right-aligned to
     the card's edge and sat 0.6u above the button, with `:hover` on the button's 4.6u box deciding
     everything - so it opened up and to the *left* of the pointer, and the pointer had to cross
-    ground belonging to neither (where `:hover` had already ended) before it could arrive. It is
-    centred on the button now, overlaps the button's box by 0.4u, and `installVolumeBar` holds
-    `data-open` for 280ms after the pointer leaves, cancelling the delay if it arrives. A hover
-    affordance needs a path from the trigger to itself, and that path has to cost nothing.
+    ground belonging to neither (where `:hover` had already ended) before it could arrive. It
+    overlaps the button's box by 0.4u, and `installVolumeBar` holds `data-open` for 280ms after the
+    pointer leaves, cancelling the delay if it arrives. A hover affordance needs a path from the
+    trigger to itself, and that path has to cost nothing.
+    The owner then asked for the panel itself to go - no border, the bar on the button's own axis,
+    the number above the slider's dot. Three constraints that pull against each other, and each one
+    has a reason in the CSS: the bar is centred because `.volume-pop` is `left: 50%` with
+    `translateX(-50%)` and the bar is its **only element in flow**; the readout is absolutely
+    positioned because anything in flow would push the bar off that axis; it comes **after** the thumb
+    in the markup because `.thumb:hover ~ .value` can only select forwards; and the thumb had to stop
+    being `pointer-events: none` for that `:hover` to exist at all (a press on it still reaches the
+    bar, which is what owns the scrub handler).
 28. **A drag target gets its hit area from a `::before` overlay, not from padding.** Padding moves
     everything measured after it (the colour band gets away with it only because nothing is measured
     below the band); a 1.48u progress bar is ~6px tall and a 6px target is not a target. And any new

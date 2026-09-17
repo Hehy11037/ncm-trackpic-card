@@ -71,7 +71,7 @@ function fakeView() {
     volumeBar: { dataset: {}, setAttribute() {} },
     volumeFill: { style: {} },
     volumeThumb: { style: {} },
-    volumeValue: { textContent: '' },
+    volumeValue: { textContent: '', style: {} },
     progress: { dataset: {}, removeAttribute: () => delete view.el.progress.dataset.scrubbing },
     fill: { style: {} },
     progressThumb: { style: {} },

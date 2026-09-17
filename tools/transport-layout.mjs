@@ -87,13 +87,9 @@ export function transportRowLayout(css) {
    * the right still lands inside the card - the button's centre is only 2.3u from the card's
    * content edge.
    */
-  const popoverWidth =
-    css.value('.volume-bar', 'width') +
-    css.value('.volume-pop', 'gap') +
-    css.value('.volume-pop__value', 'min-width') +
-    css.shorthand('.volume-pop', 'padding', 1) * 2 +
-    css.shorthand('.volume-pop', 'padding', 3) * 2 +
-    2 * U_PER_PX;
+  const popoverWidth = css.value('.volume-bar', 'width');
+  const readoutWidth = css.value('.volume-bar__value', 'min-width');
+  const volumeCentre = centreOf(volumeLeft, side);
 
   /*
    * Whether the two side slots really are the same width.
@@ -121,10 +117,17 @@ export function transportRowLayout(css) {
     controls,
     popover: {
       width: popoverWidth,
-      /** Centred on the volume button - what the pointer expects - and clamped by the card. */
-      centre: centreOf(volumeLeft, side),
-      left: centreOf(volumeLeft, side) - popoverWidth / 2,
-      right: centreOf(volumeLeft, side) + popoverWidth / 2,
+      /** Centred on the volume button's own axis - what the pointer expects. */
+      centre: volumeCentre,
+      left: volumeCentre - popoverWidth / 2,
+      right: volumeCentre + popoverWidth / 2,
+      /**
+       * How far the readout reaches, following the thumb. Worst case is the thumb at either end:
+       * the value is `min-width` wide and centred on it.
+       */
+      readoutWidth,
+      readoutLeftAtZero: volumeCentre - popoverWidth / 2 - readoutWidth / 2,
+      readoutRightAtFull: volumeCentre + popoverWidth / 2 + readoutWidth / 2,
     },
   };
 }

@@ -415,31 +415,32 @@
 /*
  * The volume bar, revealed on hover.
  *
- * It pops *up* rather than down: below the transport row is the colour band, and a panel
- * there would cover the background picker the pointer is about to use. `pointer-events:
- * none` while hidden matters - an invisible 16u slab overlapping the card would swallow
- * clicks intended for the controls above it.
+ * Three things the owner asked for, and the reasons they are not free:
  *
- * **Centred on the button, and close enough to reach.** The first version was right-aligned
- * to the card's edge (to keep it inside) and sat 0.6u *above* the button - so it appeared up
- * and to the left of the pointer, and the pointer could not cross that 0.6u gap before the
- * panel faded out. It is centred now, which means it has to be narrow enough to fit: the
- * button's centre is 2.3u from the card's content edge, so the panel's half-width has to be
- * under 9.34u and it is 16u wide. It also overlaps the button's box by 0.4u, so there is no
- * gap to cross at all - and `ui/src/main.js` holds it open for a moment after the pointer
- * leaves, for the case where the pointer goes around the outside.
+ *  - **No panel.** There was a bordered, tinted box around the bar with the number inside it. The
+ *    bar is the whole control; the box was decoration that also made the control look like a menu.
+ *    Removing it means the readout can no longer be a flex sibling (it would push the bar off the
+ *    button's axis), so it is positioned over the thumb instead.
+ *  - **The bar is centred on the button's axis.** `.volume-pop` is `left: 50%` with
+ *    `translateX(-50%)`, and the bar is its only element in flow, so the bar's centre is the
+ *    button's centre. That is only true while nothing else takes up horizontal space inside the
+ *    popover - which is the other reason the number is absolutely positioned.
+ *  - **The number rides above the thumb, on hover.** `.thumb:hover ~ .value` needs the readout to
+ *    come *after* the thumb in the markup, and it needs the thumb to be hoverable, so the thumb no
+ *    longer sets `pointer-events: none`: a press on it still reaches the bar (the scrub handler is
+ *    bound there and events bubble, and the ratio is measured from the bar's own rect, never from
+ *    the event target).
+ *
+ * It pops *up* rather than down: below the transport row is the colour band, and a panel there would
+ * cover the background picker the pointer is about to use. `pointer-events: none` while hidden
+ * matters - an invisible 10u strip overlapping the card would swallow clicks meant for the controls
+ * above it. And it overlaps the button's box by 0.4u so there is no gap for the pointer to cross;
+ * `ui/src/main.js` holds it open for a moment after the pointer leaves as well.
  */
 .volume-pop {
   position: absolute;
   left: 50%;
   bottom: calc(100% - var(--u) * 0.4);
-  display: flex;
-  align-items: center;
-  gap: calc(var(--u) * 0.6);
-  padding: calc(var(--u) * 0.7) calc(var(--u) * 0.9);
-  border-radius: calc(var(--u) * 1);
-  background: var(--scrim);
-  border: 1px solid var(--panel-line);
   transform: translateX(-50%) translateY(calc(var(--u) * 0.6));
   opacity: 0;
   pointer-events: none;
@@ -451,14 +452,6 @@
   opacity: 1;
   transform: translateX(-50%) translateY(0);
   pointer-events: auto;
-}
-
-.volume-pop__value {
-  min-width: calc(var(--u) * 3);
-  text-align: right;
-  font-size: var(--fs-time);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-faint);
 }
 
 /*
@@ -503,13 +496,43 @@
   transform: translateY(-50%) scale(0.5);
   opacity: 0;
   transition: opacity 140ms, transform 140ms;
-  pointer-events: none;
+  /* Hoverable, so the readout above it can key off `:hover`. A press still reaches the bar. */
+  cursor: pointer;
 }
 
 .volume-pop:hover .volume-bar__thumb,
 .volume-bar[data-scrubbing='true'] .volume-bar__thumb {
   opacity: 1;
   transform: translateY(-50%) scale(1);
+}
+
+/*
+ * The readout: above the thumb, following it, and only while the pointer is on the thumb (or while
+ * dragging, when the pointer is somewhere else by definition).
+ *
+ * `min-width` is declared so the layout can be checked arithmetically: a number centred on the thumb
+ * at 100% reaches half of this past the bar's right end, and that has to stay inside the card.
+ */
+.volume-bar__value {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + var(--u) * 0.5);
+  min-width: calc(var(--u) * 3);
+  transform: translateX(-50%);
+  text-align: center;
+  font-size: var(--fs-time);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+}
+
+.volume-bar__thumb:hover ~ .volume-bar__value,
+.volume-bar[data-scrubbing='true'] .volume-bar__value {
+  opacity: 1;
 }
 
 /* -------------------------------------------------------------------- foot */

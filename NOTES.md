@@ -1209,3 +1209,57 @@ same reason: at 16px, a unit of glyph is worth more than a unit of margin.
 
 So the tooling earned its keep three times, and the commits hold all three families:
 `npm run icon:candidates` redraws whichever family is current, and the rejected ones are in history.
+
+## 2026-09-18 (4) — "用这个，不要动里面的图案": measuring a finished icon instead of designing one
+
+The owner sent a third image and, with it, a constraint that changed the method: *use this, and do not
+change the inner pattern or the colours*. That is not a design brief, it is a specification - and it
+rules out exactly what I had been doing for the previous two icons, which was looking at a reference
+and deciding.
+
+So the numbers came out of the image. `tools/measure-icon.mjs` reads the PNG (through the new shared
+`tools/lib/png.mjs` decoder), finds the red disc and the navy circle by colour class, measures the
+white glyph as connected column-runs, and reports everything in a 24-unit box with the disc set to 24:
+
+```
+红盘   直径 840  颜色 208,39,34        → 半径 12.00, #d02722
+蓝圆   直径 494  颜色 13,25,39         → 半径  7.06, #0d1927   （比例 0.5881）
+白图形 x 7.34→12.43  y 8.49→15.49  描边 1.29
+暂停条 x 13.03→14.31 与 15.37→16.63  y 8.66→15.31（圆头）
+尖端红 x 9.06→13.54  y 10.94→13.03
+```
+
+The first run of that script was wrong twice, in ways worth remembering: `boundsOf` called its
+predicate with the pixel only, while the predicates I handed it needed `(pixel, x, y)` - so "white
+inside the navy circle" found nothing at all, silently. And "red inside the navy circle" measured the
+circle's own antialiased rim, where navy meets red and the pixels are brownish, and reported the whole
+circle as the tip. Both were found by *looking at the numbers and disbelieving them*, and the fix for
+the second one is a probe that stays a few pixels inside the rim.
+
+### What the measurements showed that the eye had not
+
+My previous version of this same design had the navy circle at 0.664 of the disc and a 1.4 stroke,
+because I had "improved" both for legibility at 16px. The reference is 0.588 and 1.29 - and enlarging
+them is exactly the kind of change the owner was telling me to stop making. **A reference is not a
+starting point when the person who drew it says it is the answer.**
+
+The other thing only the pixels could say: **the red triangle is painted under the white outline, not
+inside it.** Its apex reaches x=13.60 while the outline's outer edge stops at 12.43, so what looks
+like two shapes - a small red triangle inside, a red crescent at the tip - is one shape with a white
+band crossing it. I had modelled it as a red disc under the stroke, which is the same paint order and
+the wrong geometry: the measured shape is *flat*, 2.0 units tall and 4.6 wide.
+
+Its corners are rounded in the reference, which a filled path cannot express. Filling the triangle
+*and* stroking it with the same colour at 0.45 with round joins does - the joins bulge the corners by
+exactly that much.
+
+### Verifying a reproduction with a number
+
+`--compare` classifies both images' pixels (red / navy / white / other), aligns them by the red disc,
+and counts disagreements: **4.6%**, spread evenly as single-pixel differences along every edge. The
+first version of that number was 24.9%, which was the icon's transparent corners against the
+reference's white page - a comparison that has to composite before it means anything.
+
+Two more tools came out of this: the glyph printed as a character map (the fastest way to see a shape
+exactly), and a side-by-side image with the disagreements marked. Both are in `.scratch`, and the
+numbers they produced are in `tools/make-icon.mjs` next to the design they describe.

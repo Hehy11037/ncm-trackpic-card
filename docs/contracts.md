@@ -1,5 +1,13 @@
 # Verified contracts — NetEase Cloud Music client 3.1.39.205426
 
+> **The client updated itself to `3.1.40.205461` on 2026-09-18 at 01:45:33** — the same day, and
+> during the session. Every measurement below was taken against `3.1.39.205426`, so **none of it is
+> confirmed for the new build**. The next thing to do, once the debug channel is reachable again, is
+> to re-run the measurements this file describes: the module discovery (it finds things by shape, so
+> it may simply fail), `audioplayer.seek`'s signature, the `playing/onUpdate` mode write, and the
+> `AudioPlayer` wrapper's volume method. `npm run relaunch` prints the version on every run, which is
+> how the update was noticed at all — the client applies a downloaded update when it next exits.
+
 Everything below was **measured on this machine**, not inferred from
 documentation. Each item says how it was verified so a future client update can
 be re-checked quickly.
@@ -8,7 +16,8 @@ Client under test:
 
 ```
 ProductName    : NetEase Cloud Music
-ProductVersion : 3.1.39.205426
+ProductVersion : 3.1.39.205426   (contracts measured here)
+                 3.1.40.205461   (installed 2026-09-18, NOT yet re-verified)
 Engine         : CEF (libcef.dll), not Electron
 Install path   : C:\Program Files\Netease\CloudMusic
 Profile data   : %LOCALAPPDATA%\Netease\CloudMusic  (CEF dir: webapp91x64)

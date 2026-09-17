@@ -585,7 +585,7 @@ export class CardView {
     const button = this.el.lock;
     if (!button) return;
     button.setAttribute('aria-pressed', String(!!locked));
-    button.title = locked ? '已锁定：不会自动收起（L）' : '锁定：不自动收起（L）';
+    button.title = locked ? '已锁定（L）' : '锁定（L）';
   }
 
   /* ------------------------------------------------------------------- face */

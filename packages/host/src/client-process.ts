@@ -77,9 +77,9 @@ export interface Diagnosis {
 const DETAIL: Record<ConnectionState, string> = {
   ready: '已同步',
   connecting: '正在连接客户端…',
-  'client-not-running': '未检测到网易云音乐，请先启动客户端',
-  'needs-relaunch': '客户端正在运行，但没有开启同步通道；需要重启一次客户端以启用同步',
-  'no-target': '通道已开启，但还没找到播放页面（客户端可能仍在启动）',
+  'client-not-running': '没找到网易云客户端，请先启动',
+  'needs-relaunch': '客户端没开同步通道，重启一次即可',
+  'no-target': '通道已开，没找到播放页面（客户端可能还在启动）',
   disconnected: '连接已断开，正在重试…',
 };
 

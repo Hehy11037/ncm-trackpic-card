@@ -427,7 +427,7 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
          * guessed by the caller.
          */
         const state = playingState();
-        if (state === null) throw new Error('读不到 playingState，无法判断该播放还是暂停');
+        if (state === null) throw new Error('读不到 playingState，判断不了播放/暂停');
         const want = state === 2 ? 'pause' : 'play';
         transport(want);
         return 'pipeline:setAudioPlayer' + (want === 'pause' ? 'Pause' : 'Play') + ':from' + state;
@@ -525,7 +525,7 @@ export function buildBridgeScript(options: BridgeScriptOptions): string {
           throw new Error('找不到客户端的 AudioPlayer.seek');
         }
         if (!lastPlayId) {
-          throw new Error('还没有拿到 playId（进度流尚未推送），无法跳转');
+          throw new Error('还没拿到 playId，无法跳转');
         }
         /*
          * Whole seconds, and a fresh 'seekId' per call.

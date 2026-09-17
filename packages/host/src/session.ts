@@ -289,7 +289,7 @@ export class ClientSession extends EventEmitter {
         ok: false,
         command,
         via: 'none',
-        message: '尚未连接到客户端，无法发送控制指令',
+        message: '还没连上客户端，无法发送指令',
       };
     }
 
@@ -348,7 +348,7 @@ export class ClientSession extends EventEmitter {
       message:
         `${pressed.message}，但客户端没有变化（playingState ${before ?? '?'} → ${after ?? '?'}` +
         (beforeSongId !== null ? `，歌曲仍为 ${beforeSongId}` : '') +
-        '）；可能是客户端的「全局快捷键」被关闭，或按键被其它程序接收' +
+        '）；可能被全局快捷键或其它程序接管' +
         (diagnosis ? `；${diagnosis}` : ''),
     };
   }
@@ -543,7 +543,7 @@ export class ClientSession extends EventEmitter {
       }
     }
 
-    return { ok: false, command, via: 'none', message: '指令已发送，但没有收到执行回执' };
+    return { ok: false, command, via: 'none', message: '指令已发出，没收到回执' };
   }
 
   /* ------------------------------------------------------------ internals */
@@ -671,7 +671,7 @@ export class ClientSession extends EventEmitter {
       );
       if (!health?.alive) {
         // The page navigated or the bridge was torn down: re-establish it.
-        this.emit('log', 'debug', '桥接脚本已失效，正在重新注入');
+        this.emit('log', 'debug', '桥接脚本失效，重新注入');
         const found = this.discovery;
         if (!found?.audioModuleId) {
           this.disconnectSession('桥接失效且无发现缓存');

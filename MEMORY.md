@@ -466,12 +466,17 @@ Each of these cost real time. The reason matters more than the rule.
   their art); the vector in `tools/make-icon.mjs` drives 16-40, where the pause bars are 1.29 units =
   **1.4 pixels** and a downscaled 1024px export turns them to grey. Rasterising the vector *at* that
   size keeps their edges. `npm run icon` reports which sizes came from where.
-* **An export that looks transparent may not be.** The owner's file showed a checkerboard in a viewer
-  but every pixel measured alpha 255, on a grey frame over a white page. So the disc is cut
-  geometrically: alpha is the circle's coverage, and the colour averages only samples *inside* it -
-  which is also what stops the white page bleeding a light fringe around the rim. The disc sat at 82%
-  of the canvas (844/1024) with a ~90px margin, so cropping to it also gives the full-bleed shape an
-  icon wants.
+* **An export that looks transparent may not be - and the "transparency" may be a checkerboard baked
+  into the pixels.** The owner's file showed a checkerboard in a viewer; read, every pixel measured
+  alpha 255, and the background is literally grey (207) and white (254) squares. So the mark is cut by
+  **flood fill from the border** over "neutral and light" pixels, not by a geometric circle: the disc's
+  red measures 844px across but 833px down (its bottom edge is darkened), so a circle derived from the
+  width reached ~13px past the disc and carried a strip of checkerboard into the icon - which is what
+  the owner saw and reported. Colour is averaged from the mask's *core* (pixels not touching the
+  background) so the export's own antialiasing against the checkerboard cannot leave a pale rim.
+* `check-shell.mjs` now guards the whole class of failure: the 256px frame must have **nothing opaque
+  outside the disc's radius** (which is where that strip sat), transparent corners, an opaque interior
+  (not a shrunken disc) and full bleed. Prefer a check like this to re-measuring by eye.
 * `tools/icon-candidates.mjs` and the two rejected designs are in git history.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.

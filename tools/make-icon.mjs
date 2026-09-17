@@ -267,32 +267,103 @@ const SOURCE_PATH = (() => {
 const SOURCE_MIN = 48;
 const source = existsSync(SOURCE_PATH) ? decodePng(readFileSync(SOURCE_PATH)) : null;
 
-/** The exported art's disc, found by its red pixels. */
-function sourceDisc(image) {
+/**
+ * Cut the mark out of the export by flood fill, not with a circle.
+ *
+ * The export's "transparent" background is a grey/white **checkerboard** baked into the pixels (207
+ * and 254 squares), and the disc is not a perfect circle - its red spans 844px across but 833px down,
+ * because the bottom edge is darkened. A geometric circle derived from the width therefore reached
+ * ~13px past the disc's bottom and carried a strip of that checkerboard into the icon, which is
+ * exactly what the owner spotted.
+ *
+ * So: everything reachable from the border through "neutral and light" pixels *is* background, and the
+ * rest is the mark. The white glyph cannot be swallowed by that, because the disc surrounds it.
+ */
+function markMask(image) {
+  const isBackground = (x, y) => {
+    const at = (y * image.width + x) * 4;
+    const r = image.pixels[at];
+    const g = image.pixels[at + 1];
+    const b = image.pixels[at + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    return max - min < 30 && max > 150;
+  };
+  const background = new Uint8Array(image.width * image.height);
+  const stack = [];
+  const push = (x, y) => {
+    if (x < 0 || y < 0 || x >= image.width || y >= image.height) return;
+    const index = y * image.width + x;
+    if (background[index] || !isBackground(x, y)) return;
+    background[index] = 1;
+    stack.push(index);
+  };
+  for (let x = 0; x < image.width; x++) {
+    push(x, 0);
+    push(x, image.height - 1);
+  }
+  for (let y = 0; y < image.height; y++) {
+    push(0, y);
+    push(image.width - 1, y);
+  }
+  while (stack.length) {
+    const index = stack.pop();
+    const x = index % image.width;
+    const y = (index - x) / image.width;
+    push(x - 1, y);
+    push(x + 1, y);
+    push(x, y - 1);
+    push(x, y + 1);
+  }
+
+  // The mark, and its *core*: pixels that are inside and not touching the background. Colours are
+  // averaged from the core only, so the export's own antialiasing against the checkerboard does not
+  // leave a pale ring around the rim.
+  const mask = new Uint8Array(image.width * image.height);
+  const core = new Uint8Array(image.width * image.height);
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -1;
   let maxY = -1;
   for (let y = 0; y < image.height; y++) {
     for (let x = 0; x < image.width; x++) {
-      const at = (y * image.width + x) * 4;
-      const [r, g, b, a] = [image.pixels[at], image.pixels[at + 1], image.pixels[at + 2], image.pixels[at + 3]];
-      if (a < 8) continue;
-      if (!(r > 110 && r - g > 60 && r - b > 60)) continue;
+      const index = y * image.width + x;
+      if (background[index]) continue;
+      mask[index] = 1;
       if (x < minX) minX = x;
       if (y < minY) minY = y;
       if (x > maxX) maxX = x;
       if (y > maxY) maxY = y;
+      let edge = false;
+      for (let dy = -1; dy <= 1 && !edge; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= image.width || ny >= image.height || background[ny * image.width + nx]) {
+            edge = true;
+            break;
+          }
+        }
+      }
+      if (!edge) core[index] = 1;
     }
   }
   if (maxX < 0) return null;
-  // The top edge is the reliable one: the bottom carries a shadow that clips the red short.
-  const radius = (maxX - minX + 1) / 2;
-  return { cx: minX + radius, cy: minY + radius, radius };
+  // A square crop around the mark, so scaling to a square frame cannot squash it.
+  const side = Math.max(maxX - minX + 1, maxY - minY + 1);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  return { mask, core, x0: cx - side / 2, y0: cy - side / 2, side };
 }
 
-/** One frame from the exported art: the disc cut out of the page, then area-averaged down. */
-function renderFromSource(image, disc, size) {
+/**
+ * One frame from the exported art: the mark's mask sampled into a square frame and area-averaged down.
+ *
+ * `alpha` is the mask's coverage; the colour comes from the mask's *core* where the samples have one,
+ * falling back to the mask itself at the rim, so nothing pale from the export's checkerboard-adjacent
+ * pixels reaches the icon.
+ */
+function renderFromSource(image, cut, size) {
   const sub = 4;
   const rgba = Buffer.alloc(size * size * 4, 0);
   for (let y = 0; y < size; y++) {
@@ -300,43 +371,56 @@ function renderFromSource(image, disc, size) {
       let r = 0;
       let g = 0;
       let b = 0;
-      let inside = 0;
+      let coreCount = 0;
+      let edgeR = 0;
+      let edgeG = 0;
+      let edgeB = 0;
+      let edgeCount = 0;
       for (let sy = 0; sy < sub; sy++) {
         for (let sx = 0; sx < sub; sx++) {
           const u = (x + (sx + 0.5) / sub) / size;
           const v = (y + (sy + 0.5) / sub) / size;
-          const px = Math.round(disc.cx + (u - 0.5) * 2 * disc.radius);
-          const py = Math.round(disc.cy + (v - 0.5) * 2 * disc.radius);
+          const px = Math.floor(cut.x0 + u * cut.side);
+          const py = Math.floor(cut.y0 + v * cut.side);
           if (px < 0 || py < 0 || px >= image.width || py >= image.height) continue;
-          const dx = px - disc.cx;
-          const dy = py - disc.cy;
-          if (dx * dx + dy * dy > disc.radius * disc.radius) continue;
-          const at = (py * image.width + px) * 4;
-          r += image.pixels[at];
-          g += image.pixels[at + 1];
-          b += image.pixels[at + 2];
-          inside++;
+          const index = py * image.width + px;
+          if (!cut.mask[index]) continue;
+          const at = index * 4;
+          if (cut.core[index]) {
+            r += image.pixels[at];
+            g += image.pixels[at + 1];
+            b += image.pixels[at + 2];
+            coreCount++;
+          } else {
+            edgeR += image.pixels[at];
+            edgeG += image.pixels[at + 1];
+            edgeB += image.pixels[at + 2];
+            edgeCount++;
+          }
         }
       }
-      if (!inside) continue;
+      const covered = coreCount + edgeCount;
+      if (!covered) continue;
       const to = (y * size + x) * 4;
-      rgba[to] = Math.round(r / inside);
-      rgba[to + 1] = Math.round(g / inside);
-      rgba[to + 2] = Math.round(b / inside);
-      rgba[to + 3] = Math.round((inside / (sub * sub)) * 255);
+      const use = coreCount > 0 ? coreCount : edgeCount;
+      rgba[to] = Math.round((coreCount > 0 ? r : edgeR) / use);
+      rgba[to + 1] = Math.round((coreCount > 0 ? g : edgeG) / use);
+      rgba[to + 2] = Math.round((coreCount > 0 ? b : edgeB) / use);
+      rgba[to + 3] = Math.round((covered / (sub * sub)) * 255);
     }
   }
   return rgba;
 }
 
-const disc = source ? sourceDisc(source) : null;
+const cut = source ? markMask(source) : null;
+const disc = cut;
 const SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 const images = SIZES.map((size) => {
-  const fromArt = source && disc && size >= SOURCE_MIN;
+  const fromArt = source && cut && size >= SOURCE_MIN;
   return {
     size,
     source: fromArt ? 'art' : 'vector',
-    png: encodePng(fromArt ? renderFromSource(source, disc, size) : renderRgba(DESIGN, size), size, size),
+    png: encodePng(fromArt ? renderFromSource(source, cut, size) : renderRgba(DESIGN, size), size, size),
   };
 });
 writeFileSync(`${OUT}/icon.ico`, encodeIco(images));
@@ -347,8 +431,8 @@ const vectorSizes = images.filter((image) => image.source === 'vector').map((ima
 console.log(`图标 → ${OUT}/`);
 console.log(`  icon.svg       矢量源（viewBox 24x24，三块路径）`);
 console.log(`  icon.ico       ${SIZES.length} 个尺寸: ${SIZES.join(' ')}（共 ${(encodeIco(images).length / 1024).toFixed(1)}KB）`);
-if (disc) {
-  console.log(`  ${' '.repeat(14)}≥${SOURCE_MIN}: 用导出图（圆盘 ${disc.cx.toFixed(1)},${disc.cy.toFixed(1)} r=${disc.radius.toFixed(1)}）→ ${artSizes.join(' ')}`);
+if (cut) {
+  console.log(`  ${' '.repeat(14)}≥${SOURCE_MIN}: 用导出图（抠图 ${cut.side.toFixed(0)}px 见方，从 ${SOURCE_PATH}）→ ${artSizes.join(' ')}`);
   console.log(`  ${' '.repeat(14)}<${SOURCE_MIN}: 用矢量（小尺寸下条不会糊）→ ${vectorSizes.join(' ')}`);
 } else {
   console.log(`  ${' '.repeat(14)}没有找到 ${SOURCE_PATH}，全部用矢量`);

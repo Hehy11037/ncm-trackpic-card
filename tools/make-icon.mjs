@@ -20,8 +20,9 @@
 // the icon has to be committed - the tray reads it at startup and an installer will read it at
 // packaging time, on machines that never ran this script.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
+import { decodePng } from './lib/png.mjs';
 import { encodePng, parsePath, rasterizeAlpha, styledSubpaths } from './svg-path.mjs';
 
 const argv = process.argv.slice(2);
@@ -245,12 +246,111 @@ const svg = [
 ].join('\n');
 writeFileSync(`${OUT}/icon.svg`, svg);
 
+/*
+ * Large frames come from the owner's own exported artwork, small ones from the vector above.
+ *
+ * This is the split the measurements ask for. The exported art carries a subtle radial gradient in the
+ * red disc and the navy circle that flat fills cannot reproduce, and at 48px and up there is room for
+ * it - but the pause bars are 1.29 units, i.e. 1.4 *pixels* at the 16px the tray draws, and
+ * downscaling a 1024px export to that size turns them to grey. Rasterising the vector *at* 16px keeps
+ * their edges. So: `assets/icon-source.png` for 48 and above, the vector below.
+ *
+ * The export is opaque - the transparency it appears to have in a viewer is not in the file (every
+ * pixel measures alpha 255, on a grey frame and a white page) - so the disc is cut out here
+ * geometrically: alpha is the coverage of the circle, and the colour averages only the samples inside
+ * it, which avoids the white page bleeding a light fringe around the rim.
+ */
+const SOURCE_PATH = (() => {
+  const at = argv.indexOf('--source');
+  return at >= 0 ? argv[at + 1] : `${OUT === 'assets' ? 'assets' : OUT}/icon-source.png`;
+})();
+const SOURCE_MIN = 48;
+const source = existsSync(SOURCE_PATH) ? decodePng(readFileSync(SOURCE_PATH)) : null;
+
+/** The exported art's disc, found by its red pixels. */
+function sourceDisc(image) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) {
+      const at = (y * image.width + x) * 4;
+      const [r, g, b, a] = [image.pixels[at], image.pixels[at + 1], image.pixels[at + 2], image.pixels[at + 3]];
+      if (a < 8) continue;
+      if (!(r > 110 && r - g > 60 && r - b > 60)) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX < 0) return null;
+  // The top edge is the reliable one: the bottom carries a shadow that clips the red short.
+  const radius = (maxX - minX + 1) / 2;
+  return { cx: minX + radius, cy: minY + radius, radius };
+}
+
+/** One frame from the exported art: the disc cut out of the page, then area-averaged down. */
+function renderFromSource(image, disc, size) {
+  const sub = 4;
+  const rgba = Buffer.alloc(size * size * 4, 0);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let inside = 0;
+      for (let sy = 0; sy < sub; sy++) {
+        for (let sx = 0; sx < sub; sx++) {
+          const u = (x + (sx + 0.5) / sub) / size;
+          const v = (y + (sy + 0.5) / sub) / size;
+          const px = Math.round(disc.cx + (u - 0.5) * 2 * disc.radius);
+          const py = Math.round(disc.cy + (v - 0.5) * 2 * disc.radius);
+          if (px < 0 || py < 0 || px >= image.width || py >= image.height) continue;
+          const dx = px - disc.cx;
+          const dy = py - disc.cy;
+          if (dx * dx + dy * dy > disc.radius * disc.radius) continue;
+          const at = (py * image.width + px) * 4;
+          r += image.pixels[at];
+          g += image.pixels[at + 1];
+          b += image.pixels[at + 2];
+          inside++;
+        }
+      }
+      if (!inside) continue;
+      const to = (y * size + x) * 4;
+      rgba[to] = Math.round(r / inside);
+      rgba[to + 1] = Math.round(g / inside);
+      rgba[to + 2] = Math.round(b / inside);
+      rgba[to + 3] = Math.round((inside / (sub * sub)) * 255);
+    }
+  }
+  return rgba;
+}
+
+const disc = source ? sourceDisc(source) : null;
 const SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
-const images = SIZES.map((size) => ({ size, png: encodePng(renderRgba(DESIGN, size), size, size) }));
+const images = SIZES.map((size) => {
+  const fromArt = source && disc && size >= SOURCE_MIN;
+  return {
+    size,
+    source: fromArt ? 'art' : 'vector',
+    png: encodePng(fromArt ? renderFromSource(source, disc, size) : renderRgba(DESIGN, size), size, size),
+  };
+});
 writeFileSync(`${OUT}/icon.ico`, encodeIco(images));
 writeFileSync(`${OUT}/icon-256.png`, images[images.length - 1].png);
 
+const artSizes = images.filter((image) => image.source === 'art').map((image) => image.size);
+const vectorSizes = images.filter((image) => image.source === 'vector').map((image) => image.size);
 console.log(`图标 → ${OUT}/`);
 console.log(`  icon.svg       矢量源（viewBox 24x24，三块路径）`);
 console.log(`  icon.ico       ${SIZES.length} 个尺寸: ${SIZES.join(' ')}（共 ${(encodeIco(images).length / 1024).toFixed(1)}KB）`);
-console.log(`  icon-256.png   给 README 用`);
+if (disc) {
+  console.log(`  ${' '.repeat(14)}≥${SOURCE_MIN}: 用导出图（圆盘 ${disc.cx.toFixed(1)},${disc.cy.toFixed(1)} r=${disc.radius.toFixed(1)}）→ ${artSizes.join(' ')}`);
+  console.log(`  ${' '.repeat(14)}<${SOURCE_MIN}: 用矢量（小尺寸下条不会糊）→ ${vectorSizes.join(' ')}`);
+} else {
+  console.log(`  ${' '.repeat(14)}没有找到 ${SOURCE_PATH}，全部用矢量`);
+}
+console.log(`  icon-256.png   给 README 用${images[images.length - 1].source === 'art' ? '（来自导出图）' : ''}`);

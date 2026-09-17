@@ -1352,3 +1352,39 @@ One sandbox note for whoever runs the search next: it originally shelled out to 
 captured its stdout, which fails with EPERM under the file sandbox (no named pipes). The fix is to do
 the comparison *in-process*, not to retry the spawn another way - rendering with `stdio: 'ignore'` is
 allowed and is all that has to be a subprocess.
+
+## 2026-09-18 (7) — the export that only looked transparent, and the hybrid icon
+
+The owner sent the mark again, exported with a transparent background, and asked whether it met the
+requirements. Measured, it met most of them and not the one it was sent for:
+
+```
+尺寸        1024x1024                                    ✓
+左上角像素  [209, 209, 209, 255]                          ✗ 不是透明，是不透明的灰
+半透明像素  0                                             ✗ 完全没有任何 alpha 过渡
+红盘        844x832 in 1024, 留白 左90 上91 右90 下101     ✗ 占画面 82%，不是贴边
+红盘边缘    白→粉→红，约 2px 过渡                          ✓ 边缘是平滑的
+文字/阴影   无                                             ✓
+```
+
+So: a viewer draws a checkerboard for transparency, but the file this end received had none - alpha 255
+everywhere, on a grey frame around a white page. That is worth writing down because it is invisible
+from the preview: the only way to know is to read the alpha channel, and it took one line of script.
+
+Two things follow. The disc has to be **cut out geometrically** rather than trusted to an alpha
+channel: alpha becomes the coverage of the circle, and the colour averages only the samples *inside*
+it - which also avoids the white page bleeding a light fringe around the rim. And cropping to the disc
+gives the full-bleed shape an icon wants, since the export sat at 82% of its canvas.
+
+### The split, and why it is not a compromise
+
+`assets/icon-source.png` now drives **48, 64, 128 and 256** - the owner's own pixels, radial gradients
+included - and the vector in `tools/make-icon.mjs` drives **16, 20, 24, 32, 40**. The reason is
+arithmetic: the pause bars are 1.29 units, which is **1.4 pixels at the 16px a Windows tray draws**.
+Downscaling a 1024px export to that size averages each bar with its neighbours and turns three crisp
+marks into grey smudges; rasterising the vector *at* 16px keeps them. Above 48px there is room for the
+gradient and no reason not to have it.
+
+Both halves are the same design, so they agree: the vector reproduces the export to 3.17% of pixels,
+which at 40px is invisible. `npm run icon` prints which sizes came from where, so the split cannot
+quietly change.

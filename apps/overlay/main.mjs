@@ -890,7 +890,7 @@ function trayTemplate() {
 
 function createTray() {
   tray = new Tray(iconImage(16));
-  tray.setToolTip('Now Playing — 网易云同步卡片（单击显示/隐藏）');
+  tray.setToolTip('网易云同步卡片（单击显示/隐藏）');
   /*
    * Built once and held in a module-level binding. The menu no longer changes, and a menu that is
    * only referenced by the tray can be collected while it is open.

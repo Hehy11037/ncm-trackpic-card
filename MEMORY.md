@@ -499,6 +499,17 @@ Each of these cost real time. The reason matters more than the rule.
   exactly as they were - still chosen, still on - so the renderer needs a **revision counter**
   (`cover.rev`, bumped on pick and clear) to know the bytes changed; without it the card keeps drawing
   the first image forever. `shouldRefetchCover` is that rule, and it is unit-tested.
+* **Tooltips name the control and its gestures, and stop there.** The owner asked for this twice ("只要
+  自选封面和左键切换、右键清除"): `自选封面（左键选图，右键清除）` / `（左键切换，右键清除）`, `锁定（L）`,
+  `翻面（F）`, `关闭`, `展开`, `音量（点击静音）`. State words are worth keeping when they say what the state
+  *is* (`已锁定`, `已静音`), but explanations of the mechanism belong in the code comment. The same rule
+  covers the host's status strings, which are drawn in the card's status line:
+  `客户端正在运行，但没有开启同步通道；需要重启一次客户端以启用同步` became
+  `客户端没开同步通道，重启一次即可` - the action survives, the narration does not.
+* **The top bar is two groups, and a button that belongs to neither will not look centred.** Adding the
+  cover button as a third child of `.top-bar` (which is `justify-content: space-between`) left it *near*
+  the middle but visibly off it, because `space-between` equalises the gaps and the two sides are
+  different widths. It lives in `.top-bar__left` with the flip button, where the owner asked for it.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.
 

@@ -27,11 +27,15 @@ export function coverButtonState({ has = false, enabled = false } = {}) {
   return enabled ? 'on' : 'off';
 }
 
-/** The button's tooltip, which has to say what the next click will do. */
+/**
+ * The button's tooltip. Short on purpose: it names the control and the two gestures, and nothing else.
+ *
+ * `on` and `off` read the same because a left click switches either way; only before anything is chosen
+ * does it have to say "选图", since there is nothing to switch yet.
+ */
 export function coverButtonTitle(state) {
-  if (state === 'on') return '自选封面：开（点击暂时关掉，右键清除并恢复歌曲封面）';
-  if (state === 'off') return '自选封面：已选但关着（点击启用，右键清除）';
-  return '自选封面（点击选一张图片，暂时替代歌曲封面）';
+  if (state === 'empty') return '自选封面（左键选图，右键清除）';
+  return '自选封面（左键切换，右键清除）';
 }
 
 /**

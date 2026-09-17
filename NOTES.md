@@ -1514,3 +1514,38 @@ so the button cannot describe an action different from the one it performs.
 The glyph is drawn with *filled* paths like every other icon on the card: a stroked rectangle was the
 obvious way to draw a picture frame and rendered as a solid black block in `tools/render-icons.mjs`,
 which only draws fills. A preview that lies is worse than no preview.
+
+## 2026-09-18 (11) — two small things, one of which was a layout assumption
+
+**"This button is not in the middle."** It was not, and the reason is worth keeping: I had added the
+cover button as a *third* child of `.top-bar`, which is `justify-content: space-between`. With three
+children of different widths that does not centre the middle one - it equalises the gaps, so the button
+lands near the middle and visibly off it. The owner first read it as "should be centred", then settled it
+in one line: put it next to the flip button. It now lives in `.top-bar__left` with the flip, and
+`check-interaction.mjs` asserts the containment rather than trusting the class name.
+
+The lesson is smaller than the previous ones but the same shape: an element inherits whatever the
+container's layout rule means for *its* child count, and "I added it in the right place in the file" is
+not the same as "it renders where I meant".
+
+**Tooltips.** The owner asked for plain wording, and then widened it: shorten the text elsewhere too. So
+the cover button is now `自选封面（左键选图，右键清除）`, or `（左键切换，右键清除）` once something is
+chosen - the first click really does choose rather than switch, and that is the only difference the two
+states need to express. `锁定（L）` lost "不自动收起", `关闭到托盘` became `关闭`, and the tooltip test was
+rewritten to assert the *shape* (names the control, names both gestures, at most 20 characters) instead of
+three separate phrases, so a future rewording does not fail for the wrong reason.
+
+The same pass went over the host's status strings, because those are drawn in the card's status line
+rather than only logged. Fifteen strings changed, all in the same direction:
+
+```
+客户端正在运行，但没有开启同步通道；需要重启一次客户端以启用同步   ->  客户端没开同步通道，重启一次即可
+通道已开启，但还没找到播放页面（客户端可能仍在启动）                ->  通道已开，没找到播放页面（客户端可能还在启动）
+还没有拿到 playId（进度流尚未推送），无法跳转                      ->  还没拿到 playId，无法跳转
+读不到 playingState，无法判断该播放还是暂停                        ->  读不到 playingState，判断不了播放/暂停
+）；可能是客户端的「全局快捷键」被关闭，或按键被其它程序接收          ->  ）；可能被全局快捷键或其它程序接管
+```
+
+What was kept: the *action* ("重启一次即可"), and the state words that say what the state is (`已锁定`,
+`已静音`). What went: the narration. Console diagnostics and test names were left alone - nobody reads
+those in the UI, and shortening them only makes a failure harder to read.

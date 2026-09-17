@@ -983,6 +983,14 @@ console.log('\n--- 顶栏按钮 ---');
    */
   const coverAt = html.indexOf('id="cover-pick"');
   check('自选封面键在左边、翻面键之后', coverAt > flipAt && coverAt < lockAt);
+  // Same group as the flip button: the owner asked for it in the top-left, not floating mid-bar. The
+  // left group's markup runs from its class to the right group's, so containment is checkable as text.
+  const leftGroup = html.slice(html.indexOf('top-bar__left'), html.indexOf('top-bar__right'));
+  check(
+    '自选封面键与翻面键同组（左上角）',
+    leftGroup.includes('id="flip"') && leftGroup.includes('id="cover-pick"'),
+  );
+  check('左组有样式', readStyle('ui/styles/card.css').includes('.top-bar__left'));
   check('按钮带三态（data-state 与 aria-pressed）', /id="cover-pick"[\s\S]{0,400}?data-state="empty"/.test(html) && /id="cover-pick"[\s\S]{0,400}?aria-pressed="false"/.test(html));
   check('按钮有 tooltip 与无障碍名', /id="cover-pick"[\s\S]{0,400}?title="[^"]+"/.test(html) && /id="cover-pick"[\s\S]{0,400}?aria-label="自选封面"/.test(html));
   check('图标是填充路径（预览器只画填充）', !/id="cover-pick"[\s\S]{0,600}?stroke-width/.test(html));

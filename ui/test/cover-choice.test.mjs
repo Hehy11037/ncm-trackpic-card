@@ -44,13 +44,18 @@ test('button state: empty, off and on are three different things', () => {
   assert.equal(coverButtonState(), 'empty');
 });
 
-test('each state says what the next click does', () => {
-  assert.match(coverButtonTitle('empty'), /选一张/);
-  assert.match(coverButtonTitle('off'), /启用/);
-  assert.match(coverButtonTitle('on'), /关掉/);
-  // Right-clicking is the way back to the song's own cover, and the tooltip has to mention it.
-  assert.match(coverButtonTitle('on'), /右键/);
-  assert.match(coverButtonTitle('off'), /右键/);
+test('the tooltip is short, and names both gestures', () => {
+  // The owner asked for plain wording; what has to stay true is that the two gestures are named and
+  // that the first click is described as *choosing* (there is nothing to switch yet) rather than
+  // switching.
+  for (const state of ['empty', 'off', 'on']) {
+    const title = coverButtonTitle(state);
+    assert.match(title, /^自选封面（左键[^，]+，右键清除）$/, title);
+    assert.ok(title.length <= 20, `${title} (${title.length})`);
+  }
+  assert.match(coverButtonTitle('empty'), /左键选图/);
+  assert.match(coverButtonTitle('on'), /左键切换/);
+  assert.match(coverButtonTitle('off'), /左键切换/);
 });
 
 test('the image is fetched on the first sight of a cover', () => {

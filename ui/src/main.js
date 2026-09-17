@@ -719,7 +719,7 @@ async function boot() {
   // Reported because a failed preload degrades quietly: the close button falls back to
   // window.close(), but the lock toggle has nowhere to go. The shell forwards this to its
   // terminal. The roll-up itself does not depend on the bridge at all.
-  console.info(`[overlay] 桌面壳桥接: ${shell() ? '可用' : '不可用（浏览器预览模式或 preload 未加载）'}`);
+  console.info(`[overlay] 桌面壳桥接: ${shell() ? '可用' : '不可用（浏览器预览或 preload 未加载）'}`);
   // One-shot layout self-check, reported to the shell's terminal. Delayed so the first
   // layout, the cover and the palette are all in place.
   setTimeout(() => view.reportHitTargets(), 500);

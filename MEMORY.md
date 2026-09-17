@@ -451,13 +451,19 @@ Each of these cost real time. The reason matters more than the rule.
   of radius 1.05 at (12.50, 12.00) whose navy halo (radius 1.40) is what notches the first pause bar.
   So the paint order is bars, then the tip disc with its halo, then the white outline over the disc's
   left part, then the inner triangle. `--compare` went from 4.6% to **4.09%**.
-* **Rounding the play triangle's corners was tried and measured worse** (0.3 or 0.75 units moved the
-  apex to 12.19 or 11.72 against the reference's 12.43, and the disagreement rose to 4.59%). The
-  helper is still in `tools/make-icon.mjs` with the numbers in its comment, unused - the reference's
-  apex is a sharp path.
-* The one difference that remains is measured and documented in `tools/make-icon.mjs`: my white apex
-  band reads 10.97-12.19 across the centre against the reference's 11.46-12.43, so the apex is about
-  half a unit thicker. Everything else lands within a pixel.
+* **The play triangle's apex is truncated, not pointed** - and that was the owner's "extra patch of
+  black and red at the upper right". A pointed apex puts the white band's right edge at 11.44 at
+  y=11.0; the reference's is at 12.28, because its apex ends in a short, almost vertical edge. So navy
+  showed where the reference is white, and the tip disc's red showed where its white still covered.
+  Flat apex at x=11.90 with a 0.7 half-height: **4.09% -> 3.17%** of pixels. Found by a colour-run
+  scan along y=11.0, not by looking - the eye had accepted the point for two rounds.
+* **Rounding the corners was tried and measured worse** (0.3/0.75 took the apex to 12.19/11.72 and the
+  disagreement to 4.59%), so that generator is unused in `tools/make-icon.mjs` with the numbers kept in
+  its comment. `--flat`, `--apex` and `--round` still drive a search; `.scratch/search-apex-compare.mjs`
+  scores candidates with `--compare`.
+* Remaining, and intrinsic to a flat-colour reproduction: the reference has a **subtle radial gradient**
+  in the red disc and the navy circle, which flat fills cannot reproduce. That is most of what is left
+  of the 3.17%. Using the owner's PNG for the large frames would remove it.
 * `tools/icon-candidates.mjs` and the two rejected designs are in git history.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.

@@ -27,6 +27,34 @@ import { encodePng, parsePath, rasterizeAlpha, styledSubpaths } from './svg-path
 const argv = process.argv.slice(2);
 const at = argv.indexOf('--out');
 const OUT = at >= 0 ? argv[at + 1] : 'assets';
+/*
+ * Calibration knobs. `tools/measure-icon.mjs` says the reference's white apex is *blunt* - its right
+ * edge already reaches x=12.3 at y=11.0 - while a plain stroked triangle gives a sharp point whose
+ * edge only gets there at y=12, leaving extra navy and red showing around it. Rounding the path's
+ * corners is the fix, but the radius and the apex position interact (rounding pulls the outer apex
+ * left, so the path apex has to move right to compensate). These two flags let a search find the pair
+ * that matches, instead of me guessing it.
+ */
+const apexAt = argv.indexOf('--apex');
+const ROUND = argv.indexOf('--round') >= 0 ? Number(argv[argv.indexOf('--round') + 1]) : null;
+const APEX = apexAt >= 0 ? Number(argv[apexAt + 1]) : 11.79;
+const FLAT = argv.indexOf('--flat') >= 0 ? Number(argv[argv.indexOf('--flat') + 1]) : 0.7;
+/*
+ * **The play triangle's apex is truncated, not pointed.**
+ *
+ * This is what the owner spotted as "an extra patch of black and an extra patch of red" at the
+ * triangle's upper right, and it took a colour-run scan to find: with a pointed apex the white band's
+ * right edge at y=11.0 sits at 11.44, while the reference's sits at 12.28 - because the reference's
+ * apex ends in a short, almost vertical edge, so at that height it is still solid white. Everything
+ * outside the point - navy where the reference has white, and the tip disc's red showing where the
+ * reference's white still covers - is the "extra" the eye was picking up.
+ *
+ * 0.7 and 11.90 came out of a search over both knobs judged by `--compare`: 4.09% of pixels for the
+ * pointed apex, **3.17%** for this one. `--flat`/`--apex`/`--round` on this script still drive the
+ * same search.
+ */
+const APEX_HALF = FLAT;
+const APEX_X = 11.9;
 
 /* ------------------------------------------------------------------- design */
 
@@ -130,7 +158,16 @@ const DESIGN = [
   { name: 'tip-halo', d: circle(12.5, 12, 1.4), ink: NAVY },
   { name: 'tip', d: circle(12.5, 12, 1.05), ink: RED },
   // The white outline covers the tip disc's left part, so only its right side shows.
-  { name: 'play', d: 'M7.99 9.14L11.79 12L7.99 14.85z', ink: WHITE, fill: false, strokeWidth: 1.29 },
+  {
+    name: 'play',
+    d:
+      ROUND === null
+        ? `M7.99 9.14L${APEX_X} ${12 - APEX_HALF}L${APEX_X} ${12 + APEX_HALF}L7.99 14.85z`
+        : roundedTriangle([[7.99, 9.14], [APEX, 12], [7.99, 14.85]], ROUND),
+    ink: WHITE,
+    fill: false,
+    strokeWidth: 1.29,
+  },
   { name: 'inner', d: 'M9.06 10.96L10.8 12L9.06 13.04z', ink: RED, strokeWidth: 0.25 },
 ];
 

@@ -1310,3 +1310,45 @@ What is still different is now written down in the source rather than left for t
 rediscover: my apex band reads 10.97–12.19 across the centre line against the reference's 11.46–12.43,
 about half a unit thicker. Everything else - the navy circle's ratio, the bars, the tip disc and its
 halo, the inner triangle's left edge - lands within a pixel.
+
+## 2026-09-18 (6) — "an extra patch of black and red": the apex was truncated
+
+The owner looked at the finished icon and described a defect precisely: on the play triangle's upper
+right there was an extra patch of black and an extra patch of red. They were right, and the cause was
+not something any of my previous checks could see.
+
+A colour-run scan along y=11.0 - one unit above the glyph's centre - said it in a line:
+
+```
+参考  ...  W 10.46–12.31  |  R 12.34–12.83  |  N 12.94–13.51  |  W 13.54–14.34  ...
+我    ...  W  9.75–11.53  |  R 11.72–13.03  |  W 13.03–14.25  ...
+```
+
+The reference's white is still solid out to x=12.31 at that height. Mine stops at 11.53. So the
+reference's apex is **truncated** - it ends in a short, nearly vertical edge - while mine came to a
+point, and the stroke's round join made a small beak. Everything around the beak was therefore wrong in
+a way that reads as debris: navy where the reference is white, and the tip disc's red showing where the
+reference's white still covers it.
+
+The fix is two numbers: a flat apex at x=11.90 with a half-height of 0.7. A search over both, judged by
+`--compare` rather than by eye, took the disagreement from **4.09% to 3.17%**. The earlier attempt to
+fix the same area by rounding the triangle's *corners* had made it worse (4.59%); the shape was not
+too sharp, it was the wrong shape.
+
+### What this round says about checking
+
+Three rounds of side-by-side images and a 4%-of-pixels metric all failed to surface it, because a
+4% disagreement spread along every edge looks the same whether or not one feature is the wrong shape.
+What found it was asking a **narrow question of the numbers**: "what is the colour sequence along this
+one line?". That is now the third time in this project that a precise question beat a broad
+measurement - after the mode command that changed state without shuffling, and the paused seek that
+was silently dropped.
+
+The `.scratch` tools that did it are worth keeping: `map-tip.mjs` (character map of a region, both
+images, mismatches marked), `scan-centre.mjs` (colour runs along chosen lines), `search-apex-compare.mjs`
+(parameter search scored by the pixel comparison).
+
+One sandbox note for whoever runs the search next: it originally shelled out to `measure-icon.mjs` and
+captured its stdout, which fails with EPERM under the file sandbox (no named pipes). The fix is to do
+the comparison *in-process*, not to retry the spawn another way - rendering with `stdio: 'ignore'` is
+allowed and is all that has to be a subprocess.

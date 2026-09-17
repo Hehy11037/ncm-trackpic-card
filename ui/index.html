@@ -148,9 +148,12 @@
                   <path class="cross" d="M14.3 9.6 19.1 14.4M19.1 9.6 14.3 14.4" />
                 </svg>
               </button>
-              <!-- Revealed on hover; kept in the DOM so the drag can start without waiting. -->
+              <!--
+                Just the bar, centred on the button's own axis: no panel around it, and the number
+                rides above the thumb rather than sitting in a box beside it. `volume-pop` is what
+                the hover state is attached to; it carries no visible box of its own any more.
+              -->
               <div class="volume-pop" id="volume-pop">
-                <span class="volume-pop__value" id="volume-value">50</span>
                 <div
                   class="volume-bar"
                   id="volume-bar"
@@ -162,7 +165,13 @@
                   tabindex="0"
                 >
                   <div class="volume-bar__fill" id="volume-fill"></div>
-                  <div class="volume-bar__thumb" id="volume-thumb" aria-hidden="true"></div>
+                  <div class="volume-bar__thumb" id="volume-thumb"></div>
+                  <!--
+                    The readout belongs to the thumb, so it comes after it in the markup: the rule
+                    that shows it is `.thumb:hover ~ .value`, which only reaches forwards. It is
+                    `aria-hidden` because the slider already reports its value.
+                  -->
+                  <span class="volume-bar__value" id="volume-value" aria-hidden="true">50</span>
                 </div>
               </div>
             </div>

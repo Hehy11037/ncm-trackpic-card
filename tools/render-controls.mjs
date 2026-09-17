@@ -112,36 +112,47 @@ function drawProgressRow(fraction, { scrubbing = false } = {}) {
   return canvas;
 }
 
-/* -------------------------------------------------------------- volume panel */
+/* -------------------------------------------------------------- volume control */
 
 const volumeBarWidth = css.value('.volume-bar', 'width');
 const volumeBarHeight = css.value('.volume-bar', 'height');
-const popPaddingY = css.shorthand('.volume-pop', 'padding', 0);
-const popPaddingX = css.shorthand('.volume-pop', 'padding', 3);
-const popGap = css.value('.volume-pop', 'gap');
-const valueWidth = css.value('.volume-pop__value', 'min-width');
+const valueWidth = css.value('.volume-bar__value', 'min-width');
 const volumeThumb = css.value('.volume-bar__thumb', 'width');
 const popRight = layout.popover.right;
 const popLeft = layout.popover.left;
-const popHeight = popPaddingY * 2 + Math.max(volumeBarHeight, volumeThumb);
+/** The volume button's own centre - the axis the bar is supposed to sit on. */
+const volumeAxis = layout.controls.volume.centre;
 
+/**
+ * The volume control as it now is: the bar alone, centred on the button's axis, with the readout
+ * above the thumb.
+ *
+ * There is no panel any more - the owner asked for it gone - so what is worth drawing is the part
+ * that could go wrong: whether the bar really is centred on the button, and whether the number, which
+ * follows the thumb to either end, stays inside the card. Text cannot be drawn here, so the readout
+ * is its declared `min-width` box.
+ */
 function drawVolumePanel(fraction) {
   const unit = args.unit;
-  const height = Math.round((6 + popHeight + 6) * unit);
+  const readoutHeight = 1.6;
+  const gap = 0.5;
+  const height = Math.round((6 + readoutHeight + gap + volumeBarHeight + 6) * unit);
   const canvas = createCanvas(Math.round(100 * unit), height);
-  const top = 6 * unit;
-  const h = popHeight * unit;
 
-  // The panel itself.
-  roundRect(canvas, popLeft * unit, top, (popRight - popLeft) * unit, h, 1 * unit, FAINT);
-  // The readout: text is not drawable here, so its declared box is drawn instead.
-  roundRect(canvas, popLeft * unit + popPaddingX * unit, top + popPaddingY * unit, valueWidth * unit, h - 2 * popPaddingY * unit, 0.4 * unit, TRACK);
-  // The bar.
-  const barX = (popLeft + popPaddingX + valueWidth + popGap) * unit;
-  const barY = top + h / 2 - (volumeBarHeight * unit) / 2;
-  roundRect(canvas, barX, barY, volumeBarWidth * unit, volumeBarHeight * unit, (volumeBarHeight * unit) / 2, TRACK);
-  roundRect(canvas, barX, barY, volumeBarWidth * unit * fraction, volumeBarHeight * unit, (volumeBarHeight * unit) / 2, INK);
-  circle(canvas, barX + volumeBarWidth * unit * fraction, barY + (volumeBarHeight * unit) / 2, (volumeThumb * unit) / 2, INK);
+  const barX = popLeft * unit;
+  const barY = (6 + readoutHeight + gap) * unit;
+  const barH = volumeBarHeight * unit;
+  const thumbX = barX + volumeBarWidth * unit * fraction;
+
+  // The button's axis, for the eye to judge the centring against.
+  const axis = volumeAxis * unit;
+  for (let y = 0; y < canvas.height; y++) blend(canvas, Math.round(axis), y, [255, 0, 0], 0.28);
+
+  roundRect(canvas, barX, barY, volumeBarWidth * unit, barH, barH / 2, TRACK);
+  roundRect(canvas, barX, barY, volumeBarWidth * unit * fraction, barH, barH / 2, INK);
+  circle(canvas, thumbX, barY + barH / 2, (volumeThumb * unit) / 2, INK);
+  // The readout, centred on the thumb and sitting above it.
+  roundRect(canvas, thumbX - (valueWidth * unit) / 2, 6 * unit, valueWidth * unit, readoutHeight * unit, 0.4 * unit, TRACK);
   return canvas;
 }
 
@@ -205,8 +216,9 @@ console.log(
     `滑块 ${thumbSize}u，中心跟着百分比走（所以 0% 和 100% 时各自探出轨道 ${(thumbSize / 2).toFixed(2)}u）`,
 );
 console.log(
-  `音量面板: ${popLeft.toFixed(2)}u → ${popRight.toFixed(2)}u（宽 ${(popRight - popLeft).toFixed(2)}u），` +
-    `音量条 ${volumeBarWidth}x${volumeBarHeight}u，滑块 ${volumeThumb}u`,
+  `音量条: ${popLeft.toFixed(2)}u → ${popRight.toFixed(2)}u（宽 ${volumeBarWidth}u，中心 ${volumeAxis.toFixed(2)}u），` +
+    `滑块 ${volumeThumb}u，数字 ${valueWidth}u 宽、跟着滑块（0% 时到 ${layout.popover.readoutLeftAtZero.toFixed(2)}u，` +
+    `100% 时到 ${layout.popover.readoutRightAtFull.toFixed(2)}u）`,
 );
 console.log(`\n渲染器自检（画出的像素 vs 样式表里写的数）：`);
 let failures = 0;

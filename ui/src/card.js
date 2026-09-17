@@ -202,7 +202,7 @@ export class CardView {
     const percent = Math.round(level * 100);
     if (this.el.volumeFill) this.el.volumeFill.style.width = `${percent}%`;
     if (this.el.volumeThumb) this.el.volumeThumb.style.left = `${percent}%`;
-    if (this.el.volumeValue) this.el.volumeValue.textContent = String(percent);
+    this.setVolumeReadout(percent);
     if (this.el.volume) {
       this.el.volume.dataset.level = level <= 0.001 ? 'mute' : level < 0.5 ? 'low' : 'high';
     }
@@ -230,11 +230,22 @@ export class CardView {
       this.el.volumeFill.style.width = `${percent}%`;
       this.el.volumeThumb.style.left = `${percent}%`;
     }
-    if (this.el.volumeValue && this.el.volumeValue.textContent !== String(percent)) {
-      this.el.volumeValue.textContent = String(percent);
-    }
+    this.setVolumeReadout(percent);
     if (bar) bar.setAttribute('aria-valuenow', String(percent));
     if (button) button.title = silent ? '已静音（点击恢复）' : `音量 ${percent}%（点击静音）`;
+  }
+
+  /**
+   * Put the number above the thumb, and keep it the same number the slider reports.
+   *
+   * Positioned by the same percentage as the thumb rather than at a fixed spot, because it belongs
+   * to the thumb: the card shows it when the pointer is over the thumb, and it has to be *there*.
+   */
+  setVolumeReadout(percent) {
+    const value = this.el.volumeValue;
+    if (!value) return;
+    if (value.textContent !== String(percent)) value.textContent = String(percent);
+    value.style.left = `${percent}%`;
   }
 
   /**

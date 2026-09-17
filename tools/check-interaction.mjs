@@ -389,18 +389,49 @@ console.log('\n--- 控制条几何（从样式表算出来） ---');
   // The row has to fit: two slots, the centre group, and the two gaps.
   check('一行放得下', layout.between * 2 + layout.centre + layout.side * 2 <= layout.rowWidth + 0.01);
   /*
-   * The volume panel: centred on the button, and narrow enough that the half sticking out to the
-   * right still lands inside the card. It used to be right-aligned to the card's edge, which put it
-   * up and to the *left* of the pointer - and, with a 0.6u gap above the button, the pointer could
-   * not reach it before it faded out.
+   * The volume control: just the bar, on the button's axis, with the readout riding above the thumb.
+   *
+   * The owner asked for exactly this - no panel, the bar centred on the button, and the number shown
+   * above the slider's dot on hover. Each constraint is here because satisfying the others broke it:
+   * the readout has to be *out of flow* or it pushes the bar off the axis, it has to come *after* the
+   * thumb in the markup for `.thumb:hover ~ .value` to reach it, and the thumb has to accept pointer
+   * events for that `:hover` to happen at all.
    */
   check(
     '音量条以音量键为中心',
     Math.abs(layout.popover.centre - at('volume')) < 0.05,
-    `面板中心 ${layout.popover.centre.toFixed(2)}u / 按键中心 ${at('volume').toFixed(2)}u`,
+    `条中心 ${layout.popover.centre.toFixed(2)}u / 按键中心 ${at('volume').toFixed(2)}u`,
   );
-  check('音量条向左不压到播放键', layout.popover.left > at('playPause') + layout.play / 2, `面板左缘 ${layout.popover.left.toFixed(2)}u`);
-  check('音量条向右不出卡片', layout.popover.right <= 100.01, `面板右缘 ${layout.popover.right.toFixed(2)}u`);
+  check('音量条向左不压到播放键', layout.popover.left > at('playPause') + layout.play / 2, `条左缘 ${layout.popover.left.toFixed(2)}u`);
+  check('音量条向右不出卡片', layout.popover.right <= 100.01, `条右缘 ${layout.popover.right.toFixed(2)}u`);
+  // The readout follows the thumb, so its worst case is the thumb at either end.
+  check(
+    '数字跟着滑块也不会出卡片',
+    layout.popover.readoutLeftAtZero > 0 && layout.popover.readoutRightAtFull < 100,
+    `0% 时 ${layout.popover.readoutLeftAtZero.toFixed(2)}u，100% 时 ${layout.popover.readoutRightAtFull.toFixed(2)}u`,
+  );
+  check('音量条没有外框', css.declaration('.volume-pop', 'border') === null && css.declaration('.volume-pop', 'background') === null);
+  check('音量条没有内边距把条挤走', css.declaration('.volume-pop', 'padding') === null);
+  check('数字用绝对定位（否则会把条挤离中轴）', /\.volume-bar__value\s*\{[^}]*position:\s*absolute/.test(cardText));
+  check('数字挂在滑块上方', /\.volume-bar__value\s*\{[^}]*bottom:\s*calc\(100%/.test(cardText));
+  // The value must sit after the thumb in the markup, or the sibling selector cannot reach it.
+  const volumeMarkup = html.slice(html.indexOf('id="volume-bar"'), html.indexOf('id="volume-pop"') + 2000);
+  check(
+    '数字在滑块之后（兄弟选择器只能向后选）',
+    volumeMarkup.indexOf('id="volume-thumb"') < volumeMarkup.indexOf('id="volume-value"'),
+  );
+  check('鼠标移到滑块时显示数字', /\.volume-bar__thumb:hover ~ \.volume-bar__value/.test(cardText));
+  check('拖动时数字也显示', /data-scrubbing='true'\] \.volume-bar__value/.test(cardText));
+  check(
+    '滑块可悬停（不能再是 pointer-events: none）',
+    /\.volume-bar__thumb\s*\{[^}]*cursor:\s*pointer/.test(cardText) &&
+      !/\.volume-bar__thumb\s*\{[^}]*pointer-events:\s*none/.test(cardText),
+  );
+  check(
+    '数字跟随滑块移动',
+    /setVolumeReadout/.test(readStyle('ui/src/card.js')) &&
+      /value\.style\.left = `\$\{percent\}%`/.test(readStyle('ui/src/card.js')),
+  );
 
   /*
    * The row's height is declared, not derived from its contents.

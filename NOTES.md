@@ -1070,3 +1070,71 @@ Noticed while reading `card.js` for the above: the progress bar has `role="slide
 `aria-valuenow="0"`, and nothing ever wrote to it again. It announced a position of 0 for the life of
 the window - worse than having no role, because the role is a promise. It is updated from the frame
 loop now (only when the whole percent changes), and from the scrub preview.
+
+## 2026-09-18 — the client updated itself, and "the state changed" was not the same as "it worked"
+
+The owner rebooted, and the overlay said `needs-relaunch`. That turned into the most useful round of
+the project, for a reason nobody was looking for.
+
+### The version moved under the session
+
+`npm run relaunch` was made to print the exe version, and the very next run read:
+
+```
+EXE: cloudmusic.exe  (FileVersion 3.1.40.205461)
+```
+
+Three minutes earlier the same path reported `3.1.39.205426`. The client had downloaded an update on
+09-07 and **applies it when it next exits** - which is what the reboot, and then the owner's repeated
+"quit and start again", were doing. Every contract in `docs/contracts.md` was measured on 3.1.39.
+
+So the whole dependency surface was re-checked with the channel back up. It survived: discovery still
+finds the store and the audio pipeline by shape (module ids moved - `1186`→`1191`, `225`→`228`,
+`11`→`8` - and no code did), the page target is unchanged, client lyrics work, the `AudioPlayer`
+wrapper is still module `4` with byte-identical `seek`/`setVolume`, and the mode enum is unchanged.
+The one thing not yet re-checked is a `seek` while a track is actually playing.
+
+The lesson is not "the update broke something" - it is that **the client is a dependency that changes
+itself**, and the only reason it was noticed is that a tool now prints the version on every run.
+
+### The mode command changed the field and skipped the meaning
+
+While re-reading the 3.1.40 bundle, the client's own mode change showed up in a place it had not been
+seen before: its tray shortcut dispatches `playing/switchPlayingMode {playingMode, triggerScene,
+HeartBeatFlage}`. The card was dispatching `playing/onUpdate {playingMode, lastPlayingMode}` - the
+*last line* of the effect that `switchPlayingMode` runs.
+
+Everything observable agreed that this worked: the mode changed, the client's own icon followed, the
+confirmation came back true. What it skipped is the rest of the effect, which walks the play queue
+and re-draws every entry's `randomOrder`. That re-draw is the shuffle. So 随机播放 replayed the
+previous random order - a control that looked perfect and did not do the one thing its name promises.
+
+The two are told apart by reading the **queue**, not the mode:
+
+```
+onUpdate → 随机    randomOrder 全是旧值      ← 没洗牌
+switch   → 随机    randomOrder 全部重抽      ← 洗牌
+```
+
+`tools/probe-mode-action.mjs` does exactly that, through the host and the bridge, and puts the mode
+back. It is the third time in this project that a command returned success while not doing its job -
+after `next` returning `ok` and `playing/setVolume` writing the store without touching the volume - so
+the general rule is now written down in MEMORY: ask what a control is **for**, not whether its state
+changed.
+
+### The volume control, cut back to the bar
+
+The owner's note: no border, the bar on the volume button's axis, and the number shown above the
+slider's dot when the pointer is on it. Removing the panel removed the thing that held the readout,
+and the readout is what the whole geometry then hangs on:
+
+- the bar is centred on the button because `.volume-pop` is `left: 50%` + `translateX(-50%)` and the
+  bar is its only element **in flow** - so the number had to become absolutely positioned;
+- `.thumb:hover ~ .value` only selects *forwards*, so the number has to come after the thumb in the
+  markup;
+- and that `:hover` cannot happen at all while the thumb is `pointer-events: none`, so the thumb
+  became hoverable - which is safe because a press on it still reaches the bar, and the scrub handler
+  always measures from the bar's own rect, never from the event target.
+
+The arithmetic is checked rather than eyeballed: the bar is 10u centred at 90.66u, and the 3u readout
+following the thumb reaches 84.16u at 0% and 97.16u at 100% - inside the card at both ends.

@@ -54,112 +54,120 @@ const triangle = (cx, cy, size) =>
 
 /* ------------------------------------------------------------------- palettes */
 
-// From the reference the owner sent: a teal machined player with a round screen, a magenta play
-// button and two pale pill keys either side of it. The colours are sampled from that photograph -
-// teal body, deep-navy screen, magenta accent - and the slab's thickness is suggested by drawing a
-// darker body a fraction lower and letting it peek out along the bottom edge. An isometric view would
-// be truer to the photograph and unreadable at 16px, so the mark is the device seen face-on.
-const TEAL = [0x6e, 0xc6, 0xcc];
-const TEAL_LIGHT = [0x9a, 0xdd, 0xe0];
-const TEAL_DARK = [0x46, 0x9c, 0xa6];
-const SCREEN = [0x13, 0x21, 0x36];
-const SCREEN_EDGE = [0x2c, 0x3d, 0x58];
-const MAGENTA = [0xe0, 0x3a, 0x8e];
-const PAPER = [0xf4, 0xf8, 0xfa];
-const PILL = [0xc9, 0xe6, 0xe9];
+// From the second reference the owner sent, and their one change to it: a red disc, a dark navy
+// circle on it, and a white play triangle *outlined* (not filled) beside two white pause bars - with
+// a sliver of red showing at the triangle's tip. The outer shape is a circle rather than the
+// reference's rounded square, which is what the owner asked for; it removes the square's corners from
+// the silhouette and makes the mark read the same at every size.
+const RED = [0xd1, 0x2a, 0x22];
+const RED_DEEP = [0xb4, 0x20, 0x1a];
+const NAVY = [0x0c, 0x20, 0x30];
+const WHITE = [0xff, 0xff, 0xff];
 
 /* ----------------------------------------------------------------- candidates */
 
-const body = (y = 1.6, ink = TEAL) => ({ d: roundedSquare(1.6, y, 20.8, 4.8), ink });
-const slab = { d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: TEAL_DARK };
-const screen = (r = 7.6, ink = SCREEN) => ({ d: circle(12, 12, r), ink });
-const pills = [
-  { d: roundedSquare(5.2, 11.3, 3.4, 1.7), ink: PILL },
-  { d: roundedSquare(15.4, 11.3, 3.4, 1.7), ink: PILL },
-];
-const playDisc = { d: circle(12, 12, 3.5), ink: MAGENTA };
-const playGlyph = { d: 'M10.7 9.9L14.3 12L10.7 14.1z', ink: PAPER };
+/** A rounded rectangle with independent width and height - the pause bars are not square. */
+function roundedRect(x, y, w, h, r) {
+  const right = x + w;
+  const bottom = y + h;
+  return (
+    `M${x + r} ${y}H${right - r}A${r} ${r} 0 0 1 ${right} ${y + r}V${bottom - r}` +
+    `A${r} ${r} 0 0 1 ${right - r} ${bottom}H${x + r}A${r} ${r} 0 0 1 ${x} ${bottom - r}` +
+    `V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}z`
+  );
+}
+
+/** The glyph: an outlined play triangle whose tip carries a sliver of red, plus two pause bars. */
+const glyph = (scale = 1, strokeWidth = 1.2, withBars = true) => {
+  const cx = 12;
+  const cy = 12;
+  const s = scale;
+  const paths = [
+    { d: circle(cx + 0.3 * s, cy, 1.25 * s), ink: RED },
+    {
+      d: `M${cx - 4.5 * s} ${cy - 3.1 * s}L${cx + 0.7 * s} ${cy}L${cx - 4.5 * s} ${cy + 3.1 * s}z`,
+      fill: false,
+      strokeWidth: strokeWidth * s,
+      ink: WHITE,
+    },
+  ];
+  if (withBars) {
+    paths.push(
+      { d: roundedRect(13.7, 8.9, 1.35, 6.2, 0.68), ink: WHITE },
+      { d: roundedRect(15.9, 8.9, 1.35, 6.2, 0.68), ink: WHITE },
+    );
+  }
+  return paths;
+};
 
 const CANDIDATES = [
   {
-    id: 'dap-teal',
-    label: '青绿机身＋圆屏＋品红播放键＋两颗胶囊键',
-    note: '最接近参考图；胶囊键在 16px 会变成两个小点',
-    paths: () => [slab, body(), screen(), ...pills, playDisc, playGlyph],
+    id: 'red-playpause',
+    label: '红圆盘＋蓝圆＋白色描边三角＋暂停条（参考图，外围改圆）',
+    note: '按你说的把外围也做成圆形',
+    paths: () => [{ d: circle(12, 12, 11.6), ink: RED }, { d: circle(12, 12, 7.2), ink: NAVY }, ...glyph()],
   },
   {
-    id: 'dap-teal-clean',
-    label: '同上但去掉胶囊键',
-    note: '更干净，16px 更稳；代价是少了"机器"的细节',
-    paths: () => [slab, body(), screen(), playDisc, playGlyph],
-  },
-  {
-    id: 'dap-big-screen',
-    label: '屏幕更大、播放键更大',
-    note: '小尺寸下品红更醒目（屏幕 r=8.4，播放键 r=4.1）',
+    id: 'red-playpause-square',
+    label: '同上但保留参考图的圆角方形',
+    note: '与原图最接近的一版，用来对照',
     paths: () => [
-      slab,
-      body(),
-      { d: circle(12, 12, 8.4), ink: SCREEN },
-      { d: circle(12, 12, 4.1), ink: MAGENTA },
-      { d: 'M10.5 9.4L14.7 12L10.5 14.6z', ink: PAPER },
+      { d: roundedRect(0.9, 0.9, 22.2, 22.2, 4.4), ink: RED },
+      { d: circle(12, 12, 7.2), ink: NAVY },
+      ...glyph(),
     ],
   },
   {
-    id: 'dap-light-teal',
-    label: '浅青机身（更亮）',
-    note: '机身更浅、对比更柔；深色任务栏上更跳',
+    id: 'red-play-only',
+    label: '红圆盘＋蓝圆＋描边三角（去掉暂停条）',
+    note: '更简洁；16px 下只剩一个三角轮廓',
     paths: () => [
-      { d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: [0x74, 0xc8, 0xce] },
-      body(1.6, TEAL_LIGHT),
-      screen(),
-      playDisc,
-      playGlyph,
+      { d: circle(12, 12, 11.6), ink: RED },
+      { d: circle(12, 12, 7.4), ink: NAVY },
+      ...glyph(1.15, 1.3, false),
     ],
   },
   {
-    id: 'dap-navy',
-    label: '深青机身（不用黑色，用深青）',
-    note: '机身深、屏幕更深；品红仍是唯一亮点',
+    id: 'red-playpause-thick',
+    label: '同上但白色更粗（描边 1.6）',
+    note: '小尺寸下更清楚，代价是更"重"',
     paths: () => [
-      { d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: [0x0f, 0x3a, 0x44] },
-      body(1.6, [0x17, 0x5b, 0x66]),
-      screen(7.6, [0x0b, 0x16, 0x26]),
-      playDisc,
-      playGlyph,
+      { d: circle(12, 12, 11.6), ink: RED },
+      { d: circle(12, 12, 7.4), ink: NAVY },
+      ...glyph(1.05, 1.6),
     ],
   },
   {
-    id: 'dap-magenta-ring',
-    label: '青绿机身＋品红圆环（像参考图顶上的环）',
-    note: '参考图机身右上有个小环，这里放成屏幕外圈',
+    id: 'red-fill-play',
+    label: '红圆盘＋蓝圆＋实心白三角＋暂停条',
+    note: '填充三角（不是描边），最传统、最清楚',
     paths: () => [
-      slab,
-      body(),
-      screen(7.9, SCREEN_EDGE),
-      screen(7.1, SCREEN),
-      playDisc,
-      playGlyph,
+      { d: circle(12, 12, 11.6), ink: RED },
+      { d: circle(12, 12, 7.2), ink: NAVY },
+      { d: circle(12.3, 12, 1.25), ink: RED },
+      { d: 'M7.5 8.9L12.7 12L7.5 15.1z', ink: WHITE },
+      { d: roundedRect(13.7, 8.9, 1.35, 6.2, 0.68), ink: WHITE },
+      { d: roundedRect(15.9, 8.9, 1.35, 6.2, 0.68), ink: WHITE },
     ],
   },
   {
-    id: 'dap-glyph-only',
-    label: '青绿机身＋圆屏＋白色三角（不用品红）',
-    note: '更素；16px 下最清楚的一版',
-    paths: () => [slab, body(), screen(), { d: 'M9.9 8.4L15.6 12L9.9 15.6z', ink: PAPER }],
+    id: 'red-deep',
+    label: '深一点的红（更沉）',
+    note: '红更暗，不刺眼；其余同第一版',
+    paths: () => [
+      { d: circle(12, 12, 11.6), ink: RED_DEEP },
+      { d: circle(12, 12, 7.2), ink: NAVY },
+      ...glyph(),
+    ],
   },
   {
-    id: 'dap-final',
-    label: '浅青机身＋两颗胶囊键＋更大的品红键',
-    note: '组合：参考图的胶囊键 + 更亮的机身 + 更醒目的品红键',
+    id: 'red-playpause-big',
+    label: '蓝圆与图形都更大',
+    note: '小尺寸下白色更醒目（蓝圆 r=8.0，图形放大 1.1）',
     paths: () => [
-      { d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: [0x74, 0xc8, 0xce] },
-      body(1.6, TEAL_LIGHT),
-      { d: circle(12, 12, 7.9), ink: SCREEN },
-      { d: roundedSquare(5.0, 11.2, 3.6, 1.8), ink: PILL },
-      { d: roundedSquare(15.4, 11.2, 3.6, 1.8), ink: PILL },
-      { d: circle(12, 12, 3.9), ink: MAGENTA },
-      { d: 'M10.6 9.6L14.6 12L10.6 14.4z', ink: PAPER },
+      { d: circle(12, 12, 11.7), ink: RED },
+      { d: circle(12, 12, 8.0), ink: NAVY },
+      ...glyph(1.1, 1.3),
     ],
   },
 ];

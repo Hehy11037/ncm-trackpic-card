@@ -461,9 +461,17 @@ Each of these cost real time. The reason matters more than the rule.
   disagreement to 4.59%), so that generator is unused in `tools/make-icon.mjs` with the numbers kept in
   its comment. `--flat`, `--apex` and `--round` still drive a search; `.scratch/search-apex-compare.mjs`
   scores candidates with `--compare`.
-* Remaining, and intrinsic to a flat-colour reproduction: the reference has a **subtle radial gradient**
-  in the red disc and the navy circle, which flat fills cannot reproduce. That is most of what is left
-  of the 3.17%. Using the owner's PNG for the large frames would remove it.
+* **The icon is a hybrid, and that is the point of the split.** `assets/icon-source.png` is the
+  owner's own export and drives the frames at 48px and above (gradients and all, pixel-identical to
+  their art); the vector in `tools/make-icon.mjs` drives 16-40, where the pause bars are 1.29 units =
+  **1.4 pixels** and a downscaled 1024px export turns them to grey. Rasterising the vector *at* that
+  size keeps their edges. `npm run icon` reports which sizes came from where.
+* **An export that looks transparent may not be.** The owner's file showed a checkerboard in a viewer
+  but every pixel measured alpha 255, on a grey frame over a white page. So the disc is cut
+  geometrically: alpha is the circle's coverage, and the colour averages only samples *inside* it -
+  which is also what stops the white page bleeding a light fringe around the rim. The disc sat at 82%
+  of the canvas (844/1024) with a ~90px margin, so cropping to it also gives the full-bleed shape an
+  icon wants.
 * `tools/icon-candidates.mjs` and the two rejected designs are in git history.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.

@@ -444,10 +444,21 @@ Each of these cost real time. The reason matters more than the rule.
   inset 0.645 with a **1.29** stroke, pause bars 1.29×6.66 with rounded ends, and the red tip as a
   flat rounded triangle from x 9.0 to an apex at 13.6. `--compare` reports **4.6%** of pixels
   disagreeing, all of it antialiasing along edges.
-* **The one structural fact the measurements gave that the eye did not:** the red triangle is painted
-  *under* the white outline, not inside it. Its apex reaches 13.6 while the outline stops at 12.43, so
-  it reads as two shapes (inner triangle, tip crescent) but is one - the outline simply crosses over
-  it. `tools/icon-candidates.mjs` and the two rejected designs are in git history.
+* **Scan a line through a glyph before believing you have its structure.** Two rounds of "looks right"
+  had modelled the red as a single shape; a run of colour runs along y=12 said otherwise in one line
+  of output: `red 9.06-10.80 | navy | white 11.46-12.43 | red 12.49-13.57 | navy 13.63-13.94 | white
+  13.97-14.34`. Two red pieces, not one - a small rounded triangle inside the outline, and a *disc*
+  of radius 1.05 at (12.50, 12.00) whose navy halo (radius 1.40) is what notches the first pause bar.
+  So the paint order is bars, then the tip disc with its halo, then the white outline over the disc's
+  left part, then the inner triangle. `--compare` went from 4.6% to **4.09%**.
+* **Rounding the play triangle's corners was tried and measured worse** (0.3 or 0.75 units moved the
+  apex to 12.19 or 11.72 against the reference's 12.43, and the disagreement rose to 4.59%). The
+  helper is still in `tools/make-icon.mjs` with the numbers in its comment, unused - the reference's
+  apex is a sharp path.
+* The one difference that remains is measured and documented in `tools/make-icon.mjs`: my white apex
+  band reads 10.97-12.19 across the centre against the reference's 11.46-12.43, so the apex is about
+  half a unit thicker. Everything else lands within a pixel.
+* `tools/icon-candidates.mjs` and the two rejected designs are in git history.
 * **The GitHub token used for the pushes has been pasted into a session transcript and should be
   revoked.** Pushes made after that will need a new one.
 

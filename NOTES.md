@@ -1263,3 +1263,50 @@ reference's white page - a comparison that has to composite before it means anyt
 Two more tools came out of this: the glyph printed as a character map (the fastest way to see a shape
 exactly), and a side-by-side image with the disagreements marked. Both are in `.scratch`, and the
 numbers they produced are in `tools/make-icon.mjs` next to the design they describe.
+
+## 2026-09-18 (5) — the deviation was in the tip, and one line of output found it
+
+The owner asked to see the final icon and check it for deviations. There was one, and it was not the
+kind I had been looking for.
+
+I had modelled the red as **one flat triangle** lying under the white outline, its apex overshooting so
+that the outline crossed it and left red showing on both sides. It looked right in a side-by-side at
+512px, and it had passed a pixel comparison at 4.6% - most of which is edge antialiasing, which is
+exactly the kind of number that hides a shape error.
+
+What found it was printing the **colour runs along one line** through the glyph:
+
+```
+参考  R 9.06–10.80 | N 10.86–11.43 | W 11.46–12.43 | R 12.49–13.57 | N 13.63–13.94 | W 13.97–14.34 ...
+我    R 8.91–10.97 | W 10.97–12.38 | R 12.38–13.03 | W 13.03–14.25 ...
+```
+
+Two things are visible in the reference's line that no amount of looking had given me. The red comes
+in **two pieces with a navy gap between them** (10.86–11.43), so it is not one triangle crossed by the
+outline. And the second piece *overlaps the first pause bar*: white resumes at 13.97 instead of at the
+bar's own left edge of 13.03, with navy in between.
+
+The measured explanation: the tip piece is a **disc** of radius 1.05 centred at (12.50, 12.00) with a
+**navy halo** of radius 1.40, and 12.50+1.05 and 12.50+1.40 land exactly on 13.57 and 13.94. Because
+the halo is drawn before the white outline, the outline covers the disc's left part; because it is
+drawn after the bars, the halo notches the first bar. So: bars, tip disc with halo, white outline,
+inner red triangle. The comparison went from 4.6% to 4.09%, and the tip's boundaries now match the
+reference's within 0.1 units.
+
+### A correction that measurement refused
+
+The remaining visible difference was the white apex, which read thicker than the reference's. The
+obvious fix was to round the triangle's corners - the reference's apex is visibly rounded - so I wrote
+a rounded-triangle path generator and tried radius 0.75 and then 0.3. Both were *worse*: the apex moved
+to 11.72 and 12.19 against the reference's 12.43, and the disagreement rose to 4.59%. The reference's
+apex is a sharp path; the roundness I was seeing is what half a stroke width of round *join* already
+produces.
+
+The generator is still in `tools/make-icon.mjs`, unused, with those three numbers in its comment - a
+small piece of dead code that is worth more as a record than as a deletion. The rule it illustrates is
+the one this project keeps re-learning: a plausible correction is not a measured one.
+
+What is still different is now written down in the source rather than left for the next person to
+rediscover: my apex band reads 10.97–12.19 across the centre line against the reference's 11.46–12.43,
+about half a unit thicker. Everything else - the navy circle's ratio, the bars, the tip disc and its
+halo, the inner triangle's left edge - lands within a pixel.

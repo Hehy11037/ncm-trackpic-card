@@ -30,9 +30,27 @@ const OUT = at >= 0 ? argv[at + 1] : 'assets';
 
 /* ------------------------------------------------------------------- design */
 
-const CARD = [58, 62, 78];
-const PAPER = [245, 245, 247];
-const TRIANGLE = [58, 62, 78];
+/*
+ * The owner sent a photograph of a teal machined player - a rounded slab with a round screen, a
+ * magenta play key and two pale pill keys beside it - and asked for that, without black. So the mark
+ * is that device, seen face-on:
+ *
+ *   * the body is teal, the screen is deep navy (not black), and the only saturated colour is the
+ *     play key, which is where the eye should land;
+ *   * the slab's thickness is suggested by drawing the body once in a darker teal, a fraction lower,
+ *     so it peeks out along the bottom edge - no isometric view, which would be mud at 16px;
+ *   * the pill keys are kept because they are what makes it read as a *player* rather than a play
+ *     button, and they survive at 16px as two small marks beside the magenta key.
+ *
+ * `tools/icon-candidates.mjs` holds the seven other versions this was chosen from, drawn at 16px on
+ * light, dark and mid backgrounds - the test that eliminated the earlier all-black design.
+ */
+const TEAL_LIGHT = [0x9a, 0xdd, 0xe0];
+const TEAL_DARK = [0x46, 0x9c, 0xa6];
+const SCREEN = [0x13, 0x21, 0x36];
+const PILL = [0xc9, 0xe6, 0xe9];
+const MAGENTA = [0xe0, 0x3a, 0x8e];
+const PAPER = [0xf4, 0xf8, 0xfa];
 
 const hex = ([r, g, b]) => `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 
@@ -54,9 +72,13 @@ function roundedSquare(x, y, size, radius) {
 }
 
 const DESIGN = [
-  { name: 'card', d: roundedSquare(1.5, 1.5, 21, 4.6), ink: CARD },
-  { name: 'disc', d: circle(12, 12, 7.0), ink: PAPER },
-  { name: 'play', d: 'M10.0 8.1L16.4 12L10.0 15.9z', ink: TRIANGLE },
+  { name: 'slab', d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: TEAL_DARK },
+  { name: 'body', d: roundedSquare(1.6, 1.6, 20.8, 4.8), ink: TEAL_LIGHT },
+  { name: 'screen', d: circle(12, 12, 7.9), ink: SCREEN },
+  { name: 'pill-left', d: roundedSquare(5.0, 11.2, 3.6, 1.8), ink: PILL },
+  { name: 'pill-right', d: roundedSquare(15.4, 11.2, 3.6, 1.8), ink: PILL },
+  { name: 'key', d: circle(12, 12, 3.9), ink: MAGENTA },
+  { name: 'play', d: 'M10.6 9.6L14.6 12L10.6 14.4z', ink: PAPER },
 ];
 
 /* --------------------------------------------------------------------- files */

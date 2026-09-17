@@ -107,8 +107,8 @@ const STARTUP_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
     '</style><body>正在启动…</body>',
 )}`;
 
-/** Accent used for the tray icon; matches the app's default accent. */
-const ICON_COLOR = { r: 0x98, g: 0xb6, b: 0xbe };
+/** Fallback icon colour: the shipped icon's body teal, so a missing file still looks like the app. */
+const ICON_COLOR = { r: 0x9a, g: 0xdd, b: 0xe0 };
 
 /**
  * The app icon, as a `NativeImage`.

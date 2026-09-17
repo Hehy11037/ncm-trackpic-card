@@ -54,101 +54,112 @@ const triangle = (cx, cy, size) =>
 
 /* ------------------------------------------------------------------- palettes */
 
-const INK = [26, 26, 30];
-const PAPER = [245, 245, 247];
-const ACCENT = [222, 74, 62]; // a warm red, deliberately not NetEase's own tone
-const SLATE = [58, 62, 78];
+// From the reference the owner sent: a teal machined player with a round screen, a magenta play
+// button and two pale pill keys either side of it. The colours are sampled from that photograph -
+// teal body, deep-navy screen, magenta accent - and the slab's thickness is suggested by drawing a
+// darker body a fraction lower and letting it peek out along the bottom edge. An isometric view would
+// be truer to the photograph and unreadable at 16px, so the mark is the device seen face-on.
+const TEAL = [0x6e, 0xc6, 0xcc];
+const TEAL_LIGHT = [0x9a, 0xdd, 0xe0];
+const TEAL_DARK = [0x46, 0x9c, 0xa6];
+const SCREEN = [0x13, 0x21, 0x36];
+const SCREEN_EDGE = [0x2c, 0x3d, 0x58];
+const MAGENTA = [0xe0, 0x3a, 0x8e];
+const PAPER = [0xf4, 0xf8, 0xfa];
+const PILL = [0xc9, 0xe6, 0xe9];
 
 /* ----------------------------------------------------------------- candidates */
 
-/**
- * Each candidate returns paths in the 24x24 box. `onDark` says whether the mark is meant for a
- * light background (most are: they are drawn with the ink colour on the viewer's background).
- */
+const body = (y = 1.6, ink = TEAL) => ({ d: roundedSquare(1.6, y, 20.8, 4.8), ink });
+const slab = { d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: TEAL_DARK };
+const screen = (r = 7.6, ink = SCREEN) => ({ d: circle(12, 12, r), ink });
+const pills = [
+  { d: roundedSquare(5.2, 11.3, 3.4, 1.7), ink: PILL },
+  { d: roundedSquare(15.4, 11.3, 3.4, 1.7), ink: PILL },
+];
+const playDisc = { d: circle(12, 12, 3.5), ink: MAGENTA };
+const playGlyph = { d: 'M10.7 9.9L14.3 12L10.7 14.1z', ink: PAPER };
+
 const CANDIDATES = [
   {
-    id: 'vinyl',
-    label: '黑胶（凹槽）',
-    note: '最"唱片"，但凹槽在 16px 会糊成一片',
+    id: 'dap-teal',
+    label: '青绿机身＋圆屏＋品红播放键＋两颗胶囊键',
+    note: '最接近参考图；胶囊键在 16px 会变成两个小点',
+    paths: () => [slab, body(), screen(), ...pills, playDisc, playGlyph],
+  },
+  {
+    id: 'dap-teal-clean',
+    label: '同上但去掉胶囊键',
+    note: '更干净，16px 更稳；代价是少了"机器"的细节',
+    paths: () => [slab, body(), screen(), playDisc, playGlyph],
+  },
+  {
+    id: 'dap-big-screen',
+    label: '屏幕更大、播放键更大',
+    note: '小尺寸下品红更醒目（屏幕 r=8.4，播放键 r=4.1）',
     paths: () => [
-      { d: circle(12, 12, 10.4), ink: INK },
-      { d: ring(12, 12, 10.4, 9.3), ink: PAPER },
-      { d: ring(12, 12, 8.6, 7.7), ink: PAPER },
-      { d: ring(12, 12, 7.0, 6.3), ink: PAPER },
-      { d: ring(12, 12, 5.6, 5.1), ink: PAPER },
-      { d: circle(12, 12, 3.1), ink: PAPER },
-      { d: circle(12, 12, 1.15), ink: INK },
+      slab,
+      body(),
+      { d: circle(12, 12, 8.4), ink: SCREEN },
+      { d: circle(12, 12, 4.1), ink: MAGENTA },
+      { d: 'M10.5 9.4L14.7 12L10.5 14.6z', ink: PAPER },
     ],
   },
   {
-    id: 'disc-play',
-    label: '唱片＋播放三角',
-    note: '一条实心圆＋白色三角，16px 仍然清楚',
+    id: 'dap-light-teal',
+    label: '浅青机身（更亮）',
+    note: '机身更浅、对比更柔；深色任务栏上更跳',
     paths: () => [
-      { d: circle(12, 12, 10.4), ink: INK },
-      { d: circle(12, 12, 7.4), ink: PAPER },
-      { d: triangle(12.7, 12, 7.2), ink: INK },
+      { d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: [0x74, 0xc8, 0xce] },
+      body(1.6, TEAL_LIGHT),
+      screen(),
+      playDisc,
+      playGlyph,
     ],
   },
   {
-    id: 'disc-play-ring',
-    label: '圆环＋播放三角',
-    note: '细圆环更有"唱片"味，小尺寸靠三角撑住',
+    id: 'dap-navy',
+    label: '深青机身（不用黑色，用深青）',
+    note: '机身深、屏幕更深；品红仍是唯一亮点',
     paths: () => [
-      { d: ring(12, 12, 10.6, 8.4), ink: INK },
-      { d: ring(12, 12, 7.2, 6.6), ink: INK },
-      { d: triangle(12.6, 12, 6.4), ink: INK },
+      { d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: [0x0f, 0x3a, 0x44] },
+      body(1.6, [0x17, 0x5b, 0x66]),
+      screen(7.6, [0x0b, 0x16, 0x26]),
+      playDisc,
+      playGlyph,
     ],
   },
   {
-    id: 'cd',
-    label: 'CD／光盘',
-    note: '中心大孔＋一道高光，一眼是光盘',
+    id: 'dap-magenta-ring',
+    label: '青绿机身＋品红圆环（像参考图顶上的环）',
+    note: '参考图机身右上有个小环，这里放成屏幕外圈',
     paths: () => [
-      { d: circle(12, 12, 10.4), ink: INK },
-      { d: circle(12, 12, 3.6), ink: PAPER },
-      { d: ring(12, 12, 4.6, 3.6), ink: INK },
-      { d: `M4.6 8.1A10.4 10.4 0 0 1 15.6 1.9L15.1 3.5A8.8 8.8 0 0 0 6 9.2z`, ink: PAPER },
+      slab,
+      body(),
+      screen(7.9, SCREEN_EDGE),
+      screen(7.1, SCREEN),
+      playDisc,
+      playGlyph,
     ],
   },
   {
-    id: 'card-disc',
-    label: '卡片＋唱片（跟这个 app 对应）',
-    note: '一张卡片上嵌着唱片 —— 图标本身说明了"卡片"这件事',
-    paths: () => [
-      { d: roundedSquare(2.2, 2.2, 19.6, 4.2), ink: SLATE },
-      { d: circle(12, 12, 6.6), ink: PAPER },
-      { d: triangle(12.8, 12, 6.2), ink: SLATE },
-    ],
+    id: 'dap-glyph-only',
+    label: '青绿机身＋圆屏＋白色三角（不用品红）',
+    note: '更素；16px 下最清楚的一版',
+    paths: () => [slab, body(), screen(), { d: 'M9.9 8.4L15.6 12L9.9 15.6z', ink: PAPER }],
   },
   {
-    id: 'note',
-    label: '音符',
-    note: '最通用的"音乐"，但和别的播放器没有区别',
+    id: 'dap-final',
+    label: '浅青机身＋两颗胶囊键＋更大的品红键',
+    note: '组合：参考图的胶囊键 + 更亮的机身 + 更醒目的品红键',
     paths: () => [
-      { d: `M15.4 2.6c0-.6.4-1 1-1.1l3.4-.6c.7-.1 1.2.4 1.2 1v13.4a3.6 3.6 0 1 1-2-3.2V6.3l-5.6 1v9.9a3.6 3.6 0 1 1-2-3.2V2.6z`, ink: INK },
-    ],
-  },
-  {
-    id: 'groove-play',
-    label: '唱片＋三角（低对比高光版）',
-    note: '同"唱片＋播放三角"，但用浅色圆做高光，观感更轻',
-    paths: () => [
-      { d: circle(12, 12, 10.4), ink: INK },
-      { d: ring(12, 12, 9.6, 9.1), ink: [90, 90, 98] },
-      { d: ring(12, 12, 8.2, 7.7), ink: [90, 90, 98] },
-      { d: circle(12, 12, 6.2), ink: PAPER },
-      { d: triangle(12.5, 12, 5.6), ink: INK },
-    ],
-  },
-  {
-    id: 'accent-disc-play',
-    label: '唱片＋三角（强调色）',
-    note: '同上一版但用暖红强调色，桌面上更醒目；托盘里会换单色版',
-    paths: () => [
-      { d: circle(12, 12, 10.4), ink: ACCENT },
-      { d: circle(12, 12, 7.4), ink: PAPER },
-      { d: triangle(12.7, 12, 7.2), ink: INK },
+      { d: roundedSquare(1.6, 2.4, 20.8, 4.8), ink: [0x74, 0xc8, 0xce] },
+      body(1.6, TEAL_LIGHT),
+      { d: circle(12, 12, 7.9), ink: SCREEN },
+      { d: roundedSquare(5.0, 11.2, 3.6, 1.8), ink: PILL },
+      { d: roundedSquare(15.4, 11.2, 3.6, 1.8), ink: PILL },
+      { d: circle(12, 12, 3.9), ink: MAGENTA },
+      { d: 'M10.6 9.6L14.6 12L10.6 14.4z', ink: PAPER },
     ],
   },
 ];

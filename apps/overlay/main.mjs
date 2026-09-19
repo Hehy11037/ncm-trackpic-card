@@ -488,13 +488,31 @@ function persistWindowState() {
  * editable in Windows' own startup settings, and an app that kept re-enabling itself every launch would
  * be fighting its own user.
  *
- * Not in development (`app.isPackaged` is false under `electron apps/overlay`): a checkout should not
- * register itself to run at login.
+ * Two cases where it must not happen at all:
+ *
+ *  - **Development** (`app.isPackaged` is false under `electron apps/overlay`): a checkout must not
+ *    register itself to run at login.
+ *  - **The portable build.** It unpacks itself into a temporary directory per run, and that directory
+ *    is gone by the next boot, so a startup entry would point at a path that no longer exists - a broken
+ *    entry in the user's startup list, created by us. electron-builder's portable target marks itself
+ *    with `PORTABLE_EXECUTABLE_DIR`, and the README promises this behaviour, so it is checked here
+ *    rather than assumed.
  */
 let autoStartApplied = false;
 
+/** True when running from electron-builder's portable target, which unpacks to a temp directory. */
+function isPortableRun(env = process.env) {
+  return typeof env.PORTABLE_EXECUTABLE_DIR === 'string' && env.PORTABLE_EXECUTABLE_DIR.length > 0;
+}
+
 function applyAutoStartOnce() {
   if (!app.isPackaged || autoStartApplied) return;
+  if (isPortableRun()) {
+    autoStartApplied = true;
+    persistWindowState();
+    console.info('[shell] 免安装版：不设置开机自启（每次运行都会解包到临时目录）');
+    return;
+  }
   try {
     app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
     autoStartApplied = true;

@@ -1692,3 +1692,46 @@ lets Node end on its own; and killing a child and returning immediately does the
 
 What is left is the part only the owner can do: install it and see whether a card appears, the tray icon
 is there, auto-start shows up in Windows' startup settings, and the uninstaller leaves nothing behind.
+
+## 2026-09-19 (3) — verifying the exe's icon, and a bug the README had already promised against
+
+Two things this round, both about not trusting a config to have done what it says.
+
+### The icon is in the exes, and now provably so
+
+`electron-builder.yml` says `icon: assets/icon.ico`. The installer, the desktop shortcut, the taskbar and
+Explorer all take their icon from the **executable's own resources** - so a wrong path, or an .ico the
+tool could not read, ships Electron's default look. Nothing else in this project looks at the built exe,
+and this is the detail the owner has cared about most across a dozen rounds; "it is in the config" is not
+evidence.
+
+So `tools/lib/exe-icon.mjs` walks the PE resource directory to the icon group with the lowest id, and
+`check-package.mjs` asserts both the app exe and the installer carry nine sizes including 16 and 256, and
+that the largest frame's dominant colour is the client's own `#fd364e`. Both pass, and the portable exe
+does too:
+
+```
+应用 exe 带我们的图标（9 个尺寸，含 16 与 256）  16 20 24 32 40 48 64 128 256
+应用 exe 图标的主色是客户端的红  #fd364e
+```
+
+Writing the parser produced a mistake worth keeping: **the resource tree's offsets are relative to the
+start of the resource directory, not to the parent level.** My first version added the parent's offset at
+each level, which produced a tree that looked *almost* right - every other entry decoded, the rest were
+garbage - and ended with "this executable has no icon resources" for a file with nine of them. A flat
+debug script that used the root base throughout worked, which is what gave it away.
+
+### The README promised something the code did not do
+
+`README.md` says the portable build does not set up auto-start. The code did not implement that: it set
+auto-start on the first packaged launch, and the portable target **unpacks itself into a temporary
+directory per run** - so the startup entry would point at a path that is gone by the next boot. A broken
+entry in the user's own startup list, created by us, from a feature whose documented behaviour was the
+opposite.
+
+The fix is four lines (`PORTABLE_EXECUTABLE_DIR` is how electron-builder marks a portable run), and the
+lesson is the older one: prose in a README is a claim, not a test. It is now a claim the check suite
+covers.
+
+The build was redone after the fix, so the artifacts in `dist/` include it - which matters because the
+owner will install *these* files, not the next build's.

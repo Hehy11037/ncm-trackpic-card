@@ -16,8 +16,10 @@
 // Exits 0 with a note when there is no build to check, so it is harmless on a fresh checkout.
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+
+import { readExeIcon } from './lib/exe-icon.mjs';
 
 const argv = process.argv.slice(2);
 const at = argv.indexOf('--app');
@@ -109,6 +111,43 @@ check(
 check('宿主源码在包里（Node 直接跑 TS）', existsSync(join(APP, 'packages/host/src/index.ts')));
 check('图标在包里', existsSync(join(APP, 'assets/icon.ico')));
 check('没有把仓库根目录整个搬进来', !existsSync(join(APP, 'node_modules')) || statSync(join(APP, 'node_modules')).isDirectory());
+
+/*
+ * And the icon is actually *in* the executables.
+ *
+ * The installer, the desktop shortcut, the taskbar and Explorer all take their icon from the exe's own
+ * resources, so a bad `win.icon` path or an unreadable .ico means the app ships with Electron's default
+ * - which nothing else in this project would notice, and which was the owner's most-fussed-over detail.
+ * The red is the cheapest fingerprint: it is the client's own `#fd364e`, applied to every frame.
+ */
+const PRODUCT = 'NCM Trackpic Card';
+// `APP` is `<dist>/win-unpacked/resources/app`, so the exe is two levels up and `dist/` three.
+const PACKAGED_ROOT = resolve(APP, '..', '..');
+const DIST = resolve(PACKAGED_ROOT, '..');
+const exes = [['应用 exe', join(PACKAGED_ROOT, `${PRODUCT}.exe`)]];
+if (existsSync(DIST)) {
+  // Found by suffix rather than by exact name: the version is in the filename and would rot here.
+  for (const entry of readdirSync(DIST)) {
+    if (entry.endsWith('-setup.exe')) exes.push(['安装包', join(DIST, entry)]);
+  }
+}
+for (const [label, exePath] of exes) {
+  if (!existsSync(exePath)) {
+    console.log(`  --   ${label} 不存在，跳过（${exePath}）`);
+    continue;
+  }
+  try {
+    const icon = readExeIcon(readFileSync(exePath));
+    check(
+      `${label} 带我们的图标（9 个尺寸，含 16 与 256）`,
+      icon.sizes.includes(16) && icon.sizes.includes(256) && icon.sizes.length >= 5,
+      icon.sizes.join(' '),
+    );
+    check(`${label} 图标的主色是客户端的红`, icon.dominant[0]?.colour === '#fd364e', icon.dominant[0]?.colour ?? '（非 PNG 帧）');
+  } catch (err) {
+    check(`${label} 能读出图标`, false, err instanceof Error ? err.message : String(err));
+  }
+}
 
 /*
  * And run the packaged host. Ports are deliberately unusual: the owner may have the overlay running,

@@ -37,6 +37,7 @@
     "icon:candidates": "node tools/icon-candidates.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
+    "check:package": "node tools/check-package.mjs",
     "typecheck": "tsc --noEmit --pretty"
   },
   "devDependencies": {

@@ -1659,3 +1659,36 @@ EPERM. The last one needed the unconfined mode, twice, for exactly that reason.
 The output: `dist\NCM Trackpic Card-0.1.0-setup.exe` and `…-portable.exe`, 106MB each, with
 `resources/app/{ui,packages,tools,apps,assets}` verified inside. Whether the installed app *runs* is the
 owner's test - nothing here can launch Electron and keep the client alive.
+
+## 2026-09-19 (2) — verifying the *build*, not the config
+
+`check-shell.mjs` checks the packaging config: the `files` list covers the host entry, the host sources,
+the UI and the icon. That is a check of my *intentions*. A file added to an import chain since the list
+was written would be missing from the build, and nothing would notice until someone installed it and got
+a window with nothing in it.
+
+So `tools/check-package.mjs` inspects the built payload instead. Two things make that possible without
+launching Electron:
+
+* **The host is plain Node.** The shell starts it as `ELECTRON_RUN_AS_NODE`, so
+  `resources/app/tools/host-run.mjs` runs under `node` directly. The check starts it on spare ports
+  (18787/18788, and a bogus CDP port so it cannot touch the client's real channel), waits for the card
+  page over HTTP, fetches a module as well, and kills it - which verifies the half that a bad `files`
+  list breaks, with no window involved.
+* **The import graph is walkable.** Walking imports from the four runtime entries found a "missing"
+  `packages/host/src/cdp.js`. It was not missing: TypeScript's ESM style writes `./cdp.js` for a file that
+  is `cdp.ts` on disk, and Node strips the types at run time. The resolver has to try the rewrite before
+  it is allowed to call something missing - a check that cries wolf gets ignored, which is worse than no
+  check.
+
+Both halves now pass: 17 files in the graph, and a packaged host that serves `index.html` and
+`/src/main.js` (`HTTP 426` on the WebSocket port is the host answering with "Upgrade Required", which is
+exactly right).
+
+Two smaller lessons from writing it: `process.exit()` while sockets are still closing provokes
+`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` from libuv, so the script sets `exitCode` and
+lets Node end on its own; and killing a child and returning immediately does the same thing, so it waits
+400ms.
+
+What is left is the part only the owner can do: install it and see whether a card appears, the tray icon
+is there, auto-start shows up in Windows' startup settings, and the uninstaller leaves nothing behind.

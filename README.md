@@ -43,6 +43,7 @@ npm run host           # 只跑宿主，在终端里看播放状态流
 npm run check          # 全部静态检查（编码 / 布局 / 桥接 / 交互 / 外壳）
 npm test               # 单元测试
 npm run dist           # 打安装包 + 免安装版到 dist/
+npm run check:package  # 检查刚打出来的产物（导入图完整，并真的跑一次打包后的宿主）
 ```
 
 ## 用法

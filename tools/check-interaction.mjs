@@ -930,8 +930,8 @@ console.log('\n--- 悬浮阴影 ---');
   check('mini 条也有阴影', (css.declaration('.mini', 'box-shadow') ?? '').includes('var(--shadow-float)'));
 
   // Parse the shadow's layers and work out how far the largest one reaches, then compare with
-  // the transparent margin the shell leaves around the card. A shadow larger than the margin
-  // is clipped flat at the window edge, which reads as a rendering bug rather than a shadow.
+  // the transparent margin the shell leaves around the card. A shadow larger than the margin is
+  // clipped flat at the window edge, which reads as a rendering bug rather than a shadow.
   const raw = css.props.get('--shadow-float') ?? '';
   const layers = splitCommas(raw);
   let maxExtent = 0;
@@ -948,8 +948,51 @@ console.log('\n--- 悬浮阴影 ---');
   }
   check('阴影有 3 层（含描边）', layers.length >= 3, `${layers.length} 层`);
   check('有一圈轮廓描边', hasRim);
-  const extentPx = maxExtent * UNIT_PX;
-  check('阴影不超出窗口留白', extentPx <= shadowPad + 0.5, `${extentPx.toFixed(1)}px <= ${shadowPad}px`);
+  /*
+   * **In pixels, not in `u`.** The transparent margin the window leaves is a fixed 24px, so a shadow
+   * that scales with the card outgrows it at the large preset: the blur ran past the window edge and
+   * the gradient was cut off flat, which is the "gradient that does not complete" the owner reported.
+   * This used to multiply the parsed values by the card's unit - fine while the shadow was `u`-scaled,
+   * wrong the moment it is not, which is why the invariant is checked directly.
+   */
+  check('阴影用像素而不是 u（否则大卡片会被窗口边缘切平）', !/var\(--u\)/.test(raw));
+  // Graduated layers: a two-layer shadow steps visibly where the small one ends and the large begins.
+  check('阴影分层足够细（渐变不留台阶）', layers.length >= 4, `${layers.length} 层`);
+  check('阴影不超出窗口留白', maxExtent <= shadowPad + 0.5, `${maxExtent.toFixed(1)}px <= ${shadowPad}px`);
+
+  /*
+   * And the thing the extent alone cannot say: what the falloff *looks like* below the card.
+   *
+   * Each layer is modelled as a ramp across its own blur width - enough to answer the two questions the
+   * owner's complaint came down to. Does it fall monotonically (a rise, or a flat shelf, is the "step"
+   * that reads as abrupt), and does it reach nothing before the window edge (a shadow still dark at the
+   * margin is being cut off, which is exactly "渐变不彻底").
+   */
+  const profile = [];
+  for (let distance = 0; distance <= shadowPad; distance += 2) {
+    let alpha = 0;
+    for (const layer of layers) {
+      const parts = splitWhitespace(layer);
+      if (parts.length < 3) continue;
+      const offsetY = css.evaluate(parts[1]);
+      const blur = css.evaluate(parts[2]);
+      const colour = /rgba?\(([^)]+)\)/.exec(layer);
+      const layerAlpha = colour ? Number(colour[1].split(',')[3] ?? 1) : 0;
+      // Fully covered until the shadow's own edge, then a linear ramp over the blur width.
+      const over = (distance - (offsetY - blur / 2)) / Math.max(1, blur);
+      const ramp = 1 - Math.min(1, Math.max(0, over));
+      alpha = alpha + layerAlpha * ramp * (1 - alpha);
+    }
+    profile.push(alpha);
+  }
+  const rising = profile.findIndex((value, index) => index > 0 && value > profile[index - 1] + 1e-6);
+  check('阴影单调变淡（没有台阶）', rising === -1, profile.map((v) => v.toFixed(3)).join(' '));
+  check(
+    '阴影在窗口留白内淡到没有',
+    profile[profile.length - 1] <= 0.02,
+    `留白边缘 ${profile[profile.length - 1].toFixed(3)}`,
+  );
+  check('阴影在卡片边缘仍然可见', profile[0] >= 0.25, `卡片边缘 ${profile[0].toFixed(3)}`);
 }
 
 /* --------------------------------------------------------------- top bar */

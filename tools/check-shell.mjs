@@ -29,6 +29,7 @@ import {
   MAX_WIDTH,
   MINI_RATIO,
   MIN_WIDTH,
+  KEEP_VISIBLE,
   SHADOW_PAD,
   cardWidthForWindow,
   clampToWorkArea,
@@ -157,38 +158,73 @@ console.log('\n--- 拖动时的窗口位置 ---');
 {
   const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
   const size = { width: 448, height: 773 };
+  const cardWidth = size.width - SHADOW_PAD * 2;
+  const cardHeight = size.height - SHADOW_PAD * 2;
+
+  /** How much of the card would be inside the work area, in each axis. */
+  const visible = (position) => {
+    const left = position.x + SHADOW_PAD;
+    const top = position.y + SHADOW_PAD;
+    return {
+      width: Math.min(left + cardWidth, workArea.x + workArea.width) - Math.max(left, workArea.x),
+      height: Math.min(top + cardHeight, workArea.y + workArea.height) - Math.max(top, workArea.y),
+    };
+  };
 
   // The window follows the cursor, holding the pressed point at a fixed offset inside it.
   const target = dragTarget({ x: 900, y: 500 }, { x: 200, y: 300 }, size, workArea);
   check('按住内部的点拖动会跟随', target.x === 700 && target.y === 200, JSON.stringify(target));
 
   /*
-   * The clamp is what makes a rolled-up card recoverable. The strip sits along the window's TOP
-   * edge, so a window left hanging above the top of the display would put the strip where no
-   * pointer can reach it and the card could never be expanded again.
+   * A floating card is allowed to hang off an edge - that is how every other client behaves, and with
+   * the shadow margin the old rule would not even let it touch the edge. What must not happen is a card
+   * pushed so far that no pointer can reach it again, so the invariant is `KEEP_VISIBLE`, not "inside".
    */
-  const topLeft = dragTarget({ x: 10, y: 10 }, { x: 200, y: 300 }, size, workArea);
-  check('不能拖到屏幕左上角以外', topLeft.x === 0 && topLeft.y === 0, JSON.stringify(topLeft));
-
-  const bottomRight = dragTarget({ x: 5000, y: 5000 }, { x: 10, y: 10 }, size, workArea);
+  const farTopLeft = dragTarget({ x: -100000, y: -100000 }, { x: 200, y: 300 }, size, workArea);
+  const topLeftVisible = visible(farTopLeft);
   check(
-    '不能拖出右下角',
-    bottomRight.x === workArea.width - size.width && bottomRight.y === workArea.height - size.height,
-    JSON.stringify(bottomRight),
+    '可以拖出屏幕，但会留下可抓取的一块（左上）',
+    topLeftVisible.width === KEEP_VISIBLE && topLeftVisible.height === KEEP_VISIBLE,
+    `${JSON.stringify(farTopLeft)} → 可见 ${topLeftVisible.width}x${topLeftVisible.height}`,
   );
+
+  const farBottomRight = dragTarget({ x: 100000, y: 100000 }, { x: 10, y: 10 }, size, workArea);
+  const bottomRightVisible = visible(farBottomRight);
+  check(
+    '可以拖出屏幕，但会留下可抓取的一块（右下）',
+    bottomRightVisible.width === KEEP_VISIBLE && bottomRightVisible.height === KEEP_VISIBLE,
+    `${JSON.stringify(farBottomRight)} → 可见 ${bottomRightVisible.width}x${bottomRightVisible.height}`,
+  );
+
+  // Somewhere in the middle of the screen nothing is clamped at all.
+  const middle = dragTarget({ x: 900, y: 500 }, { x: 200, y: 300 }, size, workArea);
+  check('屏幕中间不做任何夹取', middle.x === 700 && middle.y === 200);
 
   // A secondary display to the left has negative coordinates; the clamp must use them.
   const leftDisplay = { x: -1920, y: 0, width: 1920, height: 1040 };
-  const negative = dragTarget({ x: -1000, y: 400 }, { x: 200, y: 100 }, size, leftDisplay);
+  const negative = dragTarget({ x: -100000, y: 400 }, { x: 200, y: 100 }, size, leftDisplay);
   check(
     '副屏（负坐标）也能正确夹取',
-    negative.x === -1200 && negative.y === leftDisplay.height - size.height,
+    negative.x === leftDisplay.x + KEEP_VISIBLE - SHADOW_PAD - cardWidth,
     JSON.stringify(negative),
   );
 
-  // A window larger than the display anchors to the top-left instead of a negative coordinate.
+  // A card bigger than the display still keeps its grabbable part on screen.
   const oversized = clampToWorkArea({ x: 500, y: 500 }, { width: 3000, height: 2000 }, workArea);
-  check('窗口大于屏幕时贴左上角', oversized.x === 0 && oversized.y === 0, JSON.stringify(oversized));
+  check(
+    '卡片比屏幕还大时仍然可抓',
+    oversized.x + SHADOW_PAD <= workArea.width - KEEP_VISIBLE && oversized.y + SHADOW_PAD <= workArea.height - KEEP_VISIBLE,
+    JSON.stringify(oversized),
+  );
+
+  // The rolled-up strip is shorter than KEEP_VISIBLE, so it is never asked to keep more than it has.
+  const strip = clampToWorkArea({ x: 10, y: -100000 }, { width: 448, height: 40 + SHADOW_PAD * 2 }, workArea);
+  const stripTop = strip.y + SHADOW_PAD;
+  check(
+    '收起条比 KEEP_VISIBLE 矮时整条留在屏内',
+    stripTop >= 0,
+    `条顶 ${stripTop}（窗口 y=${strip.y}）`,
+  );
 
   // Sub-pixel positions make a scaled display blurry, so the result is always whole pixels.
   const rounded = clampToWorkArea({ x: 10.4, y: 10.6 }, size, workArea);
@@ -627,9 +663,11 @@ console.log('\n--- 启动顺序（一个坏掉的附加功能不能拖垮核心�
   check('宿主就绪后才加载界面', /await waitForUi\(\)/.test(startBlock) && /loadUi\(\)/.test(shellJs));
   check('界面就绪以 dom-ready 为准', /once\('dom-ready'/.test(shellJs));
 
-  // A drag must never be able to move the window somewhere the pointer cannot reach it again.
-  check('拖动位置被限制在工作区', /clampToWorkArea/.test(shellJs) && /clampToWorkArea/.test(readStyle('apps/overlay/shell-utils.mjs')));
+  // A drag may push the card off an edge, but never out of reach: clampToWorkArea keeps
+  // KEEP_VISIBLE of it on screen, and the roll-up and the width presets go through the same call.
+  check('拖动位置经过夹取', /clampToWorkArea/.test(shellJs) && /clampToWorkArea/.test(readStyle('apps/overlay/shell-utils.mjs')));
   check('收起/展开也用同一套限制', /clampToWorkArea\(\s*\{ x: bounds\.x/.test(shellJs));
+  check('夹取以可抓取为准，不再要求整窗在屏内', !/workArea\.x \+ workArea\.width - size\.width/.test(readStyle('apps/overlay/shell-utils.mjs')));
 }
 
 console.log(`\n${failures ? `❌ ${failures} 项失败` : '✅ 桌面壳辅助逻辑通过'}`);

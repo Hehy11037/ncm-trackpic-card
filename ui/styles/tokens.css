@@ -72,11 +72,19 @@
    *
    * The rim matters because the card's background is one of the cover's own colours: on a
    * dark cover against a dark desktop a shadow alone leaves no visible edge.
+   *
+   * **In pixels, and inside the margin.** These were `u`-scaled, which meant the shadow grew with the
+   * card while the transparent margin the window leaves for it stayed 24px - so at the large preset the
+   * blur ran past the window edge and the gradient was *cut off flat*, which is what "渐变不彻底" was.
+   * Fixed pixel offsets cannot overflow, and four graduated layers replace the two heavy ones so the
+   * falloff has no visible step. The largest layer reaches 7 + 14 = 21px, under the 24px margin.
    */
   --shadow-float:
-    0 calc(var(--u) * 2.2) calc(var(--u) * 5.2) rgba(6, 10, 14, 0.42),
-    0 calc(var(--u) * 0.7) calc(var(--u) * 1.9) rgba(6, 10, 14, 0.34),
-    0 0 0 calc(var(--u) * 0.3) rgba(255, 255, 255, 0.16);
+    0 1px 2px rgba(6, 10, 14, 0.15),
+    0 2px 5px rgba(6, 10, 14, 0.13),
+    0 4px 9px rgba(6, 10, 14, 0.13),
+    0 7px 14px rgba(6, 10, 14, 0.10),
+    0 0 0 0.5px rgba(255, 255, 255, 0.12);
 
   /* Font sizes are the reference's measurements, verbatim. No floors are needed because
      the stage never goes below 380px wide, which keeps 1u >= 3.8px. */

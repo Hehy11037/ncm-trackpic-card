@@ -98,14 +98,50 @@ export function cardWidthForWindow(windowWidth) {
  * @param {{width:number,height:number}} size window size
  * @param {{x:number,y:number,width:number,height:number}} workArea
  */
-export function clampToWorkArea(position, size, workArea) {
-  // `Math.max` on the upper bound: a window larger than the screen anchors to the top-left rather
-  // than being pushed to a negative coordinate.
-  const maxX = Math.max(workArea.x, workArea.x + workArea.width - size.width);
-  const maxY = Math.max(workArea.y, workArea.y + workArea.height - size.height);
+/**
+ * How much of the card has to stay on screen for the pointer to be able to reach it again.
+ *
+ * Not zero: a card pushed completely off the display cannot be grabbed back except from the tray, and
+ * "it vanished" is a worse surprise than "it stopped at the edge". 48px is wider than the card's own
+ * controls and enough of the artwork to press and drag.
+ */
+export const KEEP_VISIBLE = 48;
+
+/**
+ * Keep enough of the *card* on screen to grab, and let the rest hang off.
+ *
+ * This used to clamp the whole window into the work area, and because the window is the card plus
+ * `SHADOW_PAD` of transparent margin on each side, that meant the card could never get closer than the
+ * shadow margin to the edge of the screen. The owner wanted a floating card they can push most of the
+ * way off the screen, the way most clients allow, so the rule is now about the card:
+ * `KEEP_VISIBLE` pixels of it must overlap the work area in each axis, and everything else - including
+ * the shadow - may be outside.
+ *
+ * The two axes are independent, so a card can hang off a corner leaving a small corner visible, which
+ * is still grabbable. `keep` is reduced for a card smaller than it, so a rolled-up strip is never asked
+ * to leave more of itself on screen than it has.
+ *
+ * @param {{x:number,y:number}} position wanted window position
+ * @param {{width:number,height:number}} size window size
+ * @param {{x:number,y:number,width:number,height:number}} workArea
+ * @param {number} [pad] the transparent margin the window carries on each side
+ * @param {number} [keep] how much of the card must stay reachable
+ */
+export function clampToWorkArea(position, size, workArea, pad = SHADOW_PAD, keep = KEEP_VISIBLE) {
+  const cardWidth = Math.max(0, size.width - pad * 2);
+  const cardHeight = Math.max(0, size.height - pad * 2);
+  const keepX = Math.min(keep, cardWidth);
+  const keepY = Math.min(keep, cardHeight);
+  // Window-x bounds, derived from where the *card* may be: its right edge at least `keepX` in from the
+  // left of the work area, its left edge at least `keepX` in from the right.
+  const minX = workArea.x + keepX - pad - cardWidth;
+  const maxX = workArea.x + workArea.width - keepX - pad;
+  const minY = workArea.y + keepY - pad - cardHeight;
+  const maxY = workArea.y + workArea.height - keepY - pad;
+  // A card bigger than the display would otherwise get an inverted range; anchor it instead.
   return {
-    x: Math.round(Math.min(Math.max(position.x, workArea.x), maxX)),
-    y: Math.round(Math.min(Math.max(position.y, workArea.y), maxY)),
+    x: Math.round(clamp(position.x, Math.min(minX, maxX), Math.max(minX, maxX))),
+    y: Math.round(clamp(position.y, Math.min(minY, maxY), Math.max(minY, maxY))),
   };
 }
 

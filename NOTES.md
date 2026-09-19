@@ -1549,3 +1549,43 @@ rather than only logged. Fifteen strings changed, all in the same direction:
 What was kept: the *action* ("重启一次即可"), and the state words that say what the state is (`已锁定`,
 `已静音`). What went: the narration. Console diagnostics and test names were left alone - nobody reads
 those in the UI, and shortening them only makes a failure harder to read.
+
+## 2026-09-18 (12) — the shadow's margin was fixed, and the shadow was not
+
+Two complaints, one cause each, and both were measurable rather than a matter of taste.
+
+**"The gradient does not complete, and it is abrupt."** The shadow was written in `u` - a unit derived
+from the card's width - while the transparent margin the window leaves for it is a fixed 24px. At the
+default card (u = 4px) the largest layer reaches 2.2u + 5.2u ≈ 30px, already past 24; at the large
+preset (u = 6.2px) it reaches ~46px. So the shadow was **cut off flat at the window edge** on every
+size, which is what "the gradient does not complete" describes exactly.
+
+The abruptness was the layer stack: two heavy drops (0.42 and 0.34) whose combined density fell from
+0.60 at the card edge to 0.26 within 7px, then trailed thinly for another 13. A dark core with a fast
+shoulder reads as a hard edge even when nothing is clipped. The fix is four graduated layers in **px**
+(so they can never outgrow a fixed margin) plus a 0.5px rim instead of a 1.1px one. The profile the
+check now prints:
+
+```
+before  0.596 0.255 0.210 0.145 0.000 ...    (a step at 7px, then a long tail)
+after   0.479 0.225 0.143 0.091 0.050 0.029 0.014 0.000 ...
+```
+
+`check-interaction.mjs` no longer only asks whether the extent fits. It builds the falloff from the
+layers and asserts it is **monotone** (a rise or a shelf is the step) and that it reaches ~0 **inside**
+the margin (anything still dark at the edge is being cut). It also asserts the shadow contains no
+`var(--u)` at all - the invariant that actually prevents this coming back at another card size.
+
+**"The card cannot be placed against the edge of the screen."** `clampToWorkArea` pinned the whole
+*window* inside the work area, and the window is the card plus a 24px transparent margin on each side -
+so the card could never get closer than 24px to the edge, no matter what the shadow did. The owner's
+preference was the other fix: let the card move mostly off the screen, like other clients. So the clamp
+is now about the *card*: `KEEP_VISIBLE` (48px) of it must overlap the work area in each axis, and
+everything else, shadow included, may hang off. The two axes are independent (a card can hang off a
+corner leaving a grabbable corner), and `keep` shrinks for a card smaller than it, because the rolled-up
+strip is only ~40px tall.
+
+Never zero, though: a card with nothing on screen can only be recovered from the tray, and "it
+vanished" is a worse surprise than "it stopped at the edge". Both rules are unit-tested with the actual
+numbers (dragging 100000px away leaves exactly 48x48 visible, on a monitor with negative coordinates
+too).

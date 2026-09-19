@@ -335,11 +335,13 @@ function geometryTarget() {
   const height = collapsed ? fit.collapsedHeight : fit.height;
   /*
    * Anchor the top edge, so rolling up eats the bottom of the window - which is what makes it read
-   * as the panel sliding up rather than the window jumping - and keep the result fully on screen.
+   * as the panel sliding up rather than the window jumping.
    *
-   * The clamp is what makes a rolled-up card recoverable: the strip sits along the window's top
-   * edge, so a window left hanging above the top of the display would put the strip where no
-   * pointer can reach it, and the card could never be expanded again.
+   * The clamp keeps `KEEP_VISIBLE` pixels of the *card* reachable rather than pinning the whole window
+   * inside the screen: a floating card is expected to be draggable most of the way off an edge, and
+   * clamping the window (which carries the shadow margin) was what stopped it getting near the edge at
+   * all. The minimum is what keeps a card hanging off the top recoverable: enough of it, and of the
+   * rolled-up strip, stays where a pointer can reach it.
    */
   const position = clampToWorkArea({ x: bounds.x, y: bounds.y }, { width: fit.width, height }, workArea);
 

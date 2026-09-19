@@ -17,7 +17,7 @@
 // out from the window size it is given.
 
 import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, screen, shell } from 'electron';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,8 +29,11 @@ import {
   DEFAULT_WIDTH,
   MAX_WIDTH,
   MIN_WIDTH,
+  CLIENT_IMAGE_NAMES,
   cardWidthForWindow,
   clamp,
+  clientDebugArgs,
+  findClientExe,
   clampToWorkArea,
   createHoverState,
   dragTarget,
@@ -471,11 +474,90 @@ function persistWindowState() {
     y: bounds.y,
     locked,
     coverEnabled: cover.enabled,
+    autoStartApplied,
   });
 }
 
-/* -------------------------------------------------------------- custom cover */
+/* --------------------------------------------------------------- auto-start */
 
+/*
+ * Start with Windows, once, and only for a real install.
+ *
+ * A mirror of what is playing is only useful if it is there when the music starts, so the first launch
+ * after an install turns auto-start on and records that it did. The latch matters: auto-start is also
+ * editable in Windows' own startup settings, and an app that kept re-enabling itself every launch would
+ * be fighting its own user.
+ *
+ * Not in development (`app.isPackaged` is false under `electron apps/overlay`): a checkout should not
+ * register itself to run at login.
+ */
+let autoStartApplied = false;
+
+function applyAutoStartOnce() {
+  if (!app.isPackaged || autoStartApplied) return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
+    autoStartApplied = true;
+    persistWindowState();
+    console.info('[shell] 已设置为开机自启（可在 Windows 启动项里关掉）');
+  } catch (err) {
+    console.warn('[shell] 设置开机自启失败', err);
+  }
+}
+
+/* ------------------------------------------------------- the NetEase client */
+
+/*
+ * Restarting the client with its debug channel open.
+ *
+ * The overlay only exists because the client's loopback debug port is open, and that port opens at
+ * *launch*. If the client was started any other way - the Start menu, the updater, Windows itself -
+ * nothing the overlay does can help except restarting it, which is why "the card cannot find the
+ * client" is such a common first run.
+ *
+ * Killing someone's music is a big thing to do unprompted, so this never runs on its own: the card
+ * shows a button when the host reports the channel is missing, and pressing it is what gets here.
+ * `tools/relaunch-ncm.ps1` does the same three steps for anyone who would rather run it by hand.
+ */
+const RESTART_SETTLE_MS = 900;
+
+function stopClientProcesses() {
+  for (const image of CLIENT_IMAGE_NAMES) {
+    /*
+     * `taskkill` rather than a process API: the client is a Windows app with a helper process, and
+     * `/IM` is the reliable way to catch both without a process walk. Failure is expected when it is
+     * not running, and `stdio: 'ignore'` keeps a fast-exiting child from ever blocking on a pipe.
+     */
+    execFile('taskkill', ['/IM', image, '/F'], { stdio: 'ignore', windowsHide: true }, () => {});
+  }
+}
+
+/** @returns {Promise<{ok: boolean, message: string}>} what the card should say */
+async function restartClient() {
+  const exe = findClientExe(process.env, existsSync);
+  if (!exe) {
+    console.warn('[shell] 没找到网易云客户端，无法带通道启动');
+    return { ok: false, message: '没找到网易云客户端，请手动启动' };
+  }
+
+  stopClientProcesses();
+  // The port has to be released before the new process can bind it; 900ms is what the PowerShell
+  // script's Start-Sleep uses, and it has not been seen to fail.
+  await new Promise((resolve) => setTimeout(resolve, RESTART_SETTLE_MS));
+
+  try {
+    const child = spawn(exe, clientDebugArgs(CDP_PORT), { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch (err) {
+    console.warn('[shell] 启动客户端失败', err);
+    return { ok: false, message: '启动客户端失败，请看终端日志' };
+  }
+
+  console.info(`[shell] 已带同步通道启动客户端：${exe} ${clientDebugArgs(CDP_PORT).join(' ')}`);
+  return { ok: true, message: '正在启动客户端…' };
+}
+
+/* -------------------------------------------------------------- custom cover */
 /*
  * The user's own cover: a picture kept beside the state file, which temporarily stands in for whatever
  * the client says the song's cover is.
@@ -734,6 +816,7 @@ function createWindow() {
   cardWidth = fit.cardWidth;
   locked = state.locked;
   cover.enabled = state.coverEnabled;
+  autoStartApplied = state.autoStartApplied;
   loadCoverImage();
   collapsed = false;
   // A fresh window has not drawn yet, and the pointer is wherever the user launched from - so
@@ -915,6 +998,12 @@ function bindIpc() {
    */
   ipcMain.handle('overlay:pick-cover', () => pickCover());
   ipcMain.handle('overlay:cover-url', () => cover.url);
+
+  /*
+   * Restart the client with its debug channel. An `invoke`, so the button can report what
+   * happened; the host says `ready` on its own once the channel answers.
+   */
+  ipcMain.handle('overlay:restart-client', () => restartClient());
   ipcMain.on('overlay:toggle-cover', () => toggleCover());
   ipcMain.on('overlay:clear-cover', () => clearCover());
 
@@ -1081,6 +1170,8 @@ app
 
     bindIpc();
     reportUiAssets();
+    // Before the window, so the state file records the latch even if a later step fails.
+    applyAutoStartOnce();
     /*
      * The window comes up straight away, showing the startup page, and the tray and the pointer
      * watcher with it. Everything that can be slow - waiting for the host - happens after, so the

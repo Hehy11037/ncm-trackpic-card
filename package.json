@@ -4,6 +4,8 @@
   "private": true,
   "description": "Desktop overlay that mirrors the NetEase Cloud Music client playback state, with scrolling word-by-word lyrics.",
   "type": "module",
+  "main": "apps/overlay/main.mjs",
+  "author": "Hehy11037",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -33,12 +35,15 @@
     "icons": "node tools/render-icons.mjs && node tools/render-controls.mjs",
     "icon": "node tools/make-icon.mjs",
     "icon:candidates": "node tools/icon-candidates.mjs",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
     "typecheck": "tsc --noEmit --pretty"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
     "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.7.2"
   }
 }

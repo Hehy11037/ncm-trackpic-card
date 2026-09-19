@@ -623,6 +623,79 @@ console.log('\n--- 自选封面（外壳这一侧）---');
   check('没有往托盘菜单里加东西', !/自选封面/.test(readStyle('apps/overlay/main.mjs').slice(readStyle('apps/overlay/main.mjs').indexOf('trayTemplate'))));
 }
 
+/* --------------------------------------------------------------- packaging */
+
+console.log('\n--- 打包配置（electron-builder.yml）---');
+{
+  /*
+   * The config decides whether an installed app can find its own parts, and getting it wrong is
+   * invisible until someone installs it: the app starts and cannot load `ui/`, or opens with no icon,
+   * or ships the whole checkout. So the four things the shell reads at runtime are checked against the
+   * `files` list, and the icon against the file on disk.
+   */
+  const configPath = 'electron-builder.yml';
+  check('存在打包配置', existsSync(configPath), configPath);
+  const config = readStyle(configPath);
+  const pkg = JSON.parse(readStyle('package.json'));
+
+  check('入口指向外壳', pkg.main === 'apps/overlay/main.mjs', `${pkg.main}`);
+  check(
+    '有 pack / dist 脚本',
+    /"pack": "electron-builder --dir"/.test(readStyle('package.json')) &&
+      /"dist": "electron-builder"/.test(readStyle('package.json')),
+  );
+  check('electron-builder 是开发依赖', typeof pkg.devDependencies?.['electron-builder'] === 'string');
+
+  /*
+   * Everything the shell touches at runtime: the host entry, the host's sources (Node strips the types
+   * at run time), the UI the host serves, and the icon the tray loads.
+   */
+  for (const [what, pattern, present] of [
+    ['宿主入口', /tools\/host-run\.mjs/, existsSync('tools/host-run.mjs')],
+    ['宿主源码', /packages\/host\/src\/\*\*\/\*/, existsSync('packages/host/src/index.ts')],
+    ['界面', /ui\/\*\*\/\*/, existsSync('ui/index.html')],
+    ['外壳', /apps\/overlay\/\*\*\/\*/, existsSync('apps/overlay/main.mjs')],
+    ['图标', /assets\/icon\.ico/, existsSync('assets/icon.ico')],
+  ]) {
+    check(`files 里包含${what}`, pattern.test(config) && present);
+  }
+  check('图标目录指向 assets（不是被忽略的 build/）', /buildResources: assets/.test(config));
+  check('win.icon 指向存在的图标', /icon: assets\/icon\.ico/.test(config) && existsSync('assets/icon.ico'));
+  check('输出到 dist/', /output: dist/.test(config));
+
+  // No native modules, so the rebuild pass has nothing to do; see the comment in the config.
+  check('关掉无用的 native 重建', /npmRebuild: false/.test(config));
+
+  // The installer is per-user and lets the user choose where it goes: an overlay writes only to its own
+  // user data, so an administrator prompt would be asking for a privilege it never uses.
+  check('按用户安装、可选目录', /perMachine: false/.test(config) && /allowToChangeInstallationDirectory: true/.test(config));
+  check('同时产出安装包与免安装版', /target: nsis/.test(config) && /target: portable/.test(config));
+  check(
+    '安装后给出开始菜单与桌面快捷方式',
+    /createStartMenuShortcut: true/.test(config) && /createDesktopShortcut: true/.test(config),
+  );
+
+  /*
+   * Auto-start is a latch the shell applies once, packaged only - and it must never be applied in
+   * development, where a checkout would register itself to run at login.
+   */
+  const shellJs2 = readStyle('apps/overlay/main.mjs');
+  check('开机自启只在打包后生效', /if \(!app\.isPackaged \|\| autoStartApplied\) return;/.test(shellJs2));
+  check(
+    '开机自启只做一次（记在状态文件里）',
+    /autoStartApplied: raw\.autoStartApplied === true/.test(readStyle('apps/overlay/shell-utils.mjs')),
+  );
+  check('单实例锁已就位', /requestSingleInstanceLock/.test(shellJs2) && /second-instance/.test(shellJs2));
+
+  // The one thing the card can do about a missing debug channel: restart the client with it.
+  check(
+    '卡片能一键带通道重启客户端',
+    /ipcMain\.handle\('overlay:restart-client'/.test(shellJs2) &&
+      /restartClient: \(\) => ipcRenderer\.invoke\('overlay:restart-client'\)/.test(readStyle('apps/overlay/preload.cjs')),
+  );
+  check('重启用客户端自己的参数（只监听本机）', /clientDebugArgs\(CDP_PORT\)/.test(shellJs2));
+}
+
 /* ----------------------------------------------------------- startup wiring */
 
 console.log('\n--- 启动顺序（一个坏掉的附加功能不能拖垮核心功能）---');

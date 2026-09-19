@@ -1,0 +1,67 @@
+# Packaging: a Windows installer and a portable exe.
+#
+#   npm run pack    build an unpacked app directory (dist/win-unpacked) to try
+#   npm run dist    build the NSIS installer and the portable exe
+#
+# `npm run dist` needs electron-builder's own tool downloads (NSIS, winCodeSign) on first run; point
+# ELECTRON_BUILDER_CACHE somewhere writable if the default under %LOCALAPPDATA% is locked down.
+
+appId: com.hehy.ncm-trackpic-card
+productName: NCM Trackpic Card
+copyright: Copyright © 2026 Hehy11037
+
+directories:
+  # NOT `build/`: that path is gitignored in this repo and holds build *output*. The icon lives in
+  # assets/ so it is committed and available to the installer.
+  buildResources: assets
+  output: dist
+
+# Everything the app reads at runtime, and nothing else. A missing entry here is the classic
+# packaging failure - the app starts and then cannot find its own UI - so check-shell.mjs asserts that
+# this list covers the four things the shell touches.
+files:
+  - apps/overlay/**/*
+  - packages/host/src/**/*
+  - tools/host-run.mjs
+  - ui/**/*
+  - assets/icon.ico
+  - package.json
+  - '!**/*.test.ts'
+  - '!**/*.test.mjs'
+  - '!**/*.md'
+
+# Deliberately *not* an asar archive. The host runs as a separate Node process
+# (`ELECTRON_RUN_AS_NODE`) that serves `ui/` from disk, and the debug-channel cache is written beside
+# the app's user data; a plain directory keeps every one of those paths a real file. The trade is a
+# slightly larger install, which is worth not debugging "does the asar shim apply in this mode" on the
+# first release.
+asar: false
+
+win:
+  icon: assets/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+# No native dependencies anywhere in this project - the host is plain JavaScript plus Node's own
+# type stripping - so the `@electron/rebuild` pass has nothing to do but fork a child process. It is
+# skipped for that reason, not as a workaround: a build step with no work is pure risk.
+npmRebuild: false
+
+nsis:
+  # A real installer rather than a one-click: the user chooses the directory, and per-user means no
+  # administrator prompt for an overlay that only ever writes to its own user data.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NCM 同步卡片
+  runAfterFinish: true
+  artifactName: ${productName}-${version}-setup.${ext}
+  uninstallDisplayName: NCM Trackpic Card ${version}
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}

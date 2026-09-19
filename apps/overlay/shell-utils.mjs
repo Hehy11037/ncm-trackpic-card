@@ -5,6 +5,44 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
+/* --------------------------------------------------------- the NetEase client */
+
+/**
+ * Where NetEase Cloud Music installs itself.
+ *
+ * The same three candidates `tools/relaunch-ncm.ps1` tries, because the two must agree: the app does
+ * this itself now, and the script remains for people who would rather run it by hand.
+ *
+ * @param {Record<string,string|undefined>} env
+ */
+export function clientExeCandidates(env) {
+  const candidates = [
+    env.ProgramFiles ? join(env.ProgramFiles, 'Netease', 'CloudMusic', 'cloudmusic.exe') : null,
+    env['ProgramFiles(x86)'] ? join(env['ProgramFiles(x86)'], 'Netease', 'CloudMusic', 'cloudmusic.exe') : null,
+    env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Netease', 'CloudMusic', 'cloudmusic.exe') : null,
+  ];
+  return candidates.filter((path) => typeof path === 'string' && path.length > 0);
+}
+
+/** The first candidate that exists, or null. `exists` is injected so this stays testable. */
+export function findClientExe(env, exists) {
+  return clientExeCandidates(env).find((path) => exists(path)) ?? null;
+}
+
+/**
+ * The flags the client has to be launched with for the overlay to see it at all.
+ *
+ * The debug channel only opens at launch, which is why "the overlay stopped working" is almost always
+ * "the client was started by something else". Loopback only: this listens on this machine, not the
+ * network.
+ */
+export function clientDebugArgs(port) {
+  return ['--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`];
+}
+
+/** The processes that have to be gone before the client can be relaunched with those flags. */
+export const CLIENT_IMAGE_NAMES = ['cloudmusic.exe', 'cloudmusic_util.exe'];
+
 /* ------------------------------------------------------------------ geometry */
 
 /**
@@ -298,9 +336,23 @@ export function loadWindowState(file, displayBounds) {
       // Whether the user's own cover was switched on. The image itself is a file beside this one, so
       // only the flag is stored - a data URL in here would make the state file megabytes.
       coverEnabled: typeof raw.coverEnabled === 'boolean' ? raw.coverEnabled : true,
+      /*
+       * Whether "start with Windows" has already been turned on once. It is a latch, not a setting:
+       * the app turns auto-start on itself after a packaged install, records that it did, and never
+       * touches it again - so a user who turns it off in Windows' own startup settings is not fought
+       * by the next launch.
+       */
+      autoStartApplied: raw.autoStartApplied === true,
     };
   } catch {
-    return { cardWidth: CARD_WIDTH_DEFAULT, x: undefined, y: undefined, locked: true, coverEnabled: true };
+    return {
+      cardWidth: CARD_WIDTH_DEFAULT,
+      x: undefined,
+      y: undefined,
+      locked: true,
+      coverEnabled: true,
+      autoStartApplied: false,
+    };
   }
 }
 
@@ -315,6 +367,7 @@ export function saveWindowState(file, state) {
           y: state.y,
           locked: state.locked === true,
           coverEnabled: state.coverEnabled !== false,
+          autoStartApplied: state.autoStartApplied === true,
         },
         null,
         2,
@@ -322,7 +375,7 @@ export function saveWindowState(file, state) {
       'utf8',
     );
   } catch {
-    // A failed write only costs the remembered position, lock state and cover choice.
+    // A failed write only costs the remembered position, lock state, cover choice and the latch.
   }
 }
 

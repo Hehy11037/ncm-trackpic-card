@@ -796,6 +796,37 @@
   display: flex;
 }
 
+/*
+ * The fix button: shown only when the host names a state it can cure - the client not running, or
+ * running without the debug channel. It sits in the same line as the diagnosis so the sentence and the
+ * remedy are read together, and it is a pill rather than the circular `icon-btn` because it carries a
+ * label and belongs to the status line rather than to the card's chrome.
+ */
+.status__fix {
+  flex: 0 0 auto;
+  padding: calc(var(--u) * 0.7) calc(var(--u) * 1.6);
+  border-radius: 999px;
+  background: var(--panel-line);
+  color: var(--text-strong);
+  font-size: var(--fs-status);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+
+.status__fix:hover {
+  opacity: 0.85;
+}
+
+.status__fix:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.status__fix[hidden] {
+  display: none;
+}
+
 .status .dot {
   width: max(6px, calc(var(--u) * 1.1));
   height: max(6px, calc(var(--u) * 1.1));

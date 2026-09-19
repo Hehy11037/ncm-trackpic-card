@@ -533,6 +533,29 @@ function bindInput() {
   coverButton?.addEventListener('click', onCoverButton);
   coverButton?.addEventListener('contextmenu', onCoverButton);
 
+  /*
+   * The one fix the status line offers: restart the client with its debug channel. `invoke`, so a
+   * refusal (no client installed) can be reported rather than looking like a dead button.
+   */
+  document.getElementById('fix-client')?.addEventListener('click', async () => {
+    const bridge = shell();
+    view.setFixPending(true);
+    try {
+      const result = await bridge?.restartClient?.();
+      if (result && result.ok === false && result.message) {
+        view.setConnection({ state: 'error', detail: result.message });
+      }
+    } catch {
+      // The shell said no; the status line keeps showing whatever the host last reported.
+    }
+    /*
+     * Re-enabled on a timer rather than on the next connection message: a successful restart makes the
+     * host report `ready` within a second or two, which hides the button anyway, and a failure has to
+     * leave it pressable again.
+     */
+    setTimeout(() => view.setFixPending(false), 3000);
+  });
+
   for (const button of document.querySelectorAll('.ctrl[data-action]')) {
     button.addEventListener('click', () => {
       const action = button.dataset.action;

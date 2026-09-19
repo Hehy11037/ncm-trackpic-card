@@ -250,7 +250,16 @@
           </div>
         </div>
 
-        <div class="status" id="status"><span class="dot"></span><span id="status-text">连接中…</span></div>
+        <!--
+          The status line, and the one fix it can offer. The overlay only works if the client's debug
+          channel is open, and that only happens at launch - so when the host reports the channel
+          missing, the useful thing to show is a button that restarts the client with it rather than a
+          sentence describing the problem. Hidden the rest of the time, including when all is well.
+        -->
+        <div class="status" id="status">
+          <span class="dot"></span><span id="status-text">连接中…</span>
+          <button class="status__fix" id="fix-client" hidden>重启客户端</button>
+        </div>
       </main>
 
       <!--

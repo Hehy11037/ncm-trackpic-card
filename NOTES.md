@@ -1589,3 +1589,73 @@ Never zero, though: a card with nothing on screen can only be recovered from the
 vanished" is a worse surprise than "it stopped at the edge". Both rules are unit-tested with the actual
 numbers (dragging 100000px away leaves exactly 48x48 visible, on a monitor with negative coordinates
 too).
+
+## 2026-09-19 — the app becomes an app: packaging, auto-start, and one button that unblocks everything
+
+The owner asked whether this could be a real client or only something started from a terminal. It could,
+and the interesting part was how little had to change - plus one thing that had to be added.
+
+### What was already true
+
+The icon was ready (`assets/icon.ico`, nine sizes, checked by `check-shell.mjs`), and the shell already
+launched the host through `process.execPath` with `ELECTRON_RUN_AS_NODE=1` - i.e. on **Electron's own
+Node**, not a system install. A packaged app therefore needs no Node on the machine. Single-instance was
+already there too (`requestSingleInstanceLock` + `second-instance` → `showWindow`). The state file and the
+custom cover already live in the app's `userData`.
+
+So the work was: a config, a startup latch, and the missing action.
+
+### The config, and the three things that bite
+
+`electron-builder.yml` writes an NSIS installer and a portable exe. Three choices there are not defaults:
+
+* **`buildResources: assets`, not `build`.** The conventional path for build resources *is* `build/`, and
+  this repo gitignores `build/` (it holds build output). The first version of the icon went there and
+  would have worked on this machine and nowhere else - the same trap, one level up.
+* **`asar: false`.** The host is a separate Node process that serves `ui/` from disk and writes a module
+  cache beside its user data. An asar would have meant proving that the fs shim applies in
+  `ELECTRON_RUN_AS_NODE` mode before shipping; a plain directory means never having to find out. It is
+  also why every runtime path is a real file, which the packaging check can then verify.
+* **`npmRebuild: false`.** There are no native modules anywhere, so `@electron/rebuild` has nothing to do
+  but fork a child. Skipping a step that has no work is not a workaround, it is the correct config - and
+  it happened to be the first thing the restricted shell could not run.
+
+`check-shell.mjs` now checks the config against the filesystem: the `files` list must cover the host
+entry, the host's TypeScript sources, `ui/`, and the icon; the icon path must exist; the installer must
+be per-user with a choosable directory; both targets must be present. A missing `files` entry is
+invisible until someone installs the app and it opens a window with nothing in it, which is exactly the
+kind of failure worth a static check.
+
+### Auto-start as a latch
+
+Start-with-Windows is applied on the first **packaged** launch and recorded (`autoStartApplied`) in the
+state file, and then never touched again. The latch matters: auto-start is also editable in Windows' own
+startup settings, and an app that re-enabled itself every launch would be fighting its own user - the
+same mistake as re-applying a default on every start. In development it does nothing at all, because a
+checkout must not register itself to run at login.
+
+### The button that unblocks everything
+
+The overlay exists because the client's loopback debug port is open, and that port opens **only at
+launch**. Every "the card cannot find the client" in this project's history has been that, one way or
+another - including the round where the client updated itself and the user restarted it several times
+before it came back.
+
+So the status line, which already says *what* is wrong, now offers the *fix*: when the host reports
+`client-not-running` or `needs-relaunch`, a button appears (启动客户端 or 重启客户端 - the label follows
+the state, because "restart" would be a small lie when nothing is running). Pressing it kills the client's
+two processes, waits 900ms for the port to be released, and launches the client detached with the debug
+flags. Nothing kills anyone's music without that press.
+
+### Building it under the sandbox, for the record
+
+Four separate walls, all environmental, none of them the config's fault: npm needs `npm_config_cache`
+overridden *in the environment* (a workspace `.npmrc` loses to the harness's preset) and
+`--ignore-scripts`; electron-builder needs `ELECTRON_BUILDER_CACHE` and
+`--config.electronDownload.cache=…` because `ELECTRON_CACHE` is not the variable it reads; and the npm
+collector and `makensis` steps spawn children with piped stdio, which the confined sandbox refuses with
+EPERM. The last one needed the unconfined mode, twice, for exactly that reason.
+
+The output: `dist\NCM Trackpic Card-0.1.0-setup.exe` and `…-portable.exe`, 106MB each, with
+`resources/app/{ui,packages,tools,apps,assets}` verified inside. Whether the installed app *runs* is the
+owner's test - nothing here can launch Electron and keep the client alive.

@@ -39,6 +39,15 @@ contextBridge.exposeInMainWorld('overlayShell', {
   coverUrl: () => ipcRenderer.invoke('overlay:cover-url'),
 
   /*
+   * Restart the NetEase client with its loopback debug channel open.
+   *
+   * The channel only opens at launch, so an overlay that cannot see the client cannot fix that by
+   * itself - this is the one action that can. It resolves with `{ ok, message }` so the card can say
+   * what happened instead of leaving the button looking dead.
+   */
+  restartClient: () => ipcRenderer.invoke('overlay:restart-client'),
+
+  /*
    * Moving the window, as a plain pointer gesture rather than a `-webkit-app-region` drag region.
    * See ui/src/drag.js for why.
    *

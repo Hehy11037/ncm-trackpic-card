@@ -80,6 +80,7 @@ export class CardView {
       miniArtist: $('mini-artist'),
       miniFill: $('mini-fill'),
       lock: $('lock'),
+      fixClient: $('fix-client'),
       coverPick: $('cover-pick'),
       mode: $('mode'),
       volume: $('volume'),
@@ -307,9 +308,39 @@ export class CardView {
     this.el.miniArtist.textContent = '检查宿主是否在运行';
   }
 
+  /**
+   * Reflect the host's connection state, and offer the one fix that exists.
+   *
+   * Two of the host's states mean "the client is there but the overlay cannot see it", and both are
+   * cured by the same action: restarting the client with its debug channel open. `client-not-running`
+   * is a launch, `needs-relaunch` a restart, so the button says which - a button labelled 重启 when
+   * nothing is running would be a small lie.
+   */
   setConnection(info) {
     this.el.card.dataset.connected = String(info.state === 'ready');
     this.el.status.textContent = info.detail || info.state;
+
+    const fix = this.el.fixClient;
+    if (!fix) return;
+    const launch = info.state === 'client-not-running';
+    const wanted = launch || info.state === 'needs-relaunch';
+    // What the button is *for*; the pending state only changes its wording.
+    this.fixLabel = launch ? '启动客户端' : '重启客户端';
+    if (wanted && fix.hidden) fix.hidden = false;
+    else if (!wanted && !fix.hidden) fix.hidden = true;
+    if (wanted) {
+      fix.textContent = this.fixPending ? '正在启动…' : this.fixLabel;
+      fix.disabled = this.fixPending === true;
+    }
+  }
+
+  /** While the shell is starting the client, the button must not be pressed a second time. */
+  setFixPending(pending) {
+    this.fixPending = pending === true;
+    const fix = this.el.fixClient;
+    if (!fix || fix.hidden) return;
+    fix.disabled = this.fixPending;
+    fix.textContent = this.fixPending ? '正在启动…' : this.fixLabel ?? '重启客户端';
   }
 
   /* ----------------------------------------------------------------- cover */

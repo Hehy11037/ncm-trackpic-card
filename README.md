@@ -67,7 +67,7 @@ npm run check:package  # 检查刚打出来的产物（导入图完整，并真�
 | `tools/` | 探针与检查脚本（`check-*.mjs`）、图标生成、打包辅助 |
 | `assets/` | 图标（`icon.ico` 多尺寸、矢量源、导出图） |
 | `docs/contracts.md` | 与客户端之间实测出来的契约（调试通道 API、枚举、限制） |
-| `MEMORY.md` / `NOTES.md` | 踩过的坑与每轮决策的原因 |
+| `NOTES.md` | 踩过的坑与每轮决策的原因（按时间） |
 
 ## 已知限制
 

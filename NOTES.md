@@ -548,8 +548,10 @@ nothing answers, starts its own host - with `stdio` pointed at a log file rather
 the sandbox refuses piped stdio - waits for it, and stops only the host it started. Verified that
 it leaves no listener behind.
 
-`MEMORY.md` is new: the current rules, constraints, invariants and traps, as opposed to `NOTES.md`,
-which is the chronological record of how they were learned.
+A second file, `MEMORY.md`, was started the same day as a maintainer's local notebook: the current rules,
+constraints, invariants and traps, as opposed to this file, which is the chronological record of how they
+were learned. It is deliberately **not** in the repository (see `.gitignore`) - a clone gets the record,
+not someone else's scratchpad - so anything here that refers to it is referring to a local file.
 
 ## 2026-09-15 (8) — a jump reads as slow, and a window that grew while being dragged
 
@@ -589,8 +591,7 @@ window against it and warns if anything else resized the window mid-drag, so if 
 the whole story the terminal names who else was involved. The resize tween steps from values
 captured once, for the same reason.
 
-**Generalised**: never feed a window's own geometry back into the next `setBounds`. Invariant 13 in
-`MEMORY.md`.
+**Generalised**: never feed a window's own geometry back into the next `setBounds`.
 
 ## 2026-09-15 (9) — a timer is not a frame clock, and two luminance measures with one name
 
@@ -641,7 +642,6 @@ be blue. It also pins the cases that were already working - a greyscale ramp, a 
 cover showing both extremes - so the fix cannot be "make everything blue".
 
 **Generalised**: choosing a colour and judging contrast are different jobs with different measures.
-Invariant 16 in `MEMORY.md`.
 
 ## 2026-09-15 (10) — `map` passed the index, and a timer is still not a frame clock
 
@@ -1869,8 +1869,17 @@ tracked file finds nothing - the check that "no documentation now points at noth
 
 ### And the files the owner asked about
 
-`MEMORY.md` and `NOTES.md` are **not packaged**: the `files` list excludes `**/*.md`, and the payload
-contains no markdown at all (verified against the built app, not the config). They *are* tracked, though,
-and have been in published history for a long time - 27 commits on `origin/main` touch `MEMORY.md` - so
-"don't push them" would mean rewriting public history. They contain no tokens and no absolute paths, so
-the recommendation is to leave them as they are: they are the "why" that the code cannot carry.
+Neither file is **packaged**: the `files` list excludes `**/*.md`, and the payload contains no markdown at
+all (verified against the built app, not the config).
+
+The owner then asked that a future clone not receive `MEMORY.md` at all, which does not need a history
+rewrite: the file is removed from the index and added to `.gitignore`, so it stays on this machine and is
+absent from the working tree of every clone from here on. Its content - and every lesson in it - is here
+instead, because this file is the published half.
+
+The nuance worth knowing: removing it from the branch does **not** remove it from history. Anyone who
+wants it can still find it at an older commit, on GitHub's web UI or in a fresh clone's `git log`. Making
+it unrecoverable would mean rewriting published history (`git filter-repo` plus a force push), which
+changes every commit hash and breaks anyone who has already cloned. That was offered and not taken, which
+is the right call for a notebook with no secrets in it - and there are none: no tokens, no absolute paths
+(both checked).

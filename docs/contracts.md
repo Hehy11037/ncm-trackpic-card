@@ -448,6 +448,8 @@ method on the `AudioPlayer` instance rather than one of these named calls — wh
 | `tools/icon-candidates.mjs` (`npm run icon:candidates`) | Draws candidate icons at 128/48/32/16px **and at 16px blown up by whole pixels on light, dark and mid backgrounds** - which is how the design was chosen: several candidates vanish on a dark taskbar, and that is invisible in a single-size preview. |
 | `tools/measure-icon.mjs` | **Reads a finished icon and reports its geometry**: the red disc and everything inside it, converted to a 24-unit box, with `--compare` reporting how many pixels of a rendered icon disagree with it. Used when the owner sends a design and says not to change it - the numbers come out of the image instead of out of my judgement. |
 | `tools/lib/png.mjs` | The shared PNG decoder (all five filter types, 8-bit). `lib/`, because three tools now need pixels. |
+| `tools/exe-icon.mjs` + `tools/lib/exe-icon.mjs` | Reads the icon out of a built `.exe`'s PE resources: which frames it contains and their dominant colour. `check-package.mjs` uses it to prove the installer and the app carry our icon; by hand it answers "did the installer get the right one?" without installing anything. |
+| `tools/audit-lyrics.mjs`, `tools/diagnose-lyrics.mjs` | The lyric data path end to end: what the client's slice holds, what the parsers make of it, and which source a track resolved from. Manual instruments - no script calls them - kept because they are the only way to see *why* a lyric did or did not appear. |
 | `tools/tap-controls.mjs` | Wrap pipeline functions to capture call arguments. |
 | `tools/host-smoke.mjs` | **Phase-1 end-to-end test**: host + fake overlay client. |
 | `tools/host-run.mjs` | Run the host in the foreground with a live track view. |

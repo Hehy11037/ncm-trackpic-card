@@ -1841,3 +1841,36 @@ The lesson is the same shape as the icon one from the previous round: **the test
 of an accident of the environment, not because the thing worked.**
 
 Version bumped to 0.1.1 so the owner can tell which installer they are running.
+
+## 2026-09-20 (3) — deleting the dead tools, and the four that almost went with them
+
+The owner asked for the unused scripts to go. A reachability walk - every entry point in `package.json`,
+the app's own runtime entries, and every relative import from those - found 33 files under `tools/` that
+nothing could reach. That number was wrong in both directions:
+
+* **Four were libraries of tools being kept.** `lib/probe-{app,audio,bridge,deep}.mjs` are imported by
+  `inspect-player`, `audio-streams`, `find-bridge` and `find-progress` - all four named in
+  `docs/contracts.md` as things a reader may run. The walk never saw those imports because it started from
+  `package.json`, and the manual tools are called by hand. Checking the *reverse* direction (who imports
+  this file?) saved them.
+* **Three were false positives** for the same reason: `relaunch-ncm.ps1` and `debug-launch.ps1` are
+  invoked by npm scripts as PowerShell (the walk only understood `node`/`electron`), and the
+  `.lnk` shortcut is the owner's own way to start the client.
+
+So the rule became: delete a file only when nothing reaches it **and** no document names it. Two lyrics
+instruments (`audit-lyrics`, `diagnose-lyrics`) failed the second test by a hair - they are the tools I
+had offered for auditing the lyrics page - so they were kept and added to the tool table instead. Eight
+went: `dump-actions`, `fetch-electron`, `lyric-shape`, `lyrics-race`, `tap-dispatch`, `trackpic-canvas`,
+`trackpic-design`, `verify-progress`.
+
+`docs/contracts.md` gained a row for the two kept instruments, so the next person does not repeat this
+exercise from scratch. The suite is green afterwards, and a scan for the deleted names across every
+tracked file finds nothing - the check that "no documentation now points at nothing".
+
+### And the files the owner asked about
+
+`MEMORY.md` and `NOTES.md` are **not packaged**: the `files` list excludes `**/*.md`, and the payload
+contains no markdown at all (verified against the built app, not the config). They *are* tracked, though,
+and have been in published history for a long time - 27 commits on `origin/main` touch `MEMORY.md` - so
+"don't push them" would mean rewriting public history. They contain no tokens and no absolute paths, so
+the recommendation is to leave them as they are: they are the "why" that the code cannot carry.

@@ -1872,14 +1872,39 @@ tracked file finds nothing - the check that "no documentation now points at noth
 Neither file is **packaged**: the `files` list excludes `**/*.md`, and the payload contains no markdown at
 all (verified against the built app, not the config).
 
-The owner then asked that a future clone not receive `MEMORY.md` at all, which does not need a history
-rewrite: the file is removed from the index and added to `.gitignore`, so it stays on this machine and is
-absent from the working tree of every clone from here on. Its content - and every lesson in it - is here
-instead, because this file is the published half.
+The owner then asked that a future clone not receive `MEMORY.md` at all. First step: remove it from the
+index and add it to `.gitignore`, which leaves the file on this machine and keeps it out of every clone's
+working tree from that commit on.
 
-The nuance worth knowing: removing it from the branch does **not** remove it from history. Anyone who
-wants it can still find it at an older commit, on GitHub's web UI or in a fresh clone's `git log`. Making
-it unrecoverable would mean rewriting published history (`git filter-repo` plus a force push), which
-changes every commit hash and breaks anyone who has already cloned. That was offered and not taken, which
-is the right call for a notebook with no secrets in it - and there are none: no tokens, no absolute paths
-(both checked).
+Then they said the history could go too - nobody had cloned - so every commit was rewritten to drop the
+path. All 76 commits were rebuilt with `git commit-tree`, preserving author, committer, dates and
+messages; the branch was moved only after the new chain passed its own checks (same commit count, no
+commit anywhere in it carrying the path, the tip's tree clean). The old objects were then expired and
+garbage-collected locally, and the remote was force-pushed with an explicit lease.
+
+The result, verified from the remote's own tree: 116 files, no `MEMORY.md`, and `git log origin/main --
+MEMORY.md` returns nothing. Every commit hash changed, which is the cost - old links and bookmarks break.
+Two caveats worth stating plainly: GitHub can keep unreachable objects reachable *by SHA* for a while (a
+support request purges them), and anyone who had cloned or forked before the rewrite still has them. The
+owner confirmed nobody had.
+
+### Two PowerShell traps, one of which nearly cost the history
+
+`git filter-branch` cannot run in this sandbox at all: its filters are executed by `sh.exe`, which is
+refused a signal pipe ("couldn't create signal pipe, Win32 error 5"). The same job was done with plumbing
+instead - read each commit's tree into the index, drop the path, write the tree, re-create the commit.
+
+The first attempt at that script did two things wrong, and both are worth keeping:
+
+* **PowerShell 5.1 reads a `.ps1` without a BOM as ANSI/GBK.** The script's Chinese output text was
+  therefore mis-decoded, and the mis-decoding corrupted the quoting of everything after it - part of the
+  script was *printed* instead of executed, which is how `git update-ref` silently did nothing. The fix is
+  ASCII-only output in generated scripts, or write them with a BOM.
+* **`git rev-list --parents -n 1 <sha>` prints one line, `<sha> <parent>...`.** Piping that through
+  `Select-Object -Skip 1` skips the entire line and yields no parents at all - so the first rewrite built a
+  single **parentless** commit containing the final tree, which would have thrown away all 76 commits.
+
+What caught it was refusing to move the ref until the result had been checked against the old chain. The
+script now ends with that check and aborts without touching `refs/heads/main` if the commit count changed,
+if any commit still carries the path, or if the tip's tree does. **A destructive script needs its
+verification between the work and the commit of the work** - not after.

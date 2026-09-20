@@ -313,8 +313,19 @@ function startHost() {
     },
   );
 
-  hostProcess.stdout?.on('data', (chunk) => process.stdout.write(`[host] ${chunk}`));
-  hostProcess.stderr?.on('data', (chunk) => process.stderr.write(`[host] ${chunk}`));
+  /*
+   * The child's output goes through `console`, not `process.stdout.write`.
+   *
+   * That distinction cost a whole round: a packaged Windows GUI app has no stdout, so the host's
+   * `ERR_MODULE_NOT_FOUND` - the entire reason the app could not start - was written into nowhere while
+   * the log filled up with "宿主退出，代码 1" and nothing else. `console` is patched to the log file.
+   */
+  hostProcess.stdout?.on('data', (chunk) => {
+    for (const line of String(chunk).split('\n')) if (line.trim()) console.log(`[host] ${line}`);
+  });
+  hostProcess.stderr?.on('data', (chunk) => {
+    for (const line of String(chunk).split('\n')) if (line.trim()) console.error(`[host] ${line}`);
+  });
   hostProcess.on('exit', (code) => {
     hostProcess = null;
     if (quitting) return;
@@ -849,55 +860,11 @@ function startHoverWatch() {
   }, HOVER_POLL_MS);
 }
 
-/* --------------------------------------------------------------------- window */
-
-/**
- * Load the real UI, once its server is answering.
- *
- * `dom-ready` rather than an IPC handshake from the preload: the roll-up must not depend on the
- * bridge. Attached here, and not in `createWindow`, because the window first shows the startup
- * page - and that page must not be what marks the renderer ready, or the card could roll up before
- * the real interface had ever been drawn.
- */
-/**
- * Wait until something is listening on a loopback port.
- *
- * The window must not be asked to load the UI before the host has bound its port, and the host is a
- * separate process that has to start, load its TypeScript modules, find the client's modules and bind
- * two sockets - seconds, on a first run with no cache. The first packaged build showed "正在启动…"
- * forever for exactly this reason: the load was attempted once, refused, and never retried.
- *
- * A TCP connect is the cheapest honest probe: it asks the question the load is about to ask, without
- * fetching anything and without leaving an error page in the window.
- */
-function waitForPort(port, timeoutMs) {
-  return new Promise((resolve) => {
-    const deadline = Date.now() + timeoutMs;
-    const attempt = () => {
-      const socket = connect({ host: '127.0.0.1', port });
-      const done = (ok) => {
-        socket.removeAllListeners();
-        socket.destroy();
-        if (ok) resolve(true);
-        else if (Date.now() >= deadline) resolve(false);
-        else setTimeout(attempt, 250);
-      };
-      socket.setTimeout(700, () => done(false));
-      socket.once('connect', () => done(true));
-      socket.once('error', () => done(false));
-    };
-    attempt();
-  });
-}
-
-/** How long the host is given to come up before the window says so instead of waiting. */
-const UI_WAIT_MS = 20000;
-
 /**
  * What the window shows when the UI cannot be loaded.
  *
- * A packaged app has no console, so a silent failure is all the owner can see. This says which door is
- * shut and where the log is, which is the difference between "it does not work" and a diagnosis.
+ * A packaged app has no console, so a silent failure is all the owner can see. This says what is wrong
+ * and where the log is, which is the difference between "it does not work" and a diagnosis.
  */
 function failurePage(detail) {
   return `data:text/html;charset=utf-8,${encodeURIComponent(
@@ -916,7 +883,29 @@ function failurePage(detail) {
   )}`;
 }
 
-async function loadUi() {
+/* --------------------------------------------------------------------- window */
+
+/**
+ * Load the real UI, once its server is answering.
+ *
+ * `dom-ready` rather than an IPC handshake from the preload: the roll-up must not depend on the
+ * bridge. Attached here, and not in `createWindow`, because the window first shows the startup
+ * page - and that page must not be what marks the renderer ready, or the card could roll up before
+ * the real interface had ever been drawn.
+ */
+/**
+ * Load the real UI, once its server is answering.
+ *
+ * `dom-ready` rather than an IPC handshake from the preload: the roll-up must not depend on the
+ * bridge. Attached here, and not in `createWindow`, because the window first shows the startup page -
+ * and that page must not be what marks the renderer ready, or the card could roll up before the real
+ * interface had ever been drawn.
+ *
+ * `hostReady` comes from the caller's `waitForUi` (which asks the UI server for `/config.json` - a
+ * stronger question than "is the port open"). There is deliberately only *one* wait: an earlier version
+ * waited here as well, which meant a host that never came up took forty seconds to say so.
+ */
+async function loadUi(hostReady) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.once('dom-ready', () => {
     rendererReady = true;
@@ -926,8 +915,13 @@ async function loadUi() {
     console.info('[shell] 界面已加载，自动收起开始工作');
   });
 
-  if (!(await waitForPort(UI_PORT, UI_WAIT_MS))) {
-    const detail = `宿主没有在 ${UI_WAIT_MS / 1000} 秒内监听 ${UI_PORT} 端口`;
+  if (!hostReady) {
+    /*
+     * Say what is wrong and where the log is. A packaged app has no console, so a silent failure is all
+     * the owner can see - and the first packaged build's host died on a missing module with nothing
+     * anywhere to say so.
+     */
+    const detail = '宿主没有就绪（看日志第一行起的原因：多半是宿主进程启动即退出）';
     console.error(`[shell] ${detail}`);
     await mainWindow.loadURL(failurePage(detail));
     return;
@@ -1341,13 +1335,7 @@ app
     }
 
     const ready = hostError ? false : await waitForUi();
-    if (!ready) {
-      // Still load the UI: it shows a clear "not connected" state, which is more useful than
-      // leaving the startup page up forever. A host already on the port is a normal cause - a
-      // leftover one from an earlier run - and the window simply talks to that instead.
-      console.error(`[shell] 界面服务未就绪 (${UI_URL})，仍加载界面以显示状态`);
-    }
-    await loadUi();
+    await loadUi(ready);
 
     app.on('activate', () => showWindow());
   })

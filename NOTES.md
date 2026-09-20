@@ -1784,3 +1784,60 @@ the vector remains only as the fallback for when there is no export to build fro
 The lesson is the one the owner stated plainly: I had been treating "the export is 1024px" as the reason
 the small sizes had to be redrawn, when the actual reason was two implementation mistakes in my own
 downscaler.
+
+## 2026-09-20 (2) — the installer's host could not start, and my check had walked past it
+
+The second install test produced a log, which is the only reason this was findable at all:
+
+```
+INFO  [shell] 界面资源(...\resources\app\ui): index.html ...
+ERROR [shell] 宿主退出，代码 1          ← 300ms after launch
+ERROR [shell] 界面服务未就绪 ...
+```
+
+That is all it said, because the host's own stderr went through `process.stdout.write`, and a packaged
+Windows GUI app has no stdout. Running the *installed* exe by hand - `ELECTRON_RUN_AS_NODE=1` plus the
+host entry - printed the missing line immediately:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@ncm-trackpic-card/shared'
+  imported from ...\resources\app\packages\host\src\index.ts
+```
+
+A workspace package, reached in development through the npm junction in `node_modules`, and
+`node_modules` is not shipped. Three of those imports were values (the rest are `import type`, which
+Node's type stripping erases, so they never mattered). The host now imports `packages/shared/src/index.ts`
+by relative path, that directory is in `files`, and `ws` - the only real npm dependency - moved into the
+root `package.json`'s `dependencies`, because electron-builder's module collector is what copies
+`node_modules`, and an explicit `files` glob for `node_modules/**` is simply ignored.
+
+### The check that was supposed to catch this
+
+`check-package.mjs` exists to walk a *built* payload and prove it can start. It walked `./` and `../`
+imports only, so it reported a complete graph - 17 files - for a payload whose host could not load its
+first module. Bare specifiers are now resolved against `node_modules/<name>` and the workspace packages,
+and it fails loudly:
+
+```
+ok   导入图完整（每个相对引用都在包里）  20 个文件
+ok   每个裸包名都在包里（node_modules 或工作区）  ws
+```
+
+Getting that matcher right took three attempts, which is its own small lesson: "import or export, then
+the next quoted string" also matches `export const MEDIA_KEY_FOR = { playPause: 'playpause' }` and prose
+inside log messages, and reported `playpause`, `0.1.0` and a sentence fragment as missing packages. The
+version that works anchors on `from` (allowing multi-line import lists by running to the first `;`),
+handles dynamic `import()`, and ignores `node:` and `electron`.
+
+### And the test that was rescued by the wrong directory
+
+After shipping `ws`, the packaged host started in my check - because the payload sits *inside the
+checkout*, where Node walks up and finds the repo's own `node_modules`. The installed app has no such
+ancestor. The faithful test is to copy the payload somewhere else first, which is now what I do: the
+isolated copy serves `index.html` (with `id="card"`) and `/config.json`, from a directory whose ancestors
+contain no `node_modules` at all.
+
+The lesson is the same shape as the icon one from the previous round: **the test agreed with me because
+of an accident of the environment, not because the thing worked.**
+
+Version bumped to 0.1.1 so the owner can tell which installer they are running.

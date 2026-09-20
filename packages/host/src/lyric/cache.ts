@@ -14,7 +14,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync }
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { LyricDoc } from '@ncm-trackpic-card/shared';
+import type { LyricDoc } from '../../../shared/src/index.ts';
 
 const NORMAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /**

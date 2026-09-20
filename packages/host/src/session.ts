@@ -24,8 +24,8 @@ import type {
   PlaybackStatus,
   QueueInfo,
   Song,
-} from '@ncm-trackpic-card/shared';
-import { rawPlayingStateToStatus, toSongId } from '@ncm-trackpic-card/shared';
+} from '../../shared/src/index.ts';
+import { rawPlayingStateToStatus, toSongId } from '../../shared/src/index.ts';
 
 import {
   BRIDGE_PREFIX,

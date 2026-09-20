@@ -719,7 +719,7 @@ console.log('\n--- 启动顺序（一个坏掉的附加功能不能拖垮核心�
    */
   const startBlock = shellJs.slice(shellJs.indexOf('.whenReady()'));
   check('找到了启动块', startBlock.length > 0);
-  const order = ['startHoverWatch();', 'createWindow();', 'createTray();', 'await loadUi();'].map((needle) =>
+  const order = ['startHoverWatch();', 'createWindow();', 'createTray();', 'await loadUi(ready);'].map((needle) =>
     startBlock.indexOf(needle),
   );
   check(
@@ -733,7 +733,18 @@ console.log('\n--- 启动顺序（一个坏掉的附加功能不能拖垮核心�
   // The window shows a placeholder at once so Windows never reports a windowless process with its
   // "starting" cursor, and the real UI is loaded only once the host answers.
   check('窗口先显示启动页', /STARTUP_PAGE/.test(shellJs) && /loadURL\(STARTUP_PAGE\)/.test(shellJs));
-  check('宿主就绪后才加载界面', /await waitForUi\(\)/.test(startBlock) && /loadUi\(\)/.test(shellJs));
+  /*
+   * Readiness is now passed *into* the loader, which is stronger than the old shape: a host that never
+   * comes up gets a page naming the log path instead of a dead URL, and there is only one wait (two of
+   * them meant forty seconds before anything was said).
+   */
+  check(
+    '宿主就绪后才加载界面，没就绪就说清楚',
+    /const ready = hostError \? false : await waitForUi\(\);/.test(startBlock) &&
+      /await loadUi\(ready\);/.test(startBlock) &&
+      /if \(!hostReady\)/.test(shellJs) &&
+      /failurePage\(detail\)/.test(shellJs),
+  );
   check('界面就绪以 dom-ready 为准', /once\('dom-ready'/.test(shellJs));
 
   // A drag may push the card off an edge, but never out of reach: clampToWorkArea keeps

@@ -16,7 +16,7 @@ import type {
   LyricDoc,
   LyricLine,
   LyricSource,
-} from '@ncm-trackpic-card/shared';
+} from '../../../shared/src/index.ts';
 
 import { emptyPayload, type RawLyricPayload } from './fetch.ts';
 import {

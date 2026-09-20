@@ -31,15 +31,59 @@ const check = (label, ok, detail = '') => {
   if (!ok) failures++;
 };
 
-/** Every relative import target in a JavaScript/TypeScript file, resolved against it. */
-function relativeImports(file) {
+/** Every import target in a JavaScript/TypeScript file, relative and bare. */
+function importsOf(file) {
   const text = readFileSync(file, 'utf8');
-  const found = [];
-  for (const match of text.matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g)) {
-    found.push(resolve(dirname(file), match[1]));
+  const relativeTargets = [];
+  const bareTargets = [];
+  /*
+   * Four shapes, and nothing else:
+   *   import ... from 'x'     (may span lines, so it runs to the first `;` and then requires `from`)
+   *   export ... from 'x'
+   *   import 'x'
+   *   import('x')
+   *
+   * Being this specific is not fussiness. A looser pattern - "import or export, then the next quoted
+   * string" - also matches `export const MEDIA_KEY_FOR = { playPause: 'playpause' }` and prose in log
+   * messages, and the first version of this reported both as missing packages.
+   */
+  const patterns = [
+    /[ \t]*import\b[^;]*?\bfrom\s*['"]([^'"\n]+)['"]/g,
+    /[ \t]*export\b[^;]*?\bfrom\s*['"]([^'"\n]+)['"]/g,
+    /[ \t]*import\s*['"]([^'"\n]+)['"]/g,
+    /\bimport\s*\(\s*['"]([^'"\n]+)['"]/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const specifier = match[1];
+      if (!specifier || /\s/.test(specifier)) continue;
+      if (specifier.startsWith('.')) relativeTargets.push(resolve(dirname(file), specifier));
+      // `node:` builtins and `electron` come from the runtime, not from the payload.
+      else if (!specifier.startsWith('node:') && specifier !== 'electron' && !specifier.startsWith('electron/')) {
+        bareTargets.push(specifier);
+      }
+    }
   }
-  return found;
+  return { relativeTargets, bareTargets };
 }
+
+/**
+ * Where a bare specifier has to exist inside the payload.
+ *
+ * This is the check that was missing. The first packaged build's host died immediately with
+ * `ERR_MODULE_NOT_FOUND: Cannot find package '@ncm-trackpic-card/shared'` - a workspace package reached
+ * through the npm junction in `node_modules`, which is not shipped - and the walk ignored bare
+ * specifiers entirely, so it reported a complete import graph for a payload that could not start.
+ */
+function resolveBare(specifier) {
+  const name = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
+  const candidates = [join(APP, 'node_modules', name), join(APP, 'node_modules', name, 'package.json')];
+  const workspace = join(APP, 'packages', name.replace('@ncm-trackpic-card/', ''), 'package.json');
+  candidates.push(workspace);
+  return candidates.some((candidate) => existsSync(candidate)) ? name : null;
+}
+
+/** The scripts and styles an HTML file pulls in, resolved against it. */
 
 /**
  * Where an import actually lives.
@@ -85,6 +129,7 @@ for (const entry of entries) check(`入口存在 ${entry.slice(APP.length + 1)}`
 
 // Walk the JavaScript import graph, and the UI's asset graph, from those entries.
 const seen = new Set();
+const bareNeeded = new Set();
 const queue = [...entries];
 let missing = 0;
 while (queue.length) {
@@ -92,8 +137,20 @@ while (queue.length) {
   if (seen.has(file) || !existsSync(file)) continue;
   seen.add(file);
   if (!statSync(file).isFile()) continue;
-  const next = file.endsWith('.html') ? htmlAssets(file) : relativeImports(file);
-  for (const target of next) {
+  if (file.endsWith('.html')) {
+    for (const target of htmlAssets(file)) {
+      const resolved = resolveImport(target);
+      if (resolved) queue.push(resolved);
+      else {
+        console.log(`      缺失: ${target.slice(APP.length + 1)}`);
+        missing++;
+      }
+    }
+    continue;
+  }
+  const { relativeTargets, bareTargets } = importsOf(file);
+  for (const specifier of bareTargets) bareNeeded.add(specifier);
+  for (const target of relativeTargets) {
     const resolved = resolveImport(target);
     if (!resolved) {
       console.log(`      缺失: ${target.slice(APP.length + 1)}  ← 由 ${file.slice(APP.length + 1)} 引用`);
@@ -104,6 +161,17 @@ while (queue.length) {
   }
 }
 check('导入图完整（每个相对引用都在包里）', missing === 0, missing ? `${missing} 个缺失` : `${seen.size} 个文件`);
+
+/*
+ * Bare specifiers are the half that was missing when this check first shipped: a workspace package that
+ * resolves through a node_modules junction in development and simply is not there in the installer.
+ */
+const unresolvedBare = [...bareNeeded].filter((specifier) => resolveBare(specifier) === null);
+check(
+  '每个裸包名都在包里（node_modules 或工作区）',
+  unresolvedBare.length === 0,
+  unresolvedBare.length ? `缺 ${unresolvedBare.join(' ')}` : [...bareNeeded].join(' ') || '（没有）',
+);
 check(
   '界面入口与样式在包里',
   existsSync(join(APP, 'ui/index.html')) && existsSync(join(APP, 'ui/styles/card.css')),

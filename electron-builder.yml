@@ -18,10 +18,15 @@ directories:
 
 # Everything the app reads at runtime, and nothing else. A missing entry here is the classic
 # packaging failure - the app starts and then cannot find its own UI - so check-shell.mjs asserts that
-# this list covers the four things the shell touches.
+# this list covers the four things the shell touches, and check-package.mjs walks the *built* payload's
+# imports (including bare specifiers) to catch anything added since.
 files:
   - apps/overlay/**/*
   - packages/host/src/**/*
+  # The host imports the shared package by relative path, so its sources have to be here. They used to
+  # be reached through the workspace junction in node_modules, which is not shipped - and that is exactly
+  # how the first installer produced a host that died with ERR_MODULE_NOT_FOUND.
+  - packages/shared/src/**/*
   - tools/host-run.mjs
   - ui/**/*
   - assets/icon.ico

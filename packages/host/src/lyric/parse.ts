@@ -14,7 +14,7 @@
  * Everything leaving this module is in milliseconds, with credit lines removed.
  */
 
-import type { LyricLine, LyricWord } from '@ncm-trackpic-card/shared';
+import type { LyricLine, LyricWord } from '../../../shared/src/index.ts';
 
 /** One entry as the client stores it: `{ time: seconds, lyric: text }`. */
 export interface ClientLyricEntry {

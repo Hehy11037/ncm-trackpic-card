@@ -25,7 +25,7 @@
  * and so cannot be wrong about which track it describes.
  */
 
-import type { ClientLyricSlice, LyricDoc } from '@ncm-trackpic-card/shared';
+import type { ClientLyricSlice, LyricDoc } from '../../shared/src/index.ts';
 
 import {
   docFromClientSlice,

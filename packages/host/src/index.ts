@@ -19,7 +19,7 @@ import {
   type HostMessage,
   type LyricDoc,
   type PlaybackSnapshot,
-} from '@ncm-trackpic-card/shared';
+} from '../../shared/src/index.ts';
 
 import { DEFAULT_CDP_PORT } from './cdp.ts';
 import { LyricsService, type LyricsServiceOptions } from './lyrics.ts';

@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CdpSession, DEFAULT_CDP_PORT } from './cdp.ts';
-import type { ConnectionInfo, ConnectionState } from '@ncm-trackpic-card/shared';
+import type { ConnectionInfo, ConnectionState } from '../../shared/src/index.ts';
 
 const PROCESS_TIMEOUT_MS = 8000;
 

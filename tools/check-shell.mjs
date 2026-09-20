@@ -566,7 +566,7 @@ console.log('\n--- 应用图标（assets/icon.ico）---');
         return best ? best[0] : null;
       };
       const fromArt = frame256 ? modalRed(frame256) : null;
-      check('256 帧（导出图）的红是网易云客户端的红', fromArt === '#fd364e', `${fromArt}`);
+      check('256 帧的红是网易云客户端的红', fromArt === '#fd364e', `${fromArt}`);
       const ico16 = (() => {
         for (let i = 0; i < count; i++) {
           const entry = 6 + i * 16;
@@ -578,7 +578,7 @@ console.log('\n--- 应用图标（assets/icon.ico）---');
         return null;
       })();
       const fromVector = ico16 ? modalRed(ico16) : null;
-      check('16 帧（矢量）的红也是同一个色号', fromVector === '#fd364e', `${fromVector}`);
+      check('16 帧的红也是同一个色号（每一帧都从导出图来）', fromVector === '#fd364e', `${fromVector}`);
       check(
         '矢量定义里写的就是这个色号',
         /const RED = \[0xfd, 0x36, 0x4e\]/.test(readStyle('tools/make-icon.mjs')),

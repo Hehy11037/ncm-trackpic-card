@@ -279,7 +279,7 @@ const SOURCE_PATH = (() => {
   const at = argv.indexOf('--source');
   return at >= 0 ? argv[at + 1] : `${OUT === 'assets' ? 'assets' : OUT}/icon-source.png`;
 })();
-const SOURCE_MIN = 48;
+const SOURCE_MIN = 0;
 const source = existsSync(SOURCE_PATH) ? decodePng(readFileSync(SOURCE_PATH)) : null;
 if (source) recolourRed(source, SOURCE_RED, RED);
 
@@ -420,26 +420,43 @@ function markMask(image) {
   return { mask, core, x0: cx - side / 2, y0: cy - side / 2, side };
 }
 
+/** sRGB to linear light and back, for averaging. */
+function toLinear(value) {
+  const c = value / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+function toSrgb(value) {
+  const c = Math.max(0, Math.min(1, value));
+  return Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055));
+}
+
 /**
- * One frame from the exported art: the mark's mask sampled into a square frame and area-averaged down.
+ * One frame from the exported art: the mark's mask, area-averaged down into a square frame.
  *
- * `alpha` is the mask's coverage; the colour comes from the mask's *core* where the samples have one,
- * falling back to the mask itself at the rim, so nothing pale from the export's checkerboard-adjacent
- * pixels reaches the icon.
+ * **Every source pixel under a destination pixel is sampled**, not a fixed 4x4 grid. That grid was the
+ * first version's mistake: going from an 846px mark to a 16px frame is a 53x reduction, so 16 samples
+ * per pixel skipped almost all of it - which is what made the small sizes mottled. The sample count now
+ * follows the scale (capped, because past a few dozen samples the average has stopped changing).
+ *
+ * **Averaging happens in linear light.** Averaging sRGB values directly - which is what most tools do,
+ * and what this did first - makes thin light features (the two white pause bars, 1.4px at 16px) darker
+ * than they should be, because sRGB is not proportional to light. Converting first keeps them bright.
+ *
+ * `alpha` is the mask's coverage; the colour comes from the samples inside the mask, so the export's own
+ * antialiasing against its checkerboard background never reaches the icon.
  */
 function renderFromSource(image, cut, size) {
-  const sub = 4;
+  const scale = cut.side / size;
+  // A box filter wants one sample per source pixel it covers; beyond ~64 the result stops moving.
+  const sub = Math.max(1, Math.min(64, Math.ceil(scale)));
   const rgba = Buffer.alloc(size * size * 4, 0);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       let r = 0;
       let g = 0;
       let b = 0;
-      let coreCount = 0;
-      let edgeR = 0;
-      let edgeG = 0;
-      let edgeB = 0;
-      let edgeCount = 0;
+      let covered = 0;
       for (let sy = 0; sy < sub; sy++) {
         for (let sx = 0; sx < sub; sx++) {
           const u = (x + (sx + 0.5) / sub) / size;
@@ -450,26 +467,17 @@ function renderFromSource(image, cut, size) {
           const index = py * image.width + px;
           if (!cut.mask[index]) continue;
           const at = index * 4;
-          if (cut.core[index]) {
-            r += image.pixels[at];
-            g += image.pixels[at + 1];
-            b += image.pixels[at + 2];
-            coreCount++;
-          } else {
-            edgeR += image.pixels[at];
-            edgeG += image.pixels[at + 1];
-            edgeB += image.pixels[at + 2];
-            edgeCount++;
-          }
+          r += toLinear(image.pixels[at]);
+          g += toLinear(image.pixels[at + 1]);
+          b += toLinear(image.pixels[at + 2]);
+          covered++;
         }
       }
-      const covered = coreCount + edgeCount;
       if (!covered) continue;
       const to = (y * size + x) * 4;
-      const use = coreCount > 0 ? coreCount : edgeCount;
-      rgba[to] = Math.round((coreCount > 0 ? r : edgeR) / use);
-      rgba[to + 1] = Math.round((coreCount > 0 ? g : edgeG) / use);
-      rgba[to + 2] = Math.round((coreCount > 0 ? b : edgeB) / use);
+      rgba[to] = toSrgb(r / covered);
+      rgba[to + 1] = toSrgb(g / covered);
+      rgba[to + 2] = toSrgb(b / covered);
       rgba[to + 3] = Math.round((covered / (sub * sub)) * 255);
     }
   }
@@ -496,8 +504,7 @@ console.log(`图标 → ${OUT}/`);
 console.log(`  icon.svg       矢量源（viewBox 24x24，三块路径）`);
 console.log(`  icon.ico       ${SIZES.length} 个尺寸: ${SIZES.join(' ')}（共 ${(encodeIco(images).length / 1024).toFixed(1)}KB）`);
 if (cut) {
-  console.log(`  ${' '.repeat(14)}≥${SOURCE_MIN}: 用导出图（抠图 ${cut.side.toFixed(0)}px 见方，从 ${SOURCE_PATH}）→ ${artSizes.join(' ')}`);
-  console.log(`  ${' '.repeat(14)}<${SOURCE_MIN}: 用矢量（小尺寸下条不会糊）→ ${vectorSizes.join(' ')}`);
+  console.log(`  ${' '.repeat(14)}全部尺寸都用导出图（抠图 ${cut.side.toFixed(0)}px 见方，从 ${SOURCE_PATH}），含 16px：区域平均 + 线性光`);
 } else {
   console.log(`  ${' '.repeat(14)}没有找到 ${SOURCE_PATH}，全部用矢量`);
 }

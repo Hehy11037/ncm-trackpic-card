@@ -18,7 +18,8 @@
 
 import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, screen, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,6 +47,50 @@ import {
 } from './shell-utils.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+/* ----------------------------------------------------------------------- log */
+
+/*
+ * A packaged Windows app has no console, so `console.error` about a failed start goes nowhere - which
+ * is why the first install showed "正在启动…" for ever and nothing else. Everything the shell prints is
+ * therefore *also* appended to a log beside the state file, including the renderer's own console
+ * messages and any failed page load.
+ *
+ * Overridden rather than routed through a `log()` helper on purpose: there are dozens of `console.*`
+ * calls already, and a helper would only capture the ones someone remembered to convert.
+ */
+function logFilePath() {
+  return join(app.getPath('userData'), 'overlay.log');
+}
+
+function startLogging() {
+  const file = logFilePath();
+  try {
+    // One file per run, with the previous run kept - two runs are usually enough to compare.
+    if (existsSync(file)) renameSync(file, `${file}.1`);
+    appendFileSync(
+      file,
+      `\n=== ${new Date().toISOString()}  version ${app.getVersion()}  packaged ${app.isPackaged} ===\n`,
+      'utf8',
+    );
+  } catch (err) {
+    console.warn('[shell] 无法写日志文件（继续运行）', err);
+  }
+  for (const level of ['log', 'info', 'warn', 'error']) {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+      original(...args);
+      try {
+        const line = args
+          .map((value) => (value instanceof Error ? (value.stack ?? value.message) : String(value)))
+          .join(' ');
+        appendFileSync(file, `${new Date().toISOString()} ${level.toUpperCase()} ${line}\n`, 'utf8');
+      } catch {
+        // A failed log write must never take the app down with it.
+      }
+    };
+  }
+}
 
 /**
  * Repository root.
@@ -218,6 +263,12 @@ const DRAG_STALE_MS = 4000;
  * almost immediately. `SUPPRESS_MS` is for the tray, where the pointer really is outside.
  */
 const DRAG_SETTLE_MS = 350;
+
+/*
+ * Start logging before anything else can fail: every `console.*` from here on lands in the file as well
+ * as the console, which is the only way a packaged app's start-up can be diagnosed after the fact.
+ */
+startLogging();
 
 /* -------------------------------------------------------------- single instance */
 
@@ -808,6 +859,63 @@ function startHoverWatch() {
  * page - and that page must not be what marks the renderer ready, or the card could roll up before
  * the real interface had ever been drawn.
  */
+/**
+ * Wait until something is listening on a loopback port.
+ *
+ * The window must not be asked to load the UI before the host has bound its port, and the host is a
+ * separate process that has to start, load its TypeScript modules, find the client's modules and bind
+ * two sockets - seconds, on a first run with no cache. The first packaged build showed "正在启动…"
+ * forever for exactly this reason: the load was attempted once, refused, and never retried.
+ *
+ * A TCP connect is the cheapest honest probe: it asks the question the load is about to ask, without
+ * fetching anything and without leaving an error page in the window.
+ */
+function waitForPort(port, timeoutMs) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const attempt = () => {
+      const socket = connect({ host: '127.0.0.1', port });
+      const done = (ok) => {
+        socket.removeAllListeners();
+        socket.destroy();
+        if (ok) resolve(true);
+        else if (Date.now() >= deadline) resolve(false);
+        else setTimeout(attempt, 250);
+      };
+      socket.setTimeout(700, () => done(false));
+      socket.once('connect', () => done(true));
+      socket.once('error', () => done(false));
+    };
+    attempt();
+  });
+}
+
+/** How long the host is given to come up before the window says so instead of waiting. */
+const UI_WAIT_MS = 20000;
+
+/**
+ * What the window shows when the UI cannot be loaded.
+ *
+ * A packaged app has no console, so a silent failure is all the owner can see. This says which door is
+ * shut and where the log is, which is the difference between "it does not work" and a diagnosis.
+ */
+function failurePage(detail) {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(
+    '<!doctype html><meta charset="utf-8"><style>' +
+      'html,body{margin:0;height:100%;background:rgba(12,14,18,0.86);overflow:hidden;' +
+      "font:13px/1.7 system-ui,'Microsoft YaHei',sans-serif;color:#e8eef2}" +
+      'body{display:grid;place-items:center;padding:0 24px}' +
+      '.box{text-align:center}.why{color:#ffd9a0;margin-bottom:6px}' +
+      '.where{color:#9fb1bd;font-size:11px;word-break:break-all}' +
+      '</style><body><div class="box">' +
+      '<div class="why">界面没能启动：' +
+      detail +
+      '</div><div class="where">日志：' +
+      logFilePath() +
+      '</div></div>',
+  )}`;
+}
+
 async function loadUi() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.once('dom-ready', () => {
@@ -817,11 +925,24 @@ async function loadUi() {
     sendState();
     console.info('[shell] 界面已加载，自动收起开始工作');
   });
-  try {
-    await mainWindow.loadURL(UI_URL);
-  } catch (err) {
-    console.error(`[shell] 加载界面失败 (${UI_URL})`, err);
+
+  if (!(await waitForPort(UI_PORT, UI_WAIT_MS))) {
+    const detail = `宿主没有在 ${UI_WAIT_MS / 1000} 秒内监听 ${UI_PORT} 端口`;
+    console.error(`[shell] ${detail}`);
+    await mainWindow.loadURL(failurePage(detail));
+    return;
   }
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await mainWindow.loadURL(UI_URL);
+      return;
+    } catch (err) {
+      console.error(`[shell] 加载界面失败（第 ${attempt} 次）(${UI_URL})`, err);
+      await new Promise((done) => setTimeout(done, 500));
+    }
+  }
+  await mainWindow.loadURL(failurePage(`界面服务器在，但页面加载失败（${UI_URL}）`));
 }
 
 function createWindow() {
@@ -879,11 +1000,23 @@ function createWindow() {
   mainWindow.setAlwaysOnTop(true, 'floating');
 
   // The renderer's console is otherwise invisible without DevTools, which makes a failed
-  // preload or a thrown module impossible to diagnose from the terminal.
+  // preload or a thrown module impossible to diagnose from the terminal - and in a packaged app,
+  // impossible to diagnose at all. It goes to the log file now.
   mainWindow.webContents.on('console-message', (...args) => {
     const details =
       args[0] && typeof args[0] === 'object' && 'message' in args[0] ? args[0] : { message: args[2] };
     console.log(`[ui] ${details.message}`);
+  });
+
+  /*
+   * A page that fails to load is the other half of "the card never appeared": the load itself, the
+   * subresources, and the renderer dying. All three were silent in the packaged build.
+   */
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    console.error(`[shell] 页面加载失败 ${isMainFrame ? '(主框架)' : ''} ${url} — ${description} (${code})`);
+  });
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.info(`[shell] 页面已加载 ${mainWindow?.webContents.getURL() ?? ''}`);
   });
 
   /*

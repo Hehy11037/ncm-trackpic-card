@@ -1735,3 +1735,52 @@ covers.
 
 The build was redone after the fix, so the artifacts in `dist/` include it - which matters because the
 owner will install *these* files, not the next build's.
+
+## 2026-09-20 — the owner installed it, and two things were wrong
+
+The install test did its job immediately: the card never appeared, and the small icon sizes had visible
+flaws. Both were mine, and both had a specific cause.
+
+### "正在启动…" for ever
+
+`loadUi()` called `mainWindow.loadURL(UI_URL)` **once**. The UI is served by the host, which is a separate
+process that has to start, load its TypeScript modules, find the client's modules and bind two sockets -
+seconds, on a first run with no cache. The load was attempted before the port was open, refused, and never
+retried, so the window sat on its startup page. The owner saw a transparent, unclickable rectangle in the
+middle of the screen, which is exactly what a 400x725 transparent window showing grey text looks like.
+
+The fix is to ask the question the load is about to ask: `waitForPort` probes the UI port with a TCP
+connect (cheapest honest check, and it leaves no error page behind), retries for 20 seconds, then loads -
+and retries the load itself three times. In development the race was there too; it just usually won.
+
+**The larger failure was that nobody could tell.** A packaged Windows GUI app has no console, so every
+`console.error` about the failed start went nowhere, and the owner had nothing to report but the symptom.
+So the shell now logs to `userData/overlay.log` (previous run kept as `.1`), captures the renderer's own
+console messages, and hooks `did-fail-load` / `did-finish-load`. When the host does not come up, the window
+now *says so* and prints the log path instead of waiting silently. The console is patched rather than
+routed through a helper, because there are dozens of existing `console.*` calls and a helper would only
+catch the ones someone remembered to convert.
+
+The mechanism itself was never in doubt - `ELECTRON_RUN_AS_NODE=1` on the packaged exe works, which I
+confirmed by running the packaged host that way (it ran as a server and my command timed out, which is the
+success signal for a server).
+
+### The small icon sizes were bad because two things were wrong
+
+The owner pushed back on my "the vector is better at 16px" claim, and they were right - the redraw they
+were seeing had visible flaws. Looking at what I had actually built:
+
+* **I sampled only 4x4 points per destination pixel.** Going from an 846px mark to a 16px frame is a 53x
+  reduction, so 16 samples per pixel skipped almost everything under it. That is what made the small sizes
+  mottled, and it had nothing to do with the export being a bitmap.
+* **I averaged sRGB values directly.** sRGB is not proportional to light, so averaging it darkens thin
+  light features - and the pause bars are 1.4 pixels wide at 16px.
+
+Both are fixed: the sample count now follows the scale (one sample per source pixel covered, capped at 64),
+and averaging happens in linear light. And **every size now comes from the owner's art**, including 16px -
+the vector remains only as the fallback for when there is no export to build from. `.ico` went from 70KB to
+51KB as well, because the small frames stopped being vector approximations.
+
+The lesson is the one the owner stated plainly: I had been treating "the export is 1024px" as the reason
+the small sizes had to be redrawn, when the actual reason was two implementation mistakes in my own
+downscaler.

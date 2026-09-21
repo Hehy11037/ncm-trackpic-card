@@ -59,6 +59,24 @@ export function installDragToMove(options = {}) {
   let pending = null;
   let frame = 0;
 
+  /**
+   * Tell the stylesheet a drag is in progress, so it can drop the expensive shadow for its duration.
+   *
+   * Every frame of a drag repaints the whole window surface, and the card carries four blurred
+   * `box-shadow` layers - so the smooth shadow the card has when it is still is paid for sixty times a
+   * second while it moves, which is felt as stutter. `card.css` swaps in a single cheap layer while the
+   * attribute is set.
+   *
+   * Set on `<html>` rather than on the card, so a drag can start anywhere and the rule stays one
+   * selector. Guarded because the gesture is tested against a fake DOM with no document at all.
+   */
+  const setDraggingFlag = (on) => {
+    const dataset = globalThis.document?.documentElement?.dataset;
+    if (!dataset) return;
+    if (on) dataset.dragging = 'true';
+    else delete dataset.dragging;
+  };
+
   const startAt = (event) => {
     active = { pointerId: event.pointerId, element: event.target };
     try {
@@ -66,6 +84,7 @@ export function installDragToMove(options = {}) {
     } catch {
       /* capture is a nicety; the gesture still works without it */
     }
+    setDraggingFlag(true);
     /*
      * Start on the press, with no movement threshold.
      *
@@ -141,6 +160,8 @@ export function installDragToMove(options = {}) {
     } catch {
       /* the element may be gone */
     }
+    // The cheap shadow was only for the duration of the gesture.
+    setDraggingFlag(false);
     /*
      * Always end the gesture, even for a press that never moved.
      *

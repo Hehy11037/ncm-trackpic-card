@@ -993,6 +993,22 @@ console.log('\n--- 悬浮阴影 ---');
     `留白边缘 ${profile[profile.length - 1].toFixed(3)}`,
   );
   check('阴影在卡片边缘仍然可见', profile[0] >= 0.25, `卡片边缘 ${profile[0].toFixed(3)}`);
+
+  /*
+   * And the drag case, which is about cost rather than looks. Every frame of a drag repaints the whole
+   * window surface, so the smooth stack is paid for sixty times a second - and that is what a drag
+   * *feels* as stutter. The stylesheet has to swap in exactly one layer while `drag.js` holds the flag,
+   * and the flag has to be set on the press rather than on the first move.
+   */
+  const dragRule = /html\[data-dragging='true'\][^{]*\{([^}]*)\}/.exec(css.rules);
+  check('拖动时有一层廉价阴影', !!dragRule && /box-shadow:\s*0/.test(dragRule[1]), dragRule ? dragRule[1].trim() : '（没有规则）');
+  if (dragRule) {
+    const layers = splitCommas(/box-shadow:([^;]*)/.exec(dragRule[1])?.[1] ?? '');
+    check('拖动时只有一层（不是把四层搬过来）', layers.length === 1, `${layers.length} 层`);
+  }
+  const dragJs = readStyle('ui/src/drag.js');
+  check('按下就标记拖动中（不是第一次移动才标）', /setDraggingFlag\(true\);\s*\n\s*\/\*/.test(dragJs) || /setDraggingFlag\(true\)/.test(dragJs));
+  check('拖动结束/取消都会清除标记', (dragJs.match(/setDraggingFlag\(false\)/g) ?? []).length >= 1 && /function finish\(/.test(dragJs));
 }
 
 /* --------------------------------------------------------------- top bar */

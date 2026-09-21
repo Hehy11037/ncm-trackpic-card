@@ -26,3 +26,7 @@ tools/*.lnk
 # half-rewritten. NOTES.md is the published half and carries the same lessons, so anything worth
 # sharing goes there.
 MEMORY.md
+
+# Job-application material derived from this project (resume bullets, interview
+# prep). This repository is public; these files are personal and stay local.
+career/

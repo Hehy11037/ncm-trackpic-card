@@ -35,6 +35,19 @@
   transition: background 420ms var(--ease);
 }
 
+/*
+ * While a drag is in progress, one shadow layer instead of four.
+ *
+ * Each frame of a drag repaints the whole (transparent, frameless) window surface, so the smooth
+ * four-layer stack is paid for sixty times a second - which is what a drag *feels* as stutter, even
+ * though it costs nothing when the card is still. `ui/src/drag.js` sets the attribute for the duration
+ * of the gesture. The single layer keeps the depth cue, so the card does not look flat while it moves.
+ */
+html[data-dragging='true'] .card,
+html[data-dragging='true'] .mini {
+  box-shadow: 0 4px 9px rgba(6, 10, 14, 0.3);
+}
+
 /* Faint wash from the cover palette; doubles as the readability scrim. */
 .card::before {
   content: '';

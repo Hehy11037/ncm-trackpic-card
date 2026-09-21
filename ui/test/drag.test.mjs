@@ -67,8 +67,17 @@ function harness() {
     dragMove: (x, y) => sent.push(['move', x, y]),
     dragEnd: () => sent.push(['end']),
   };
+  // The gesture sets a flag on `<html>` so the stylesheet can drop the expensive shadow while the card
+  // moves; a fake document is enough to check that the flag is raised and lowered.
+  const dataset = {};
+  const previousDocument = globalThis.document;
+  globalThis.document = { documentElement: { dataset } };
   const uninstall = installDragToMove({ shell: () => bridge, root });
-  return { root, sent, uninstall };
+  const restore = () => {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  };
+  return { root, sent, uninstall, dataset, restore };
 }
 
 const pointer = (over = {}) => ({
@@ -159,6 +168,38 @@ describe('installDragToMove', () => {
     runFrame();
     assert.equal(t.sent.length, before, '结束后不应再有发送');
     t.uninstall();
+  });
+
+  it('raises the dragging flag for the gesture and lowers it after', () => {
+    /*
+     * The flag is what lets the stylesheet swap four blurred shadow layers for one while the card is
+     * moving - the difference between a smooth drag and a stuttering one. It has to be set on the press
+     * (not the first move, or the first frames are the expensive ones) and cleared on every way out.
+     */
+    const t = harness();
+    assert.equal(t.dataset.dragging, undefined, '空闲时不应有标记');
+    t.root.fire('pointerdown', pointer());
+    assert.equal(t.dataset.dragging, 'true', '按下就应当标记为拖动中');
+    t.root.fire('pointerup', pointer());
+    assert.equal(t.dataset.dragging, undefined, '松手后应当清除标记');
+    t.uninstall();
+    t.restore();
+  });
+
+  it('lowers the flag when a drag is cancelled as well', () => {
+    // A leaked flag would leave the card with the cheap shadow for ever.
+    const t = harness();
+    t.root.fire('pointerdown', pointer());
+    t.root.fire('pointercancel', pointer());
+    assert.equal(t.dataset.dragging, undefined, '取消也要清除标记');
+    const other = harness();
+    other.root.fire('pointerdown', pointer());
+    other.root.fire('lostpointercapture', pointer());
+    assert.equal(other.dataset.dragging, undefined, '丢失捕获也要清除标记');
+    t.uninstall();
+    other.uninstall();
+    t.restore();
+    other.restore();
   });
 
   it('removes every listener on uninstall', () => {

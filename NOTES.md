@@ -1908,3 +1908,49 @@ What caught it was refusing to move the ref until the result had been checked ag
 script now ends with that check and aborts without touching `refs/heads/main` if the commit count changed,
 if any commit still carries the path, or if the tip's tree does. **A destructive script needs its
 verification between the work and the commit of the work** - not after.
+
+## 2026-09-20 (4) — the drag stuttered again, and it was the shadow I had just smoothed
+
+The owner reported two things at once: dragging had become stuttery, and letters were being cut off at the
+bottom. They asked whether I had reverted something to an older version, which is the right question - both
+symptoms had been fixed before - so the first move was to read the old fixes rather than guess.
+
+### What the old fix said
+
+`NOTES.md` already had the answer to the stutter, from months of commits earlier:
+
+> The window was moved from a `setInterval(16)` in the main process. That fires *near* every frame, not on
+> it ... the irregularity is what the eye reads as 卡顿.
+
+That path is intact: `ui/src/drag.js` still coalesces to one send per animation frame, and the shell still
+captures the work area at the start of the drag instead of querying the display per move. So the stutter was
+not that.
+
+### What it actually was
+
+Four commits earlier I had replaced the card's two-layer shadow with a **four-layer** one, because the old
+pair read as a hard shoulder rather than a gradient. The profile improved and nothing looked wrong - until
+the card started *moving*. Every frame of a drag repaints the whole window surface, and this window is
+transparent, frameless and always-on-top; four blurred layers per frame is four blur passes per frame, where
+two used to be. It cost nothing while the card was still and doubled the per-frame work while it was being
+dragged, which is exactly where a person notices.
+
+The fix is not to give up the smooth shadow, it is to stop paying for it while it moves:
+`ui/src/drag.js` sets `data-dragging` on `<html>` on the *press* (not the first move - the first frames are
+the expensive ones) and clears it on every way out of the gesture, and the stylesheet swaps in a single cheap
+layer for the duration. The rule is checked (`一层廉价阴影`), the flag is unit-tested for press, pointerup,
+pointercancel and lostpointercapture, and the guard is written so the gesture still works against the test
+harness's fake DOM, which has no document at all - that gap is what made six drag tests fail the first time.
+
+**Generalised**: a cost that is invisible while something is still can be the whole story while it moves.
+When a visual change makes motion worse, the profile of the change is the first suspect.
+
+### The clipped letters
+
+Not this round's fix, and worth being precise about: the two elements that had this bug before - the title
+and the artist, where a tight line box under `-webkit-line-clamp` sliced descenders - still carry their fix
+(a 1.6 line-height with a documented compensating margin), and the geometry of every other text box checks
+out on paper: the rolled-up bar has 11.8u of content room for ~8.9u of text, the lyric block keeps
+`overflow: visible` so a tail cannot be sliced, and the only text-bearing addition of recent rounds is the
+status line's restart button, which has neither a height nor an `overflow` and so cannot clip. Which means
+the symptom is somewhere I have not thought of, and the next step is asking rather than guessing again.

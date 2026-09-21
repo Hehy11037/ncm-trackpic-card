@@ -136,6 +136,15 @@ const checks = [
    */
   ['内容不溢出卡片（正文被裁的根因）', creditTop < cardHeight],
   ['内容充分占满卡片', bottomInset < 20],
+  /*
+   * The same question with a **two-line** title, which is what `-webkit-line-clamp: 2` allows and what
+   * this check never modelled. The stack was only ever measured with one line, so a long title could push
+   * the column past the card - and then the flex algorithm *shrinks* the text instead of overflowing, and
+   * a shrunk line box under `overflow: hidden` slices the bottom off the glyphs. That is the mechanism
+   * behind "字母下半段显示不全"; the offsets are `flex: none` against it, this is the arithmetic.
+   */
+  ['标题两行时内容仍不溢出卡片', creditTop + titleHeight < cardHeight],
+  ['标题两行时底部仍有留白', cardHeight - (creditTop + titleHeight) > 0],
 ];
 
 console.log('\n几何约束:');

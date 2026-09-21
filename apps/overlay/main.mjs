@@ -31,6 +31,7 @@ import {
   MAX_WIDTH,
   MIN_WIDTH,
   CLIENT_IMAGE_NAMES,
+  cardRect,
   cardWidthForWindow,
   clamp,
   clientDebugArgs,
@@ -814,11 +815,21 @@ function startHoverWatch() {
       const now = Date.now();
       const bounds = mainWindow.getBounds();
       const point = screen.getCursorScreenPoint();
+      /*
+       * The pointer is "on the card" only when it is on the **card**, not on the transparent margin the
+       * window keeps for its shadow.
+       *
+       * That margin is 24px on every side, and testing the window's bounds counted all of it as the card:
+       * the pointer could sit a finger's width outside the visible edge and the card would stay open, and
+       * rolling up only began once it left the shadow too. `cardRect` insets the window by the margin, so
+       * the trigger is the thing the user can actually see.
+       */
+      const card = cardRect(bounds);
       const inside =
-        point.x >= bounds.x &&
-        point.x < bounds.x + bounds.width &&
-        point.y >= bounds.y &&
-        point.y < bounds.y + bounds.height;
+        point.x >= card.x &&
+        point.x < card.x + card.width &&
+        point.y >= card.y &&
+        point.y < card.y + card.height;
 
       if (hoverState.update(now, inside, locked)) setCollapsed(hoverState.collapsed);
       hoverErrors = 0;

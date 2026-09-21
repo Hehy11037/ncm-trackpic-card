@@ -31,6 +31,7 @@ import {
   MIN_WIDTH,
   KEEP_VISIBLE,
   SHADOW_PAD,
+  cardRect,
   cardWidthForWindow,
   clampToWorkArea,
   createHoverState,
@@ -150,6 +151,44 @@ console.log('\n--- 窗口几何 ---');
 
   check('反推卡宽', cardWidthForWindow(DEFAULT_WIDTH) === CARD_WIDTH_DEFAULT);
   check('反推卡宽受下限约束', cardWidthForWindow(100) === CARD_WIDTH_MIN);
+}
+
+/* --------------------------------------------------------------- card rect */
+
+console.log('\n--- 悬停判定用的卡片矩形 ---');
+{
+  /*
+   * The roll-up watcher used to test the pointer against the *window's* bounds, and the window carries
+   * `SHADOW_PAD` of transparent margin on every side - so the shadow counted as the card: the pointer
+   * could sit outside the visible edge and the card would stay open, and rolling up only began once it
+   * had left the shadow too. The owner asked for the trigger to be the card, and only the card.
+   */
+  const bounds = { x: 100, y: 200, width: 448, height: 773 };
+  const card = cardRect(bounds);
+  check(
+    '卡片矩形 = 窗口内缩一个阴影留白',
+    card.x === bounds.x + SHADOW_PAD &&
+      card.y === bounds.y + SHADOW_PAD &&
+      card.width === bounds.width - SHADOW_PAD * 2 &&
+      card.height === bounds.height - SHADOW_PAD * 2,
+    JSON.stringify(card),
+  );
+  // The point of the change: a pixel inside the shadow is *not* on the card.
+  const inShadow = { x: bounds.x + 2, y: bounds.y + bounds.height / 2 };
+  const onCard = { x: bounds.x + SHADOW_PAD + 2, y: bounds.y + bounds.height / 2 };
+  const insideCard = (p) =>
+    p.x >= card.x && p.x < card.x + card.width && p.y >= card.y && p.y < card.y + card.height;
+  check('阴影里的点不算在卡片上', !insideCard(inShadow), JSON.stringify(inShadow));
+  check('卡片边缘内的点算在卡片上', insideCard(onCard), JSON.stringify(onCard));
+  check('窗口比卡片大两个阴影留白', bounds.width - card.width === SHADOW_PAD * 2);
+
+  // And the shell has to actually use it, not the window bounds.
+  const shellJs = readStyle('apps/overlay/main.mjs');
+  check('悬停判定用 cardRect(bounds)', /const card = cardRect\(bounds\)/.test(shellJs));
+  check(
+    '不再拿窗口 bounds 当卡片',
+    !/point\.x >= bounds\.x &&\s*\n\s*point\.x < bounds\.x \+ bounds\.width/.test(shellJs),
+  );
 }
 
 /* ------------------------------------------------------------ drag position */

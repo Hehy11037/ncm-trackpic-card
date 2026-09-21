@@ -137,6 +137,26 @@ export function cardWidthForWindow(windowWidth) {
  * @param {{x:number,y:number,width:number,height:number}} workArea
  */
 /**
+ * The card's rectangle inside the window that carries it.
+ *
+ * The window is the card plus `SHADOW_PAD` of transparent margin on each side, and that margin is *not*
+ * part of the card. Testing the pointer against the window's bounds - which is what the roll-up watcher
+ * used to do - meant those 24px of shadow counted as "the pointer is on the card": it stayed open while
+ * the pointer sat outside the visible edge, and only rolled up once it had left the shadow as well.
+ *
+ * @param {{x:number,y:number,width:number,height:number}} bounds the window's bounds
+ * @param {number} [pad] the transparent margin
+ */
+export function cardRect(bounds, pad = SHADOW_PAD) {
+  return {
+    x: bounds.x + pad,
+    y: bounds.y + pad,
+    width: Math.max(0, bounds.width - pad * 2),
+    height: Math.max(0, bounds.height - pad * 2),
+  };
+}
+
+/**
  * How much of the card has to stay on screen for the pointer to be able to reach it again.
  *
  * Not zero: a card pushed completely off the display cannot be grabbed back except from the tray, and

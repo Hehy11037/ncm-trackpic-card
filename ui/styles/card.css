@@ -155,6 +155,17 @@ html[data-dragging='true'] .mini {
   font-size: var(--fs-title);
   font-weight: 600;
   /*
+   * Never squeezed.
+   *
+   * This is a flex item in a column, and a flex item defaults to `flex-shrink: 1`: if the column's
+   * content ever exceeds the card - a two-line title is the obvious way - the box is *shrunk* rather than
+   * the column overflowing, and a shrunk line box under `overflow: hidden` slices the bottom off the
+   * glyphs. That is the exact shape of "字母下半段显示不全", so the mechanism is removed here rather than
+   * compensated for: the text keeps its natural height, and `tools/check-layout.mjs` checks the two-line
+   * case so the column is known to have room for it.
+   */
+  flex: none;
+  /*
    * 1.6, not the reference's 1.06.
    *
    * With `-webkit-line-clamp` the box height is `line-height * lines` and anything outside it
@@ -179,6 +190,8 @@ html[data-dragging='true'] .mini {
   padding-top: calc(var(--u) * 0.7);
   font-size: var(--fs-artist);
   font-weight: 400;
+  /* Never squeezed, for the same reason as `.title`: a shrunk line box clips its own glyphs. */
+  flex: none;
   line-height: 1.6;
   letter-spacing: var(--tracking-artist);
   color: var(--text-muted);

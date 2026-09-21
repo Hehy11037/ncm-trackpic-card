@@ -1954,3 +1954,40 @@ out on paper: the rolled-up bar has 11.8u of content room for ~8.9u of text, the
 `overflow: visible` so a tail cannot be sliced, and the only text-bearing addition of recent rounds is the
 status line's restart button, which has neither a height nor an `overflow` and so cannot clip. Which means
 the symptom is somewhere I have not thought of, and the next step is asking rather than guessing again.
+
+## 2026-09-20 (5) — the shadow counted as the card, and a text bug with two possible shapes
+
+Two more reports, and this time one of them is settled.
+
+### The hover test used the window, not the card
+
+The roll-up watcher asked whether the cursor was inside `mainWindow.getBounds()`. The window is the card
+*plus* `SHADOW_PAD` (24px) of transparent margin on every side, so all of that margin counted as the card:
+the pointer could sit a visible distance outside the edge and the card would stay open, and rolling up
+only began once it had left the shadow too. `cardRect(bounds)` insets the window by the margin, the watcher
+uses it, and `check-shell.mjs` checks both the arithmetic and that the old window-bounds test is gone - a
+point two pixels inside the window but outside the card is no longer "on the card".
+
+### The title and artist, which are always cut somehow
+
+The owner says these two lines have *always* been cut, which rules out a regression and makes it a
+long-standing layout fact. Reading the old records found why the check never caught it:
+
+> The critical one. The content must fit inside the card: `overflow: hidden` clips whatever runs past the
+> bottom, which is exactly how the title and artist disappeared in an earlier revision.
+
+That check measures the stack with a **one-line** title. But `.title` carries `-webkit-line-clamp: 2`, so a
+long title is two lines - and the stack was never measured for that. Two things followed:
+
+* `tools/check-layout.mjs` now checks the two-line case as well. It passes with 4.8u to spare, so the
+  column does *not* overflow today - but the arithmetic that decides that is now in the check instead of in
+  someone's head.
+* `.title` and `.artist` are now `flex: none`. A flex item shrinks by default, and a *shrunk* line box
+  under `overflow: hidden` slices the bottom off its glyphs - which is the exact shape of the complaint.
+  There is room for two lines, so refusing to shrink costs nothing and removes the mechanism entirely.
+
+What is *not* settled is which mechanism the owner is actually seeing, because "显示不全" has two shapes
+with opposite fixes: text cut off at the **right** (ellipsis, or the clamp stopping at two lines - both by
+design, both adjustable) or glyphs cut across the **bottom** (a line box taller than the space it is given).
+The arithmetic says the bottom case should not be happening, so the next step is a screenshot rather than a
+third guess - this project has already paid twice for fixing the wrong mechanism.

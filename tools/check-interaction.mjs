@@ -272,6 +272,26 @@ console.log('\n--- 播放控制的发送路径 ---');
   check('客户端没变化时不算成功', /confirmed: false/.test(controlBody) && /ok: false/.test(controlBody));
   // A skip in repeat-one changes neither the state nor the song, so the playhead is a signal too.
   check('跳过以换歌或播放头回退确认', /currentSongId\(\) !== beforeSongId/.test(sessionTs) && /position < beforePositionMs - 1000/.test(sessionTs));
+
+  /*
+   * One PowerShell, kept alive.
+   *
+   * Spawning a process per press cost about 880ms - 380ms of Windows PowerShell starting, the rest
+   * `Add-Type` compiling the P/Invoke declaration again - and the owner felt every press as a delay
+   * between the button and the music stopping. The session has to stay: `-Serve`, an awaited press, a
+   * warm-up at host start, and an explicit shutdown so no hidden PowerShell outlives the app.
+   */
+  const mediaKeyTs = readStyle('packages/host/src/media-key.ts');
+  check('按键走常驻 PowerShell 会话（-Serve）', /'-Serve'/.test(mediaKeyTs));
+  check('会话是 spawn 而不是每次 spawnSync', /spawn\(\s*\n?\s*'powershell'/.test(mediaKeyTs));
+  check('一次性 spawnSync 只作为兜底保留', /function pressOnce/.test(mediaKeyTs));
+  check('按一次键只写一行（等回应）', /const line = await ask\(key, PRESS_TIMEOUT_MS\)/.test(mediaKeyTs));
+  check('会话挂掉会重启或兜底，不丢按键', /stopMediaKeys\(\);\s*\n\s*const fallback = pressOnce\(key\)/.test(mediaKeyTs));
+  check('宿主启动时预热', /void warmMediaKeys\(\)/.test(sessionTs));
+  check('宿主停止时关闭会话（不留后台 PowerShell）', /stopMediaKeys\(\);/.test(sessionTs));
+  const script = readStyle('tools/media-key.ps1');
+  check('脚本支持 -Serve 且编译只做一次', /\[switch\]\$Serve/.test(script) && /Add-Type/.test(script));
+  check('脚本是纯 ASCII（PS 5.1 按 ANSI 读无 BOM 的 ps1）', !/[^\x00-\x7F]/.test(script));
 }
 
 console.log('\n--- 传输控制条的排布 ---');

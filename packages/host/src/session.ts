@@ -36,7 +36,7 @@ import {
 } from './bridge-script.ts';
 import { CdpSession, DEFAULT_CDP_PORT, type CdpTarget } from './cdp.ts';
 import { diagnose, detailFor, toConnectionInfo } from './client-process.ts';
-import { pressMediaKey, type MediaKey } from './media-key.ts';
+import { pressMediaKey, stopMediaKeys, warmMediaKeys, type MediaKey } from './media-key.ts';
 
 /**
  * The media key each transport command is sent as.
@@ -241,6 +241,14 @@ export class ClientSession extends EventEmitter {
   /** Start the connect/retry loop. Resolves as soon as the first attempt finishes. */
   async start(): Promise<void> {
     this.stopping = false;
+    /*
+     * Warm the media-key session in the background.
+     *
+     * Its first command pays Windows PowerShell's start plus the P/Invoke compile - about 800ms - and
+     * paying that on the first button press is exactly the delay the owner reported. Kicked off here
+     * and not awaited: the host's own start should not wait for it.
+     */
+    void warmMediaKeys().catch(() => {});
     await this.attempt();
   }
 
@@ -248,6 +256,8 @@ export class ClientSession extends EventEmitter {
   async stop(): Promise<void> {
     this.stopping = true;
     this.clearTimers();
+    // No hidden PowerShell left behind: the session is closed explicitly rather than orphaned.
+    stopMediaKeys();
     const session = this.cdp;
     this.cdp = null;
     if (session) {
@@ -302,7 +312,7 @@ export class ClientSession extends EventEmitter {
     const expectedState =
       command.type === 'playPause' ? (before === 2 ? 1 : 2) : command.type === 'play' ? 2 : 1;
 
-    const pressed = pressMediaKey(key);
+    const pressed = await pressMediaKey(key);
     if (!pressed.ok) {
       return {
         ok: false,

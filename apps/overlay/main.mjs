@@ -64,6 +64,22 @@ function logFilePath() {
   return join(app.getPath('userData'), 'overlay.log');
 }
 
+/**
+ * When this build was written, for the log header.
+ *
+ * The version number alone could not tell two builds apart: 0.1.1 was bumped once and then several
+ * rounds of fixes were committed under it, so the owner installed an "0.1.1" that predated every fix
+ * they had just been told about. The exe's own timestamp is the one fingerprint that survives being
+ * copied into an installer, and it costs one `statSync`.
+ */
+function buildStamp() {
+  try {
+    return statSync(process.execPath).mtime.toISOString().slice(0, 16).replace('T', ' ');
+  } catch {
+    return '未知';
+  }
+}
+
 function startLogging() {
   const file = logFilePath();
   try {
@@ -71,7 +87,8 @@ function startLogging() {
     if (existsSync(file)) renameSync(file, `${file}.1`);
     appendFileSync(
       file,
-      `\n=== ${new Date().toISOString()}  version ${app.getVersion()}  packaged ${app.isPackaged} ===\n`,
+      `\n=== ${new Date().toISOString()}  version ${app.getVersion()}  packaged ${app.isPackaged}` +
+      `  built ${buildStamp()} ===\n`,
       'utf8',
     );
   } catch (err) {

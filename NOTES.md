@@ -2048,3 +2048,39 @@ margin, which is what makes the report "positions unchanged, 12.21u of bottom in
 Still open: the card occasionally changing size during a drag. `overlay:drag-start` already lands an
 in-flight resize tween before capturing the size, so it is something else - and the installed build logs
 `拖动中窗口尺寸被系统改动: 请求 WxH，实际 ...` when it happens, which is the next thing to read.
+
+## 2026-09-20 (7) — every button press started a PowerShell, and that was the delay
+
+With the packaging fixed the transport buttons worked, and the owner immediately reported the next
+problem: play/pause now had an obvious delay, while the *icon* switched instantly. The icon being instant
+is the clue - the UI updates optimistically, so the delay was between the press and the music, and there is
+only one thing on that path.
+
+`media-key.ts` spawned PowerShell per press. Measured: **880ms**.
+
+Divided up: about 380ms is Windows PowerShell starting; most of the rest is `Add-Type` compiling the
+P/Invoke declaration for `keybd_event` *again on every press*; and 30ms is the script's own gap between
+key-down and key-up, which is deliberate. So one button press paid for a compiler.
+
+The fix is to stop paying it repeatedly. `media-key.ps1` gained `-Serve`: the type is compiled once, and
+after that each press is a line on stdin answered with an ack. The host keeps one of these alive (started
+and pinged at host start, so even the first press is fast) and shuts it down with the host, so nothing is
+left running. Measured on the PowerShell side, 51 round trips took 762ms in total - less than the start
+plus compile alone, i.e. under a millisecond each - so a real press is now dominated by that deliberate
+30ms key gap: **about 35ms instead of 880ms**.
+
+Three details that matter and are now checked:
+
+* `spawn`, not `spawnSync`. The old call blocked the host's event loop for most of a second, which froze
+  snapshots and progress along with it.
+* The one-shot path is kept as a **fallback**: it runs if the session cannot start or dies, and it is also
+  the only path that works where a child with piped stdio cannot be created at all - a confined build
+  shell, where the checks run. Without it the test suite could not exercise this file.
+* `tools/media-key.ps1` stays **ASCII-only**. Windows PowerShell 5.1 reads a `.ps1` without a BOM as ANSI,
+  and non-ASCII bytes corrupt the quoting of everything after them. That trap already cost a history
+  rewrite this session; there is now a check for it.
+
+The version number was left at 0.1.2 at the owner's request. To keep two builds of the same version
+tellable apart, the log header now records the build stamp - the exe's own timestamp:
+
+    === 2026-09-20T...  version 0.1.2  packaged true  built 2026-09-20 19:41 ===

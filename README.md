@@ -2,10 +2,8 @@
 
 一个把网易云音乐客户端的播放状态镜像到桌面悬浮卡片，可自定义封面和背景颜色的工具：正面是封面卡片，背面是逐字滚动的歌词。
 
-```
-![演示图片(1)](images/front1.png)
-![演示图片(2)](images/front2.png)
-```
+<img src="images/front1.png" alt="演示(1)" width="300">
+<img src="images/front2.png" alt="演示(2)" width="300">
 
 ## 工作原理
 

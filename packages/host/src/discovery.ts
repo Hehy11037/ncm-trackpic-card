@@ -52,7 +52,7 @@ interface DiscoveryCache extends Partial<DiscoveryResult> {
  */
 const CACHE_DIR = process.env.OVERLAY_CACHE_DIR
   ? join(process.env.OVERLAY_CACHE_DIR, 'cache')
-  : join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'ncm-trackpic-card');
+  : join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'ncm-track-card');
 const CACHE_FILE = join(CACHE_DIR, 'discovery.json');
 
 export function discoveryCachePath(): string {

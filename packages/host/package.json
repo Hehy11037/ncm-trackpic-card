@@ -1,5 +1,5 @@
 {
-  "name": "@ncm-trackpic-card/host",
+  "name": "@ncm-track-card/host",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@ncm-trackpic-card/shared": "*",
+    "@ncm-track-card/shared": "*",
     "ws": "^8.21.3"
   }
 }

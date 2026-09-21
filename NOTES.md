@@ -2084,3 +2084,31 @@ The version number was left at 0.1.2 at the owner's request. To keep two builds 
 tellable apart, the log header now records the build stamp - the exe's own timestamp:
 
     === 2026-09-20T...  version 0.1.2  packaged true  built 2026-09-20 19:41 ===
+
+## 2026-09-20 (8) — renamed to NCM Track Card
+
+The owner asked for the tool to be called **NCM Track Card** everywhere, including the credit line at the
+bottom of the card. Twenty lines changed across fourteen files: the two package files, the three workspace
+packages and their scope, the TypeScript path mapping, the `LOCALAPPDATA` cache directory the host derives,
+the packaging product name and uninstall label, the README, the card's credit (`NCM · TRACK CARD`), the SVG
+title, and the checks.
+
+Three places deliberately keep the old spelling, and each is a judgement rather than an oversight:
+
+* **`appId` is still `com.hehy.ncm-trackpic-card`.** An app id is an identity, not a label - NSIS uses it to
+  recognise an existing installation, so renaming it would make this build install *beside* the previous
+  one instead of upgrading it, leaving two entries in "Apps & features" and two auto-start entries. The
+  name the user sees is `productName`, and that is what was renamed. The file says so in a comment.
+* **`NOTES.md`'s four historical quotes keep the old name.** One is the installer that was actually built
+  at the time, one is the exact text of an error the app really printed, and two are the file names of
+  tools that were deleted. Rewriting them would turn a record into fiction.
+* **The tray tooltip (`网易云同步卡片`) and the Start-menu shortcut (`NCM 同步卡片`)** are Chinese
+  descriptors rather than the product name, so they were left alone - and flagged to the owner in case they
+  want them renamed too.
+
+Two consequences worth knowing. Electron derives the user data directory from the package `name`, so the
+log moved from `%APPDATA%\ncm-trackpic-card\overlay.log` to `%APPDATA%\ncm-track-card\overlay.log`, and the
+saved window position, lock state and cover choice start fresh - a small, one-time cost of the rename. And
+`check-package.mjs` no longer hardcodes the product name: it reads `productName` out of
+`electron-builder.yml`, because a hardcoded copy would have gone on looking for an exe that no longer
+exists.

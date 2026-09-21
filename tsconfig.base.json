@@ -18,7 +18,7 @@
     "allowImportingTsExtensions": true,
     "types": ["node"],
     "paths": {
-      "@ncm-trackpic-card/shared": ["./packages/shared/src/index.ts"]
+      "@ncm-track-card/shared": ["./packages/shared/src/index.ts"]
     }
   }
 }

@@ -71,14 +71,14 @@ function importsOf(file) {
  * Where a bare specifier has to exist inside the payload.
  *
  * This is the check that was missing. The first packaged build's host died immediately with
- * `ERR_MODULE_NOT_FOUND: Cannot find package '@ncm-trackpic-card/shared'` - a workspace package reached
+ * `ERR_MODULE_NOT_FOUND: Cannot find package '@ncm-track-card/shared'` - a workspace package reached
  * through the npm junction in `node_modules`, which is not shipped - and the walk ignored bare
  * specifiers entirely, so it reported a complete import graph for a payload that could not start.
  */
 function resolveBare(specifier) {
   const name = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
   const candidates = [join(APP, 'node_modules', name), join(APP, 'node_modules', name, 'package.json')];
-  const workspace = join(APP, 'packages', name.replace('@ncm-trackpic-card/', ''), 'package.json');
+  const workspace = join(APP, 'packages', name.replace('@ncm-track-card/', ''), 'package.json');
   candidates.push(workspace);
   return candidates.some((candidate) => existsSync(candidate)) ? name : null;
 }
@@ -227,7 +227,13 @@ check('没有把仓库根目录整个搬进来', !existsSync(join(APP, 'node_mod
  * - which nothing else in this project would notice, and which was the owner's most-fussed-over detail.
  * The red is the cheapest fingerprint: it is the client's own `#fd364e`, applied to every frame.
  */
-const PRODUCT = 'NCM Trackpic Card';
+const PRODUCT = (() => {
+  // Read from the packaging config rather than repeating it here: the tool was renamed once already, and a
+  // hardcoded copy would have gone on checking for an exe that no longer exists.
+  const yml = readFileSync(resolve('electron-builder.yml'), 'utf8');
+  const found = /^productName:\s*(.+)$/m.exec(yml);
+  return found ? found[1].trim() : 'NCM Track Card';
+})();
 // `APP` is `<dist>/win-unpacked/resources/app`, so the exe is two levels up and `dist/` three.
 const PACKAGED_ROOT = resolve(APP, '..', '..');
 const DIST = resolve(PACKAGED_ROOT, '..');

@@ -1,5 +1,5 @@
 {
-  "name": "ncm-trackpic-card",
+  "name": "ncm-track-card",
   "version": "0.1.2",
   "private": true,
   "description": "Desktop overlay that mirrors the NetEase Cloud Music client playback state, with scrolling word-by-word lyrics.",

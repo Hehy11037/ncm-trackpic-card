@@ -34,7 +34,7 @@ export function cacheDir(): string {
   // silently missed every time and every track change re-fetched its lyrics.
   const base = process.env.OVERLAY_CACHE_DIR
     ? join(process.env.OVERLAY_CACHE_DIR, 'cache')
-    : (process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local')) + '/ncm-trackpic-card';
+    : (process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local')) + '/ncm-track-card';
   return join(base, 'lyrics');
 }
 

@@ -254,7 +254,7 @@ mkdirSync(OUT, { recursive: true });
 
 const svg = [
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="256" height="256">',
-  '  <title>NCM Trackpic Card</title>',
+  '  <title>NCM Track Card</title>',
   ...DESIGN.map((entry) => `  <path fill="${hex(entry.ink)}" d="${entry.d}" />`),
   '</svg>',
   '',

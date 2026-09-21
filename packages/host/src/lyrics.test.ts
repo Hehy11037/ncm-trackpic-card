@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import type { LyricDoc } from '@ncm-trackpic-card/shared';
+import type { LyricDoc } from '@ncm-track-card/shared';
 
 import type { ClientSession } from './session.ts';
 

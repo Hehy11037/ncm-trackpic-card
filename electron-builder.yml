@@ -6,8 +6,14 @@
 # `npm run dist` needs electron-builder's own tool downloads (NSIS, winCodeSign) on first run; point
 # ELECTRON_BUILDER_CACHE somewhere writable if the default under %LOCALAPPDATA% is locked down.
 
+# The app id keeps its original spelling on purpose.
+#
+# It is an *identity*, not a label. NSIS uses it to recognise an existing installation, so renaming it
+# along with the product would make this build install *beside* the previous one rather than upgrade it -
+# two entries in "Apps & features" and two auto-start entries, from a change nobody asked for. The name
+# the user sees is `productName`, and that is what was renamed.
 appId: com.hehy.ncm-trackpic-card
-productName: NCM Trackpic Card
+productName: NCM Track Card
 copyright: Copyright © 2026 Hehy11037
 
 directories:
@@ -72,7 +78,7 @@ nsis:
   shortcutName: NCM 同步卡片
   runAfterFinish: true
   artifactName: ${productName}-${version}-setup.${ext}
-  uninstallDisplayName: NCM Trackpic Card ${version}
+  uninstallDisplayName: NCM Track Card ${version}
 
 portable:
   artifactName: ${productName}-${version}-portable.${ext}

@@ -28,6 +28,12 @@ files:
   # how the first installer produced a host that died with ERR_MODULE_NOT_FOUND.
   - packages/shared/src/**/*
   - tools/host-run.mjs
+  # Opened by *path* rather than imported, so the import-graph walk cannot see it: `media-key.ts` resolves
+  # `../../../tools/media-key.ps1` and runs it to send a media key. Without this line every transport
+  # command - play, pause, next, previous - failed in the installed build while working perfectly in
+  # development, because the script simply was not there. `check-package.mjs` now resolves these path
+  # references against the payload so the next one cannot hide the same way.
+  - tools/media-key.ps1
   - ui/**/*
   - assets/icon.ico
   - package.json

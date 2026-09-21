@@ -83,7 +83,26 @@ function resolveBare(specifier) {
   return candidates.some((candidate) => existsSync(candidate)) ? name : null;
 }
 
-/** The scripts and styles an HTML file pulls in, resolved against it. */
+/**
+ * Files the code opens by **path** rather than importing.
+ *
+ * A second, independent way for a payload to be incomplete, which the import-graph walk above cannot see.
+ * `packages/host/src/media-key.ts` resolves `../../../tools/media-key.ps1` and spawns it to send a media
+ * key - and the packaging shipped only `tools/host-run.mjs`, so play, pause, next and previous all failed
+ * in the installed build while working perfectly in development. The owner found that one.
+ *
+ * `resolve(HERE, '..', '..', 'tools', 'x.ps1')` is the shape; `HERE` is the file's own directory, which is
+ * how every one of these paths is written.
+ */
+function pathReferences(file) {
+  const text = readFileSync(file, 'utf8');
+  const found = [];
+  for (const match of text.matchAll(/resolve\(HERE\s*,\s*((?:'[^']*'\s*,\s*)*'[^']*')\)/g)) {
+    const parts = [...match[1].matchAll(/'([^']*)'/g)].map((part) => part[1]);
+    if (parts.length) found.push(resolve(dirname(file), ...parts));
+  }
+  return found;
+}
 
 /**
  * Where an import actually lives.
@@ -171,6 +190,26 @@ check(
   '每个裸包名都在包里（node_modules 或工作区）',
   unresolvedBare.length === 0,
   unresolvedBare.length ? `缺 ${unresolvedBare.join(' ')}` : [...bareNeeded].join(' ') || '（没有）',
+);
+
+/*
+ * And the files that are opened by path instead of imported. `tools/media-key.ps1` went missing this way
+ * and took every transport command with it - a failure that looks like "the buttons do nothing", not like
+ * a packaging problem, which is why it took the owner installing the app to find it.
+ */
+const pathMissing = [];
+let pathChecked = 0;
+for (const file of seen) {
+  if (!/\.(mjs|cjs|ts|js)$/.test(file)) continue;
+  for (const target of pathReferences(file)) {
+    pathChecked++;
+    if (!existsSync(target)) pathMissing.push(`${target.slice(APP.length + 1)} ← ${file.slice(APP.length + 1)}`);
+  }
+}
+check(
+  '按路径打开的文件也在包里（import 图看不见的那一类）',
+  pathMissing.length === 0,
+  pathMissing.length ? `缺 ${pathMissing.join('、')}` : `${pathChecked} 个引用`,
 );
 check(
   '界面入口与样式在包里',

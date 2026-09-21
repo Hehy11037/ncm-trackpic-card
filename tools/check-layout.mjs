@@ -70,9 +70,28 @@ const coverSize = contentWidth * (shorthand('.cover-wrap', 'width', 0) / 100);
 const titleHeight = unit('--fs-title') * value('.title', 'line-height');
 const artistHeight = unit('--fs-artist') * value('.artist', 'line-height');
 
+/*
+ * The descender headroom, which the check has to model or it cannot see it.
+ *
+ * Both text lines carry a `padding-bottom` (room for a glyph's tail inside the clip box) cancelled by an
+ * equal negative `margin-bottom` (so nothing below moves). Reading only `line-height` - as this did -
+ * meant the padding could be added, forgotten, doubled or left uncompensated without the check noticing,
+ * and the positions it reports would be the positions the *model* believes in, not the ones the browser
+ * will compute.
+ */
+const longhand = (selector, prop) => {
+  try {
+    return value(selector, prop);
+  } catch {
+    return 0;
+  }
+};
+const titleTail = longhand('.title', 'padding-bottom') + longhand('.title', 'margin-bottom');
+const artistTail = longhand('.artist', 'padding-bottom') + longhand('.artist', 'margin-bottom');
+
 const titleTop = padTop + coverSize + shorthand('.title', 'margin', 0);
-const artistTop = titleTop + titleHeight + shorthand('.artist', 'margin', 0);
-const progressTop = artistTop + artistHeight + value('.progress', 'margin-top');
+const artistTop = titleTop + titleHeight + titleTail + shorthand('.artist', 'margin', 0);
+const progressTop = artistTop + artistHeight + artistTail + value('.progress', 'margin-top');
 const progressHeight = value('.progress-track', 'height');
 const timesTop = progressTop + progressHeight + value('.progress-times', 'margin-top');
 const controlsTop = timesTop + unit('--fs-time') * 1.2 + value('.controls', 'margin-top');

@@ -1991,3 +1991,60 @@ with opposite fixes: text cut off at the **right** (ellipsis, or the clamp stopp
 design, both adjustable) or glyphs cut across the **bottom** (a line box taller than the space it is given).
 The arithmetic says the bottom case should not be happening, so the next step is a screenshot rather than a
 third guess - this project has already paid twice for fixing the wrong mechanism.
+
+## 2026-09-20 (6) — the buttons were dead because a script was never packaged
+
+Three reports arrived together - text still cut, the transport buttons doing nothing, and the card
+sometimes changing size while dragged - plus a suspicion from the owner: "did you package the wrong
+version?" The suspicion was half right, and worth stating plainly.
+
+### The installed build was 0.1.1 and so was the repository
+
+I bumped to 0.1.1 for the first working installer and then kept committing fixes **without bumping again**,
+so the version number could not tell the owner which build they had. Comparing the two trees directly
+settled it: the installed payload has the wait-for-host fix, the log file and `ws`, and lacks every change
+made since - so it is a correct build of an *older* commit, not a mis-packaged one. It is now 0.1.2, and
+the 0.1.1 artifacts are deleted so there is nothing to install by mistake.
+
+### The buttons
+
+`packages/host/src/media-key.ts` does not import anything for this. It resolves a path:
+
+    const SCRIPT = resolve(HERE, '..', '..', '..', 'tools', 'media-key.ps1');
+
+and the packaging shipped exactly one file from `tools/`: `host-run.mjs`. So play, pause, next and previous
+all ran PowerShell against a file that was not in the installed app. In development the file is simply
+there, which is why the buttons worked every time I tried them and never once for the owner.
+
+Two things came out of it:
+
+* `tools/media-key.ps1` is now in `files`, and running it by hand confirms the mechanism is fine
+  (`SENT: playpause (VK 0xB3)`, exit 0, 881ms) - the missing file was the whole story;
+* `check-package.mjs` gained a **second** category of check: resolve every `resolve(HERE, ...)` in the
+  payload and assert the target exists. Imports and path-opened files are different ways for a payload to
+  be incomplete, and only the first was being checked. Run against the owner's installed 0.1.1 it reports
+  exactly the defect:
+
+      FAIL 按路径打开的文件也在包里（import 图看不见的那一类）  缺 tools\media-key.ps1 ← packages\host\src\media-key.ts
+
+**Generalised**: a feature that works in development and fails after install is a *packaging* question
+before it is a logic question. Anything reached by a path rather than an import is invisible to an
+import-graph check, and `files` in electron-builder has no way to know about it.
+
+### The cut text, settled by the screenshot
+
+The owner sent a crop of "bubu6 / iVy" and it was decisive: the `y` had **no tail at all** and the bottom
+of "bubu6" was flat. That is not ellipsis and not a squeezed box - it is a glyph's descender leaving the
+line box and being clipped by `overflow: hidden`. The stack falls back to CJK-capable families (MiSans,
+Noto Sans SC, 微软雅黑) whose natural line box is near 1.5em, and at `line-height: 1.6` there is almost no
+room left for a tail. The fix is room *below* the line box, which is what padding gives (the clip is at the
+padding edge): `padding-bottom` with an equal negative `margin-bottom`, so the descender has somewhere to
+go and nothing below moves. `.title` and `.artist` both carry it.
+
+`check-layout.mjs` had to be taught to see it, too - it read `line-height` and nothing else, so padding
+could be added, doubled or left uncompensated without a word. It now models the padding and the cancelling
+margin, which is what makes the report "positions unchanged, 12.21u of bottom inset" mean something.
+
+Still open: the card occasionally changing size during a drag. `overlay:drag-start` already lands an
+in-flight resize tween before capturing the size, so it is something else - and the installed build logs
+`拖动中窗口尺寸被系统改动: 请求 WxH，实际 ...` when it happens, which is the next thing to read.

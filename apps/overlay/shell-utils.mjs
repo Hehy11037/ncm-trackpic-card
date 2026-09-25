@@ -356,13 +356,6 @@ export function loadWindowState(file, displayBounds) {
       // Whether the user's own cover was switched on. The image itself is a file beside this one, so
       // only the flag is stored - a data URL in here would make the state file megabytes.
       coverEnabled: typeof raw.coverEnabled === 'boolean' ? raw.coverEnabled : true,
-      /*
-       * Whether "start with Windows" has already been turned on once. It is a latch, not a setting:
-       * the app turns auto-start on itself after a packaged install, records that it did, and never
-       * touches it again - so a user who turns it off in Windows' own startup settings is not fought
-       * by the next launch.
-       */
-      autoStartApplied: raw.autoStartApplied === true,
     };
   } catch {
     return {
@@ -371,7 +364,6 @@ export function loadWindowState(file, displayBounds) {
       y: undefined,
       locked: true,
       coverEnabled: true,
-      autoStartApplied: false,
     };
   }
 }
@@ -387,7 +379,6 @@ export function saveWindowState(file, state) {
           y: state.y,
           locked: state.locked === true,
           coverEnabled: state.coverEnabled !== false,
-          autoStartApplied: state.autoStartApplied === true,
         },
         null,
         2,

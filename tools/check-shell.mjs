@@ -715,15 +715,23 @@ console.log('\n--- 打包配置（electron-builder.yml）---');
   );
 
   /*
-   * Auto-start is a latch the shell applies once, packaged only - and it must never be applied in
-   * development, where a checkout would register itself to run at login.
+   * Auto-start is **off**, on the owner's request.
+   *
+   * It used to be a latch the shell applied once after a packaged install. What has to stay true now is
+   * the opposite: nothing ever turns it on, and the entry the earlier builds left in the user's startup
+   * list is removed - precisely, by targeting the old executable's path, so a startup item the user set
+   * up themselves is never touched.
    */
   const shellJs2 = readStyle('apps/overlay/main.mjs');
-  check('开机自启只在打包后生效', /if \(!app\.isPackaged \|\| autoStartApplied\) return;/.test(shellJs2));
+  check('从不设置开机自启', !/openAtLogin: true/.test(shellJs2));
   check(
-    '开机自启只做一次（记在状态文件里）',
-    /autoStartApplied: raw\.autoStartApplied === true/.test(readStyle('apps/overlay/shell-utils.mjs')),
+    '一次性清理旧版本留下的自启项',
+    /function removeLegacyAutoStartOnce/.test(shellJs2) &&
+      /app\.getLoginItemSettings\(\{ path: LEGACY_AUTOSTART_EXE \}\)/.test(shellJs2) &&
+      /openAtLogin: false, path: LEGACY_AUTOSTART_EXE/.test(shellJs2),
   );
+  check('清理只在打包后做（开发不碰用户的启动项）', /if \(!app\.isPackaged \|\| autoStartCleaned\) return;/.test(shellJs2));
+  check('状态文件里不再有自启闩锁', !/autoStartApplied/.test(readStyle('apps/overlay/shell-utils.mjs')));
   check('单实例锁已就位', /requestSingleInstanceLock/.test(shellJs2) && /second-instance/.test(shellJs2));
 
   // The one thing the card can do about a missing debug channel: restart the client with it.

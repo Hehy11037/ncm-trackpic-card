@@ -75,7 +75,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: NCM 同步卡片
+  shortcutName: NCM Track Card
   runAfterFinish: true
   artifactName: ${productName}-${version}-setup.${ext}
   uninstallDisplayName: NCM Track Card ${version}

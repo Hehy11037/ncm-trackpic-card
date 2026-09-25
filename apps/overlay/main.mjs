@@ -554,52 +554,44 @@ function persistWindowState() {
     y: bounds.y,
     locked,
     coverEnabled: cover.enabled,
-    autoStartApplied,
   });
 }
 
 /* --------------------------------------------------------------- auto-start */
 
 /*
- * Start with Windows, once, and only for a real install.
+ * This app does **not** start with Windows.
  *
- * A mirror of what is playing is only useful if it is there when the music starts, so the first launch
- * after an install turns auto-start on and records that it did. The latch matters: auto-start is also
- * editable in Windows' own startup settings, and an app that kept re-enabling itself every launch would
- * be fighting its own user.
+ * It used to: the first launch after an install asked Electron for a login item and latched that it had, so
+ * a later Windows-side change would not be fought. The owner asked for it to be off by default, so that
+ * call is gone - and because the entry our earlier builds created is still in the user's startup list, this
+ * removes it once, precisely: the login item is targeted by the *old* executable path rather than by
+ * "whatever the current app is", so nothing the user set up themselves is touched.
  *
- * Two cases where it must not happen at all:
- *
- *  - **Development** (`app.isPackaged` is false under `electron apps/overlay`): a checkout must not
- *    register itself to run at login.
- *  - **The portable build.** It unpacks itself into a temporary directory per run, and that directory
- *    is gone by the next boot, so a startup entry would point at a path that no longer exists - a broken
- *    entry in the user's startup list, created by us. electron-builder's portable target marks itself
- *    with `PORTABLE_EXECUTABLE_DIR`, and the README promises this behaviour, so it is checked here
- *    rather than assumed.
+ * The old path is spelled out because it is a migration from a specific earlier install and there is no
+ * way to discover it - the folder was `NCM Trackpic Card` before the rename, and a rename is exactly why
+ * the state file cannot be consulted any more (userData moved with the package name).
  */
-let autoStartApplied = false;
+const LEGACY_AUTOSTART_EXE = join(
+  process.env.LOCALAPPDATA ?? '',
+  'Programs',
+  'NCM Trackpic Card',
+  'NCM Trackpic Card.exe',
+);
 
-/** True when running from electron-builder's portable target, which unpacks to a temp directory. */
-function isPortableRun(env = process.env) {
-  return typeof env.PORTABLE_EXECUTABLE_DIR === 'string' && env.PORTABLE_EXECUTABLE_DIR.length > 0;
-}
+let autoStartCleaned = false;
 
-function applyAutoStartOnce() {
-  if (!app.isPackaged || autoStartApplied) return;
-  if (isPortableRun()) {
-    autoStartApplied = true;
-    persistWindowState();
-    console.info('[shell] 免安装版：不设置开机自启（每次运行都会解包到临时目录）');
-    return;
-  }
+function removeLegacyAutoStartOnce() {
+  if (!app.isPackaged || autoStartCleaned) return;
+  autoStartCleaned = true;
+  if (!process.env.LOCALAPPDATA) return;
   try {
-    app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
-    autoStartApplied = true;
-    persistWindowState();
-    console.info('[shell] 已设置为开机自启（可在 Windows 启动项里关掉）');
+    const current = app.getLoginItemSettings({ path: LEGACY_AUTOSTART_EXE });
+    if (!current.openAtLogin) return;
+    app.setLoginItemSettings({ openAtLogin: false, path: LEGACY_AUTOSTART_EXE });
+    console.info('[shell] 已移除旧版本留下的开机自启项（新版本默认不自启）');
   } catch (err) {
-    console.warn('[shell] 设置开机自启失败', err);
+    console.warn('[shell] 清理旧的开机自启项失败（可在任务管理器 → 启动 里手动关掉）', err);
   }
 }
 
@@ -977,7 +969,6 @@ function createWindow() {
   cardWidth = fit.cardWidth;
   locked = state.locked;
   cover.enabled = state.coverEnabled;
-  autoStartApplied = state.autoStartApplied;
   loadCoverImage();
   collapsed = false;
   // A fresh window has not drawn yet, and the pointer is wherever the user launched from - so
@@ -1148,7 +1139,7 @@ function trayTemplate() {
 
 function createTray() {
   tray = new Tray(iconImage(16));
-  tray.setToolTip('网易云同步卡片（单击显示/隐藏）');
+  tray.setToolTip('NCM Track Card（单击显示/隐藏）');
   /*
    * Built once and held in a module-level binding. The menu no longer changes, and a menu that is
    * only referenced by the tray can be collected while it is open.
@@ -1343,8 +1334,8 @@ app
 
     bindIpc();
     reportUiAssets();
-    // Before the window, so the state file records the latch even if a later step fails.
-    applyAutoStartOnce();
+    // This app does not start with Windows; this only removes the entry older builds left behind.
+    removeLegacyAutoStartOnce();
     /*
      * The window comes up straight away, showing the startup page, and the tray and the pointer
      * watcher with it. Everything that can be slow - waiting for the host - happens after, so the

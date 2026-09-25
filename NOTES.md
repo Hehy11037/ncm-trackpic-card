@@ -2112,3 +2112,42 @@ saved window position, lock state and cover choice start fresh - a small, one-ti
 `check-package.mjs` no longer hardcodes the product name: it reads `productName` out of
 `electron-builder.yml`, because a hardcoded copy would have gone on looking for an exe that no longer
 exists.
+
+## 2026-09-20 (9) — the tray, the shortcut, and no more auto-start
+
+Three more requests after the rename, and one of them explained a report that had looked like a miss.
+
+### "The card still says NCM Trackpic Card"
+
+It does not, in the source: the credit is one line in `ui/index.html` and nothing in the JavaScript or CSS
+composes it, which is why the previous commit's rename was complete. What the owner was looking at was the
+**installed 0.1.2 build**, which predates the rename - the string only changes once the new installer is
+installed. Worth writing down because "I changed it and they still see the old text" has two very different
+causes, and checking the *built payload* rather than the source is what tells them apart.
+
+### The tray tooltip and the shortcut
+
+`tray.setToolTip` said `网易云同步卡片（单击显示/隐藏）` and the Start-menu shortcut was `NCM 同步卡片`. Both
+were Chinese descriptions rather than the product name, which is why they had been left alone in the rename;
+the owner asked for them too, so they are now `NCM Track Card（单击显示/隐藏）` and `NCM Track Card`.
+
+### Auto-start is gone
+
+The shell used to call `setLoginItemSettings` with auto-start on, once, after a packaged install - a mirror
+of what is playing is only useful if it is there when the music starts. The owner does not want it, so the
+call and its latch are removed, along with the state field and the now-unused portable guard.
+
+Removing the feature is not the whole job: the **entry our earlier builds created is still in their startup
+list**, and the obvious way to clean it up - "if our state file says we were the one who added it, remove
+it" - cannot work here, because the state file moved when the rename changed the package name (Electron
+derives userData from it). So the login item is removed by *targeting the old executable's path*, once, and
+only when that path actually has an entry: nothing the user set up themselves is touched, and there is no
+guessing from a stale latch.
+
+The checks were rewritten to match: nothing enables auto-start, the cleanup targets the legacy path and is
+packaged-only, and the state file no longer carries a latch.
+
+**A small trap in that rewriting**: the assertion "nothing enables auto-start" greps the shell for the
+literal, and the first version of my *comment* about the removal contained that literal - so the check
+failed on its own explanation. The comment now describes the call without spelling it, which keeps the
+assertion strict instead of loosening it to accommodate prose.

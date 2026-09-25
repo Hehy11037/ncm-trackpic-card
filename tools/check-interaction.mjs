@@ -767,6 +767,9 @@ console.log('\n--- 托盘菜单 ---');
   }
   // ... and the recovery the tray used to provide is now the icon's own click.
   check('单击托盘图标可显示/隐藏', /tray\.on\('click', \(\) => toggleWindow\(\)\)/.test(shellJs));
+  // The tooltip names the tool, so it has to carry the product name - it said 网易云同步卡片 until the
+  // rename, and it is the one thing a user hovers over when they cannot find the window.
+  check('托盘提示写着产品名', /tray\.setToolTip\('NCM Track Card（单击显示\/隐藏）'\)/.test(shellJs));
   check(
     '从托盘显示必定展开',
     /function showWindow\(\)[\s\S]{0,600}setCollapsed\(false\)/.test(shellJs),
